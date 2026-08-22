@@ -37,6 +37,7 @@ from app.models.catalog import (
     Booking,
     BookingStatus,
     CourseSession,
+    CourseSessionProfessor,
     CourseType,
     DeliveryMode,
     LessonFormat,
@@ -80,6 +81,14 @@ from app.services.payment_receipts import (
 )
 from app.services.reminders import ensure_booking_reminder, skip_pending_reminders_for_booking
 from app.services.session_automation import restore_cancelled_booking_credit
+from app.services.session_teachers import (
+    assigned_professor_ids_for_session,
+    effective_professor_ids_for_session,
+    is_masterclass_course_type,
+    normalize_professor_ids_for_course_type,
+    professor_display_name,
+    replace_session_professors,
+)
 from app.services.makeup_passes import grant_makeup_for_excused_absence, revoke_pending_makeup_for_corrected_absence
 from app.services.session_audience import (
     coerce_session_scope_sets,
@@ -93,7 +102,6 @@ from app.services.session_audience import (
 )
 from app.services.session_teachers import (
     normalized_substitute_teacher_id,
-    professor_display_name,
 )
 from app.services.session_notifications import send_session_operation_email
 from app.services.providers.sms import send_provider_sms
@@ -417,13 +425,38 @@ def _to_admin_session_out(
     course_type: CourseType | None = None,
     location: Location | None = None,
     professor: Professor | None = None,
+    assigned_professors: list[Professor] | None = None,
     substitute_professor: Professor | None = None,
     recurrence_end_date: date | None = None,
 ) -> AdminSessionOut:
+    normalized_assigned_professors = assigned_professors
+    if normalized_assigned_professors is None:
+        normalized_assigned_professors = [] if professor is None else [professor]
+    professor_ids = [row.id for row in normalized_assigned_professors]
+    professor_display_names = [professor_display_name(row) for row in normalized_assigned_professors]
     habitual_teacher_display_name = _session_teacher_display_name(professor)
     substitute_teacher_display_name = _session_teacher_display_name(substitute_professor) if substitute_professor is not None else None
     effective_teacher_id = session_obj.substitute_teacher_id or session_obj.professor_id
     effective_teacher_display_name = substitute_teacher_display_name or habitual_teacher_display_name
+    if session_obj.substitute_teacher_id is not None:
+        effective_teacher_ids = [
+            session_obj.substitute_teacher_id,
+            *[professor_id for professor_id in professor_ids if professor_id != session_obj.professor_id],
+        ]
+        effective_teacher_display_names = [
+            substitute_teacher_display_name or "",
+            *[
+                name
+                for professor_id, name in zip(professor_ids, professor_display_names)
+                if professor_id != session_obj.professor_id
+            ],
+        ]
+    else:
+        effective_teacher_ids = professor_ids
+        effective_teacher_display_names = professor_display_names
+    effective_teacher_display_names = [name for name in effective_teacher_display_names if name]
+    if effective_teacher_display_names:
+        effective_teacher_display_name = " · ".join(effective_teacher_display_names)
     allows_student_bookings = bool(course_type.allows_student_bookings) if course_type is not None else True
     visibility_scopes = resolve_session_visibility_scopes(session_obj)
     booking_scopes = resolve_session_booking_scopes(session_obj, allows_student_bookings=allows_student_bookings)
@@ -444,6 +477,8 @@ def _to_admin_session_out(
         course_type_id=session_obj.course_type_id,
         location_id=session_obj.location_id,
         professor_id=session_obj.professor_id,
+        professor_ids=professor_ids,
+        professor_display_names=professor_display_names,
         substitute_teacher_id=session_obj.substitute_teacher_id,
         substitute_set_at=session_obj.substitute_set_at,
         substitute_set_by=session_obj.substitute_set_by,
@@ -455,6 +490,8 @@ def _to_admin_session_out(
         substitute_teacher_display_name=substitute_teacher_display_name,
         effective_teacher_id=effective_teacher_id,
         effective_teacher_display_name=effective_teacher_display_name,
+        effective_teacher_ids=list(dict.fromkeys(effective_teacher_ids)),
+        effective_teacher_display_names=list(dict.fromkeys(effective_teacher_display_names)),
         requires_professor=bool(course_type.requires_professor) if course_type is not None else True,
         allows_student_bookings=bool(course_type.allows_student_bookings) if course_type is not None else True,
         supports_student_time_overrides=bool(course_type.supports_student_time_overrides) if course_type is not None else False,
@@ -1017,6 +1054,8 @@ def _normalize_email_recipient(value: str) -> str | None:
     candidate = value.strip().lower()
     if not candidate:
         return None
+    if candidate.endswith("@piano-academie.invalid") or candidate.endswith("@no-email.local"):
+        return None
     if EMAIL_RECIPIENT_RE.match(candidate) is None:
         return None
     return candidate
@@ -1072,6 +1111,35 @@ def _booked_counts_map(db: Session, session_ids: list[UUID]) -> dict[UUID, int]:
     ).all()
 
     return {session_id: int(count or 0) for session_id, count in rows}
+
+
+def _assigned_professors_map(db: Session, session_ids: list[UUID]) -> dict[UUID, list[Professor]]:
+    if not session_ids:
+        return {}
+    rows = db.execute(
+        select(CourseSessionProfessor.session_id, Professor)
+        .join(Professor, Professor.id == CourseSessionProfessor.professor_id)
+        .where(CourseSessionProfessor.session_id.in_(session_ids))
+        .order_by(CourseSessionProfessor.session_id, CourseSessionProfessor.position)
+    ).all()
+    result: dict[UUID, list[Professor]] = {}
+    for session_id, professor in rows:
+        result.setdefault(session_id, []).append(professor)
+    return result
+
+
+def _load_active_professors(db: Session, professor_ids: list[UUID]) -> list[Professor]:
+    if not professor_ids:
+        return []
+    rows = db.scalars(select(Professor).where(Professor.id.in_(professor_ids))).all()
+    by_id = {row.id: row for row in rows}
+    missing = [professor_id for professor_id in professor_ids if professor_id not in by_id]
+    if missing:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Professor not found")
+    inactive = [row for row in rows if not row.active]
+    if inactive:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Professor is inactive")
+    return [by_id[professor_id] for professor_id in professor_ids]
 
 
 def _load_admin_session_with_refs(
@@ -2239,6 +2307,101 @@ def _session_parent_recipient_map(
     return recipients
 
 
+def _admin_booking_change_email_recipients(db: Session, *, client: User) -> dict[str, UUID]:
+    """Resolve transactional recipients for an explicit admin notification choice."""
+    recipients: dict[str, UUID] = {}
+    own_email = _normalize_email_recipient(client.email)
+    if own_email:
+        recipients[own_email] = client.id
+
+    parent_rows = db.scalars(
+        select(User)
+        .join(ClientFamilyLink, ClientFamilyLink.adult_user_id == User.id)
+        .where(ClientFamilyLink.child_user_id == client.id)
+    ).all()
+    for parent in parent_rows:
+        parent_email = _normalize_email_recipient(parent.email)
+        if parent_email:
+            recipients.setdefault(parent_email, parent.id)
+    return recipients
+
+
+def _send_admin_booking_change_email(
+    db: Session,
+    *,
+    client: User,
+    sessions: list[CourseSession],
+    operation: Literal["ADDED", "REMOVED"],
+    actor: User,
+) -> int:
+    if not sessions:
+        return 0
+    ordered_sessions = sorted(sessions, key=lambda row: row.start_at_utc)
+    first_session = ordered_sessions[0]
+    last_session = ordered_sessions[-1]
+    course_type = db.scalar(select(CourseType).where(CourseType.id == first_session.course_type_id))
+    location = db.scalar(select(Location).where(Location.id == first_session.location_id))
+    course_name = course_type.name if course_type is not None else first_session.title
+    location_name = location.name if location is not None else "-"
+    timezone_name = first_session.timezone or (location.timezone if location is not None else "Europe/Paris")
+    zone = _safe_zoneinfo(timezone_name)
+    first_local = first_session.start_at_utc.astimezone(zone)
+    last_local = last_session.start_at_utc.astimezone(zone)
+    student_name = _display_name(client)
+    recipients = _admin_booking_change_email_recipients(db, client=client)
+    sent_count = 0
+
+    for email, recipient_user_id in sorted(recipients.items()):
+        recipient_user = db.scalar(select(User).where(User.id == recipient_user_id))
+        recipient_name = _display_name(recipient_user) if recipient_user is not None else email
+        language = str(getattr(recipient_user, "preferred_language", None) or "fr").strip().lower()
+        is_english = language.startswith("en")
+        if operation == "ADDED":
+            subject = f"Enrollment confirmed - {course_name}" if is_english else f"Inscription confirmée - {course_name}"
+            action_text = "has been enrolled" if is_english else "a été inscrit(e)"
+            operation_code = "ADMIN_BOOKING_ADDED"
+        else:
+            subject = f"Enrollment removed - {course_name}" if is_english else f"Inscription retirée - {course_name}"
+            action_text = "has been removed" if is_english else "a été retiré(e)"
+            operation_code = "ADMIN_BOOKING_REMOVED"
+
+        if is_english:
+            body = (
+                f"Hello {recipient_name},\n\n"
+                f"The administration informs you that {student_name} {action_text} for {course_name}.\n"
+                f"Location: {location_name}\n"
+                f"Number of sessions concerned: {len(ordered_sessions)}\n"
+                f"First session: {first_local.strftime('%d/%m/%Y at %H:%M')}\n"
+                f"Last session: {last_local.strftime('%d/%m/%Y at %H:%M')}\n\n"
+                "Piano Académie"
+            )
+        else:
+            body = (
+                f"Bonjour {recipient_name},\n\n"
+                f"L'administration vous informe que {student_name} {action_text} au cours {course_name}.\n"
+                f"Lieu : {location_name}\n"
+                f"Nombre de séances concernées : {len(ordered_sessions)}\n"
+                f"Première séance : {first_local.strftime('%d/%m/%Y à %H:%M')}\n"
+                f"Dernière séance : {last_local.strftime('%d/%m/%Y à %H:%M')}\n\n"
+                "Piano Académie"
+            )
+        send_session_operation_email(
+            to_email=email,
+            subject=subject,
+            body=body,
+            body_format="TEXT",
+            operation=operation_code,
+            session_title=course_name,
+            sender_user_id=actor.id,
+            sender_label=_display_name(actor),
+            sender_category=CommunicationSenderCategory.OTHER_USER,
+            professor_id=first_session.professor_id,
+            recipient_user_id=recipient_user_id,
+        )
+        sent_count += 1
+    return sent_count
+
+
 def _single_user_recipient_map(
     *,
     user: User,
@@ -2267,18 +2430,19 @@ def _session_professor_recipient_map(
     session_obj: CourseSession,
     channel: CommunicationChannel,
 ) -> dict[str, UUID | None]:
-    professor = db.scalar(select(Professor).where(Professor.id == session_obj.professor_id))
-    if professor is None:
+    professor_ids = effective_professor_ids_for_session(db, session_obj=session_obj)
+    if not professor_ids:
         return {}
-    if channel == CommunicationChannel.EMAIL:
-        email = _normalize_email_recipient(professor.email)
-        if not email:
-            return {}
-        return {email: None}
-    phone = _normalize_phone_recipient(professor.phone or "")
-    if not phone:
-        return {}
-    return {phone: None}
+    professors = db.scalars(select(Professor).where(Professor.id.in_(professor_ids))).all()
+    recipients: dict[str, UUID | None] = {}
+    for professor in professors:
+        if channel == CommunicationChannel.EMAIL:
+            destination = _normalize_email_recipient(professor.email)
+        else:
+            destination = _normalize_phone_recipient(professor.phone or "")
+        if destination:
+            recipients[destination] = None
+    return recipients
 
 
 def _admin_recipient_map(
@@ -3230,11 +3394,21 @@ def _planning_simulation_teacher_needs(
     )
 
 
-def _planning_simulation_teacher_assignment_key(slot: AdminPlanningSimulationSlotOut) -> str | None:
-    if slot.teacher_assignment_professor_id is not None:
-        return f"professor:{slot.teacher_assignment_professor_id}"
-    normalized_label = " ".join(str(slot.teacher_assignment_label or "").casefold().split())
-    return f"label:{normalized_label}" if normalized_label else None
+def _planning_simulation_teacher_assignment_keys(slot: AdminPlanningSimulationSlotOut) -> set[str]:
+    professor_ids = list(getattr(slot, "teacher_assignment_professor_ids", None) or [])
+    labels = list(getattr(slot, "teacher_assignment_labels", None) or [])
+    if not professor_ids and slot.teacher_assignment_professor_id is not None:
+        professor_ids = [slot.teacher_assignment_professor_id]
+    if not labels and slot.teacher_assignment_label:
+        labels = [slot.teacher_assignment_label]
+
+    keys = {f"professor:{professor_id}" for professor_id in professor_ids if professor_id is not None}
+    keys.update(
+        f"label:{normalized_label}"
+        for label in labels
+        if (normalized_label := " ".join(str(label or "").casefold().split()))
+    )
+    return keys
 
 
 def _planning_simulation_slot_half_days(slot: AdminPlanningSimulationSlotOut) -> set[str]:
@@ -3253,17 +3427,17 @@ def _planning_simulation_slot_half_days(slot: AdminPlanningSimulationSlotOut) ->
 def _planning_simulation_teacher_assignment_warnings(
     slots: list[AdminPlanningSimulationSlotOut],
 ) -> dict[str, list[str]]:
-    assigned_slots = [slot for slot in slots if _planning_simulation_teacher_assignment_key(slot) is not None]
+    assigned_slots = [slot for slot in slots if _planning_simulation_teacher_assignment_keys(slot)]
     warning_codes: dict[str, set[str]] = {slot.slot_key: set() for slot in assigned_slots}
 
     for index, first in enumerate(assigned_slots):
-        first_key = _planning_simulation_teacher_assignment_key(first)
+        first_keys = _planning_simulation_teacher_assignment_keys(first)
         first_dates = _planning_simulation_slot_occurrence_dates(first)
         first_start = _planning_simulation_minutes(first.start_time)
         first_end = _planning_simulation_minutes(first.end_time)
         first_half_days = _planning_simulation_slot_half_days(first)
         for second in assigned_slots[index + 1 :]:
-            if first_key != _planning_simulation_teacher_assignment_key(second):
+            if first_keys.isdisjoint(_planning_simulation_teacher_assignment_keys(second)):
                 continue
             if not first_dates.intersection(_planning_simulation_slot_occurrence_dates(second)):
                 continue
@@ -3339,6 +3513,7 @@ def update_planning_simulation_teacher_assignment(
         .where(
             PlanningSimulationTeacherAssignment.school_year_label == school_year_label,
             PlanningSimulationTeacherAssignment.slot_key == slot_key,
+            PlanningSimulationTeacherAssignment.position == payload.position,
         )
         .with_for_update()
     )
@@ -3352,6 +3527,7 @@ def update_planning_simulation_teacher_assignment(
             id=deleted_id,
             school_year_label=school_year_label,
             slot_key=slot_key,
+            position=payload.position,
             deleted=True,
         )
 
@@ -3360,6 +3536,7 @@ def update_planning_simulation_teacher_assignment(
         assignment = PlanningSimulationTeacherAssignment(
             school_year_label=school_year_label,
             slot_key=slot_key,
+            position=payload.position,
             professor_id=professor.id if professor is not None else None,
             teacher_label=teacher_label,
             status=payload.status,
@@ -3381,6 +3558,7 @@ def update_planning_simulation_teacher_assignment(
         id=assignment.id,
         school_year_label=assignment.school_year_label,
         slot_key=assignment.slot_key,
+        position=assignment.position,
         professor_id=assignment.professor_id,
         teacher_label=assignment.teacher_label,
         status=assignment.status,
@@ -3789,14 +3967,16 @@ def get_planning_simulation(
     total_pending = 0
     total_draft = 0
     quote_only_slot_count = 0
-    teacher_assignments_by_slot_key = {
-        assignment.slot_key: assignment
-        for assignment in db.scalars(
-            select(PlanningSimulationTeacherAssignment).where(
-                PlanningSimulationTeacherAssignment.school_year_label == requested_school_year
-            )
-        ).all()
-    }
+    teacher_assignments_by_slot_key: dict[str, list[PlanningSimulationTeacherAssignment]] = {}
+    for assignment in db.scalars(
+        select(PlanningSimulationTeacherAssignment)
+        .where(PlanningSimulationTeacherAssignment.school_year_label == requested_school_year)
+        .order_by(
+            PlanningSimulationTeacherAssignment.slot_key.asc(),
+            PlanningSimulationTeacherAssignment.position.asc(),
+        )
+    ).all():
+        teacher_assignments_by_slot_key.setdefault(assignment.slot_key, []).append(assignment)
 
     sorted_entries = sorted(
         slot_entries.values(),
@@ -3810,7 +3990,8 @@ def get_planning_simulation(
     )
 
     for entry in sorted_entries:
-        teacher_assignment = teacher_assignments_by_slot_key.get(str(entry["slot_key"]))
+        teacher_assignments = teacher_assignments_by_slot_key.get(str(entry["slot_key"]), [])
+        teacher_assignment = teacher_assignments[0] if teacher_assignments else None
         booked_count = len(entry["_booked_user_ids"])
         approved_quotes_count = len(entry["_approved_quote_ids"])
         pending_quotes_count = len(entry["_pending_quote_ids"])
@@ -3882,6 +4063,10 @@ def get_planning_simulation(
                 teacher_assignment_status=(
                     teacher_assignment.status if teacher_assignment is not None else None
                 ),
+                teacher_assignment_ids=[assignment.id for assignment in teacher_assignments],
+                teacher_assignment_professor_ids=[assignment.professor_id for assignment in teacher_assignments],
+                teacher_assignment_labels=[assignment.teacher_label for assignment in teacher_assignments],
+                teacher_assignment_statuses=[assignment.status for assignment in teacher_assignments],
             )
         )
 
@@ -4268,6 +4453,21 @@ def move_planning_reorganization_booking(
     )
 
 
+def _normalize_session_participant_settings(
+    *,
+    course_type_code: str,
+    allows_student_bookings: bool,
+    child_bookings_enabled: bool,
+    adult_bookings_enabled: bool,
+    adult_capacity_max: int | None,
+) -> tuple[bool, bool, int | None]:
+    if not allows_student_bookings:
+        return False, False, None
+    if course_type_code == "STUDIO_REHEARSAL":
+        return child_bookings_enabled, True, None
+    return child_bookings_enabled, adult_bookings_enabled, adult_capacity_max if adult_bookings_enabled else None
+
+
 @router.post("/sessions", response_model=AdminSessionOut, status_code=status.HTTP_201_CREATED)
 def create_session(
     payload: AdminSessionCreateRequest,
@@ -4282,12 +4482,24 @@ def create_session(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="A custom auto-cancellation rule requires a minimum attendee count and a check delay",
         )
+    requested_primary_professor_id = (
+        payload.professor_ids[0] if payload.professor_ids else payload.professor_id
+    )
     course_type, location, professor = _validate_and_load_refs(
         db,
         course_type_id=payload.course_type_id,
         location_id=payload.location_id,
-        professor_id=payload.professor_id,
+        professor_id=requested_primary_professor_id,
     )
+    try:
+        assigned_professor_ids = normalize_professor_ids_for_course_type(
+            course_type=course_type,
+            professor_id=requested_primary_professor_id,
+            professor_ids=payload.professor_ids,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    assigned_professors = _load_active_professors(db, assigned_professor_ids)
     session_timezone = _normalize_session_timezone(payload.timezone or location.timezone)
 
     is_vacation = _is_vacation_course_type(course_type)
@@ -4319,9 +4531,13 @@ def create_session(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Capacite max obligatoire (>= 1, sauf creneau sans eleve)",
             )
-    child_bookings_enabled = bool(payload.child_bookings_enabled) if allows_student_bookings else False
-    adult_bookings_enabled = bool(payload.adult_bookings_enabled) if allows_student_bookings else False
-    adult_capacity_max = payload.adult_capacity_max if adult_bookings_enabled else None
+    child_bookings_enabled, adult_bookings_enabled, adult_capacity_max = _normalize_session_participant_settings(
+        course_type_code=course_type.code,
+        allows_student_bookings=allows_student_bookings,
+        child_bookings_enabled=bool(payload.child_bookings_enabled),
+        adult_bookings_enabled=bool(payload.adult_bookings_enabled),
+        adult_capacity_max=payload.adult_capacity_max,
+    )
     if allows_student_bookings and not (child_bookings_enabled or adult_bookings_enabled):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -4446,7 +4662,7 @@ def create_session(
                 snapshot_seller_legal_entity_id=course_type.seller_legal_entity_id,
                 snapshot_payor_legal_entity_id=course_type.payor_legal_entity_id,
                 location_id=payload.location_id,
-                professor_id=payload.professor_id,
+                professor_id=assigned_professor_ids[0] if assigned_professor_ids else None,
                 title=payload.title,
                 description=payload.public_description or payload.description,
                 private_description=payload.private_description,
@@ -4498,6 +4714,12 @@ def create_session(
 
     db.add_all(sessions_to_create)
     db.flush()
+    for created_session in sessions_to_create:
+        replace_session_professors(
+            db,
+            session_obj=created_session,
+            professor_ids=assigned_professor_ids,
+        )
 
     if is_vacation:
         for vacation_session in sessions_to_create:
@@ -4522,6 +4744,7 @@ def create_session(
         course_type=created_course_type,
         location=created_location,
         professor=created_professor,
+        assigned_professors=assigned_professors,
         substitute_professor=created_substitute_professor,
     )
 
@@ -4570,6 +4793,13 @@ def list_admin_sessions(
                     CourseSession.substitute_teacher_id.is_(None),
                     CourseSession.professor_id.in_(professor_filter_ids),
                 ),
+                select(CourseSessionProfessor.id)
+                .where(
+                    CourseSessionProfessor.session_id == CourseSession.id,
+                    CourseSessionProfessor.professor_id.in_(professor_filter_ids),
+                    CourseSessionProfessor.position > 1,
+                )
+                .exists(),
             )
         )
 
@@ -4596,6 +4826,7 @@ def list_admin_sessions(
     rows = db.execute(stmt.order_by(CourseSession.start_at_utc.desc())).all()
     session_ids = [session_obj.id for session_obj, _, _, _, _ in rows]
     counts = _booked_counts_map(db, session_ids)
+    assigned_professors = _assigned_professors_map(db, session_ids)
     recurrence_end_map = _recurrence_end_date_map(
         db,
         recurrence_group_ids=[session_obj.recurrence_group_id for session_obj, _, _, _, _ in rows],
@@ -4608,6 +4839,10 @@ def list_admin_sessions(
             course_type=course_type,
             location=location,
             professor=professor,
+            assigned_professors=assigned_professors.get(
+                session_obj.id,
+                [] if professor is None else [professor],
+            ),
             substitute_professor=substitute_professor_row,
             recurrence_end_date=recurrence_end_map.get(session_obj.recurrence_group_id) if session_obj.recurrence_group_id else None,
         )
@@ -4627,12 +4862,17 @@ def get_admin_session(
     session_obj, course_type, location, professor, substitute_professor = session_with_refs
 
     booked_count = _booked_count_by_session(db, session_id)
+    assigned_professors = _assigned_professors_map(db, [session_id]).get(
+        session_id,
+        [] if professor is None else [professor],
+    )
     return _to_admin_session_out(
         session_obj,
         booked_count=booked_count,
         course_type=course_type,
         location=location,
         professor=professor,
+        assigned_professors=assigned_professors,
         substitute_professor=substitute_professor,
         recurrence_end_date=(
             _recurrence_end_date_map(db, recurrence_group_ids=[session_obj.recurrence_group_id]).get(session_obj.recurrence_group_id)
@@ -4803,6 +5043,7 @@ def update_admin_session_group_note(
         course_type=course_type,
         location=location,
         professor=professor,
+        assigned_professors=_assigned_professors_map(db, [session_id]).get(session_id, []),
         substitute_professor=substitute_professor,
     )
 
@@ -4832,6 +5073,7 @@ def update_admin_session_internal_note(
         course_type=course_type,
         location=location,
         professor=professor,
+        assigned_professors=_assigned_professors_map(db, [session_id]).get(session_id, []),
         substitute_professor=substitute_professor,
     )
 
@@ -5183,6 +5425,7 @@ def add_admin_session_booking(
         details: list[str] = []
         planning_force_cache: dict[UUID, bool] = {}
         course_type_cache: dict[UUID, CourseType | None] = {}
+        changed_sessions: list[CourseSession] = []
 
         def add_detail(message: str) -> None:
             if message not in details:
@@ -5377,10 +5620,26 @@ def add_admin_session_booking(
                 )
 
             processed_count += 1
+            changed_sessions.append(target)
 
         db.commit()
         if orchestrated_notifications:
             enqueue_notifications(orchestrated_notifications)
+        notified_count = 0
+        if payload.notify_client and processed_count > 0:
+            try:
+                notified_count = _send_admin_booking_change_email(
+                    db,
+                    client=client,
+                    sessions=changed_sessions,
+                    operation="ADDED",
+                    actor=current_user,
+                )
+                if notified_count == 0:
+                    add_detail("Inscription enregistree mais aucune adresse e-mail client valide")
+            except Exception:
+                logger.exception("Unable to send admin enrollment email client=%s session=%s", client.id, session_id)
+                add_detail("Inscription enregistree mais e-mail client non envoye")
     except OperationalError as exc:
         db.rollback()
         if _is_retryable_lock_error(exc):
@@ -5395,6 +5654,7 @@ def add_admin_session_booking(
         booked_count=booked_count,
         waitlisted_count=waitlisted_count,
         skipped_count=skipped_count,
+        notified_count=notified_count,
         details=details,
     )
 
@@ -5405,8 +5665,9 @@ def cancel_admin_session_booking(
     booking_id: UUID,
     scope: BookingScope | None = Query(default=None),
     apply_scope: ApplyScope | None = Query(default=None),
+    notify_client: bool = Query(default=False),
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin_or_permissions("can_edit_planning")),
+    current_user: User = Depends(require_admin_or_permissions("can_edit_planning")),
 ) -> Response:
     orchestrated_notifications = []
     session_obj = db.scalar(
@@ -5499,6 +5760,23 @@ def cancel_admin_session_booking(
     db.commit()
     if orchestrated_notifications:
         enqueue_notifications(orchestrated_notifications)
+    if notify_client:
+        changed_sessions = [
+            target_session
+            for target_session, target_booking in target_bookings
+            if target_booking.status == BookingStatus.CANCELLED
+            and target_booking.cancelled_at == now
+        ]
+        try:
+            _send_admin_booking_change_email(
+                db,
+                client=_require_client(db, booking.user_id),
+                sessions=changed_sessions,
+                operation="REMOVED",
+                actor=current_user,
+            )
+        except Exception:
+            logger.exception("Unable to send admin unenrollment email client=%s session=%s", booking.user_id, session_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -5544,6 +5822,8 @@ def update_session(
         )
     )
     recurrence_payload = updates.pop("recurrence", None)
+    has_professor_ids_update = "professor_ids" in updates
+    requested_professor_ids = updates.pop("professor_ids", None) if has_professor_ids_update else None
     has_substitute_teacher_update = "substitute_teacher_id" in updates
     requested_substitute_teacher_id = updates.pop("substitute_teacher_id", None) if has_substitute_teacher_update else session_obj.substitute_teacher_id
     has_substitute_note_update = "substitute_note" in updates
@@ -5569,7 +5849,14 @@ def update_session(
 
     course_type_id = updates.get("course_type_id", session_obj.course_type_id)
     location_id = updates.get("location_id", session_obj.location_id)
-    professor_id = updates.get("professor_id", session_obj.professor_id)
+    existing_professor_ids = assigned_professor_ids_for_session(db, session_obj=session_obj)
+    if has_professor_ids_update:
+        candidate_professor_ids = list(requested_professor_ids or [])
+    elif "professor_id" in updates:
+        candidate_professor_ids = [] if updates.get("professor_id") is None else [updates["professor_id"]]
+    else:
+        candidate_professor_ids = existing_professor_ids
+    professor_id = candidate_professor_ids[0] if candidate_professor_ids else None
     substitute_teacher_id = normalized_substitute_teacher_id(
         professor_id=professor_id,
         substitute_teacher_id=requested_substitute_teacher_id,
@@ -5596,6 +5883,15 @@ def update_session(
         professor_id=professor_id,
         enforce_planning_allowed=enforce_planning_allowed,
     )
+    try:
+        assigned_professor_ids = normalize_professor_ids_for_course_type(
+            course_type=course_type,
+            professor_id=professor_id,
+            professor_ids=candidate_professor_ids,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    assigned_professors = _load_active_professors(db, assigned_professor_ids)
     session_zoom_professor = professor
     is_vacation = _is_vacation_course_type(course_type)
     allows_student_bookings = bool(course_type.allows_student_bookings)
@@ -5631,10 +5927,15 @@ def update_session(
         updates.get("adult_bookings_enabled", session_obj.adult_bookings_enabled)
     )
     next_adult_capacity_max = updates.get("adult_capacity_max", session_obj.adult_capacity_max)
-    if not allows_student_bookings:
-        next_child_bookings_enabled = False
-        next_adult_bookings_enabled = False
-        next_adult_capacity_max = None
+    next_child_bookings_enabled, next_adult_bookings_enabled, next_adult_capacity_max = (
+        _normalize_session_participant_settings(
+            course_type_code=course_type.code,
+            allows_student_bookings=allows_student_bookings,
+            child_bookings_enabled=next_child_bookings_enabled,
+            adult_bookings_enabled=next_adult_bookings_enabled,
+            adult_capacity_max=next_adult_capacity_max,
+        )
+    )
     if allows_student_bookings and not (next_child_bookings_enabled or next_adult_bookings_enabled):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -5855,7 +6156,7 @@ def update_session(
         target.snapshot_seller_legal_entity_id = course_type.seller_legal_entity_id
         target.snapshot_payor_legal_entity_id = course_type.payor_legal_entity_id
         target.location_id = location_id
-        target.professor_id = professor_id
+        replace_session_professors(db, session_obj=target, professor_ids=assigned_professor_ids)
         target.auto_cancel_rule_enabled_override = next_auto_cancel_enabled_override
         target.auto_cancel_if_booked_less_than_override = next_auto_cancel_threshold_override
         target.auto_cancel_hours_before_start_override = next_auto_cancel_hours_override
@@ -6149,8 +6450,7 @@ def update_session(
             ):
                 continue
 
-            db.add(
-                CourseSession(
+            future_session = CourseSession(
                     course_type_id=session_obj.course_type_id,
                     billing_entity_snapshot=session_obj.billing_entity_snapshot,
                     snapshot_seller_legal_entity_id=session_obj.snapshot_seller_legal_entity_id,
@@ -6190,6 +6490,12 @@ def update_session(
                     recurrence_until_date=recurrence_until_date,
                     updated_at=now,
                 )
+            db.add(future_session)
+            db.flush()
+            replace_session_professors(
+                db,
+                session_obj=future_session,
+                professor_ids=assigned_professor_ids,
             )
             created_future_count += 1
 
@@ -6222,8 +6528,7 @@ def update_session(
                 session_timezone=session_obj.timezone,
             )
 
-            db.add(
-                CourseSession(
+            missing_session = CourseSession(
                     course_type_id=session_obj.course_type_id,
                     billing_entity_snapshot=session_obj.billing_entity_snapshot,
                     snapshot_seller_legal_entity_id=session_obj.snapshot_seller_legal_entity_id,
@@ -6263,6 +6568,12 @@ def update_session(
                     recurrence_until_date=recurrence_until_date,
                     updated_at=now,
                 )
+            db.add(missing_session)
+            db.flush()
+            replace_session_professors(
+                db,
+                session_obj=missing_session,
+                professor_ids=assigned_professor_ids,
             )
 
     if sessions_completed_for_invoicing:
@@ -6279,7 +6590,7 @@ def update_session(
         ).all()
         for booking, completed_session, completed_course_type, completed_location, booking_owner in completed_booking_rows:
             try:
-                note, metadata, _ = generate_final_invoice_for_booking(
+                note, metadata, created = generate_final_invoice_for_booking(
                     db,
                     booking=booking,
                     session_obj=completed_session,
@@ -6289,6 +6600,8 @@ def update_session(
                     author_user_id=current_user.id,
                 )
             except ValueError:
+                continue
+            if not created:
                 continue
             invoice_customer = db.scalar(select(User).where(User.id == note.user_id, User.role == UserRole.CLIENT))
             if invoice_customer is None:
@@ -6324,6 +6637,10 @@ def update_session(
         course_type=course_type,
         location=location,
         professor=professor,
+        assigned_professors=_assigned_professors_map(db, [session_id]).get(
+            session_id,
+            assigned_professors,
+        ),
         substitute_professor=substitute_professor,
     )
 
@@ -6443,6 +6760,11 @@ def duplicate_session_operation(
             )
             db.add(duplicate_session)
             db.flush()
+            replace_session_professors(
+                db,
+                session_obj=duplicate_session,
+                professor_ids=assigned_professor_ids_for_session(db, session_obj=target),
+            )
 
             source_bookings = db.scalars(
                 select(Booking)

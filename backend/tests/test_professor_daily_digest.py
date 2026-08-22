@@ -11,7 +11,11 @@ from uuid import uuid4
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.models.product_catalog import ProductRequestStatus
-from app.services.professor_daily_digest import product_request_is_ready_for_notification, run_send_professor_daily_digest_job
+from app.services.professor_daily_digest import (
+    _build_digest_body,
+    product_request_is_ready_for_notification,
+    run_send_professor_daily_digest_job,
+)
 
 
 class _FakeScalarResult:
@@ -30,6 +34,16 @@ class _FakeSession:
         return _FakeScalarResult(self._professors)
 
 
+class _DigestSession:
+    def __init__(self, result_sets: list[list[object]]) -> None:
+        self._result_sets = list(result_sets)
+        self.statements: list[str] = []
+
+    def execute(self, query: object) -> _FakeScalarResult:
+        self.statements.append(str(query))
+        return _FakeScalarResult(self._result_sets.pop(0))
+
+
 def _professor() -> SimpleNamespace:
     return SimpleNamespace(
         id=uuid4(),
@@ -41,6 +55,32 @@ def _professor() -> SimpleNamespace:
 
 
 class ProfessorDailyDigestTests(unittest.TestCase):
+    def test_masterclass_is_listed_in_each_associated_professor_digest(self) -> None:
+        professor_id = uuid4()
+        professor = SimpleNamespace(id=professor_id, first_name="Alice")
+        session_obj = SimpleNamespace(
+            id=uuid4(),
+            title="Masterclass jazz",
+            start_at_utc=datetime(2026, 8, 22, 8, 0, tzinfo=timezone.utc),
+            end_at_utc=datetime(2026, 8, 22, 10, 0, tzinfo=timezone.utc),
+        )
+        course_type = SimpleNamespace(name="Masterclass")
+        location = SimpleNamespace(name="Rue de Richelieu")
+        db = _DigestSession([[(session_obj, course_type, location)], [], []])
+
+        _, body, session_count = _build_digest_body(
+            db,  # type: ignore[arg-type]
+            professor=professor,  # type: ignore[arg-type]
+            day_start_utc=datetime(2026, 8, 21, 22, 0, tzinfo=timezone.utc),
+            day_end_utc=datetime(2026, 8, 22, 22, 0, tzinfo=timezone.utc),
+            digest_date=datetime(2026, 8, 22, tzinfo=timezone.utc).date(),
+        )
+
+        self.assertEqual(session_count, 1)
+        self.assertIn("Masterclass jazz", body)
+        self.assertIn("course_session_professors", db.statements[0])
+        self.assertIn("course_session_professors.professor_id", db.statements[0])
+
     def test_product_delivery_notification_requires_ready_status_and_reserved_stock(self) -> None:
         product = SimpleNamespace(is_virtual=False)
         waiting = SimpleNamespace(

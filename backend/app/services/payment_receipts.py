@@ -321,7 +321,7 @@ def is_final_booking_invoice_metadata(metadata: dict[str, object] | None) -> boo
     if not isinstance(metadata, dict):
         return False
     generation_mode = str(metadata.get("generation_mode") or "").strip().upper()
-    if generation_mode == "SERVICE_COMPLETED":
+    if generation_mode in {"SERVICE_COMPLETED", "PAYMENT_CONFIRMED"}:
         return True
     return _normalize_optional(str(metadata.get("service_realized_date") or "")) is not None
 
@@ -999,6 +999,7 @@ def generate_final_invoice_for_booking(
     author_user_id: UUID | None,
     issued_at: datetime | None = None,
     allow_retained_cancelled_payment: bool = False,
+    allow_paid_before_service: bool = False,
 ) -> tuple[ClientNoteEntry, dict[str, object], bool]:
     existing = _invoice_note_for_booking(db, booking_id=booking.id)
     if existing is not None:
@@ -1013,12 +1014,19 @@ def generate_final_invoice_for_booking(
         raise ValueError("Excused absences cannot generate a final invoice")
     if booking.status not in FINAL_INVOICE_ELIGIBLE_BOOKING_STATUSES and not is_retained_cancelled_payment:
         raise ValueError("Booking status is not eligible for final invoicing")
-    if session_obj.status != SessionStatus.COMPLETED and not is_retained_cancelled_payment:
+    is_paid_before_service = (
+        allow_paid_before_service
+        and booking.status == BookingStatus.BOOKED
+        and session_obj.status == SessionStatus.SCHEDULED
+    )
+    if session_obj.status != SessionStatus.COMPLETED and not is_retained_cancelled_payment and not is_paid_before_service:
         raise ValueError("Final invoice can only be generated once the service is completed")
     if _booking_total_incl_vat(booking) <= Decimal("0.00"):
         raise ValueError("Zero-total bookings do not require a final invoice")
 
     total_paid, _, reconciled_manual_payment_ids = completed_payment_receipt_totals(db, booking_id=booking.id)
+    if is_paid_before_service and total_paid < _booking_total_incl_vat(booking):
+        raise ValueError("Future booking must be fully paid before final invoicing")
     if is_retained_cancelled_payment and total_paid < _booking_total_incl_vat(booking):
         raise ValueError("Cancelled booking payment must be fully retained before final invoicing")
 
@@ -1056,6 +1064,9 @@ def generate_final_invoice_for_booking(
     if is_retained_cancelled_payment:
         metadata["generation_mode"] = "RETAINED_CANCELLED_PAYMENT"
         metadata["include_cancelled"] = True
+        metadata["service_realized_date"] = None
+    elif is_paid_before_service:
+        metadata["generation_mode"] = "PAYMENT_CONFIRMED"
         metadata["service_realized_date"] = None
     note = ClientNoteEntry(
         user_id=snapshot.customer_id,

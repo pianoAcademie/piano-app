@@ -8,8 +8,10 @@ from urllib.parse import urlencode
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.models.catalog import CourseType
 from app.services.email_delivery import send_email
 from app.services.i18n import normalize_language
 from app.services.messaging_templates import (
@@ -34,6 +36,23 @@ def _frontend_url(path: str) -> str:
     if not candidate.startswith("http://") and not candidate.startswith("https://"):
         candidate = "https://" + candidate
     return candidate.rstrip("/") + path
+
+
+def _is_studio_booking_purchase(plan_name: str) -> bool:
+    return "studio" in plan_name.casefold()
+
+
+def _studio_booking_url(db: Session) -> str:
+    course_type_id = db.scalar(select(CourseType.id).where(CourseType.code == "STUDIO_REHEARSAL"))
+    if course_type_id is None:
+        return _frontend_url("/embed/planning")
+    query = urlencode(
+        {
+            "course_type_id": str(course_type_id),
+            "location_group": "paris",
+        }
+    )
+    return _frontend_url(f"/embed/planning?{query}")
 
 
 def plan_purchase_notification_label(*, plan_name: str, price_breakdown: object) -> str:
@@ -121,6 +140,7 @@ def send_payment_success_notifications(
     payment_url: str | None = None,
     issued_date: str | None = None,
     due_date: str | None = None,
+    studio_booking_url: str | None = None,
     language: str | None = None,
     recipient_user_id: UUID | None = None,
 ) -> dict[str, str | None]:
@@ -137,6 +157,7 @@ def send_payment_success_notifications(
     normalized_payment_reference = payment_reference.strip() or invoice_number.strip() or "-"
     normalized_invoice_number = invoice_number.strip() or normalized_payment_reference
     normalized_payment_url = (payment_url or "").strip() or invoice_url
+    normalized_studio_booking_url = (studio_booking_url or "").strip()
 
     context = {
         "first_name": safe_first_name,
@@ -161,12 +182,13 @@ def send_payment_success_notifications(
         "issued_date": (issued_date or "").strip(),
         "due_date": (due_date or "").strip(),
         "account_url": _frontend_url("/client?tab=finance"),
+        "booking_url": normalized_studio_booking_url,
     }
 
     return {
         "payment_confirmation_message_id": _send_template_email(
             db,
-            template_code="PAYMENT_CONFIRMED",
+            template_code=("STUDIO_PAYMENT_CONFIRMED" if normalized_studio_booking_url else "PAYMENT_CONFIRMED"),
             context=context,
             to_email=to_email,
             delivery_context="CLIENT_PAYMENT_CONFIRMED",
@@ -203,6 +225,7 @@ def send_client_payment_success_notifications(
     invoice_query = urlencode({"token": invoice_token})
     invoice_url = _frontend_url(f"/api/v1/public/invoices/plans/{subscription_id}/download?{invoice_query}")
     invoice_number = _invoice_number_for_subscription(subscription_id, paid_at)
+    studio_booking_url = _studio_booking_url(db) if _is_studio_booking_purchase(plan_name) else None
     return send_payment_success_notifications(
         db,
         to_email=to_email,
@@ -218,6 +241,7 @@ def send_client_payment_success_notifications(
         invoice_number=invoice_number,
         issued_date=paid_at.strftime("%d/%m/%Y"),
         due_date=paid_at.strftime("%d/%m/%Y"),
+        studio_booking_url=studio_booking_url,
         language=language,
     )
 

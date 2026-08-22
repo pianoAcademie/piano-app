@@ -5,7 +5,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import Date, DateTime, Enum, ForeignKey, Integer, Numeric, String, text
+from sqlalchemy import Date, DateTime, Enum, ForeignKey, Integer, Numeric, String, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -71,6 +71,9 @@ class ProfessorHourlyRate(Base):
 
 class ProfessorSessionPayout(Base):
     __tablename__ = "professor_session_payouts"
+    __table_args__ = (
+        UniqueConstraint("session_id", "professor_id", name="uq_professor_session_payout_session_professor"),
+    )
 
     id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
@@ -82,7 +85,6 @@ class ProfessorSessionPayout(Base):
         PGUUID(as_uuid=True),
         ForeignKey("course_sessions.id", ondelete="CASCADE"),
         nullable=False,
-        unique=True,
     )
     professor_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),

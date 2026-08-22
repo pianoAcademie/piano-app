@@ -920,7 +920,9 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
   const accountDefaultCurrency =
     account && accountAllowedCurrencies.includes(account.default_currency) ? account.default_currency : accountAllowedCurrencies[0] ?? "EUR";
   const accountClientBalanceDefaultDateMode =
-    account?.client_balance_default_date_mode === "PACKAGE_END" ? "PACKAGE_END" : "TODAY";
+    account?.client_balance_default_date_mode === "PACKAGE_END" || account?.client_balance_default_date_mode === "FIXED_DATE"
+      ? account.client_balance_default_date_mode
+      : "TODAY";
   const createActivityModalOpen = readParam(params, "new_activity") === "1";
   const selectedActivityId = readParam(params, "activity_id");
   const selectedActivity = activities.find((activity) => activity.id === selectedActivityId) ?? null;
@@ -1313,8 +1315,19 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                     <select name="client_balance_default_date_mode" defaultValue={accountClientBalanceDefaultDateMode}>
                       <option value="TODAY">{t("admin.config.account.client_balance_default_date_today")}</option>
                       <option value="PACKAGE_END">{t("admin.config.account.client_balance_default_date_package_end")}</option>
+                      <option value="FIXED_DATE">{t("admin.config.account.client_balance_default_date_fixed")}</option>
                     </select>
                     <small className="muted">{t("admin.config.account.client_balance_default_date_help")}</small>
+                  </label>
+
+                  <label className="span-2">
+                    {t("admin.config.account.client_balance_default_date_fixed_value")}
+                    <input
+                      type="date"
+                      name="client_balance_default_date"
+                      defaultValue={account.client_balance_default_date ?? ""}
+                    />
+                    <small className="muted">{t("admin.config.account.client_balance_default_date_fixed_help")}</small>
                   </label>
 
                   <label className="span-2">

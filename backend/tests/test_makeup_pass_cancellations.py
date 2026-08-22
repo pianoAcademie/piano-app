@@ -12,6 +12,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.models.plan import PlanKind
 from app.services.makeup_passes import (
+    claim_pending_makeup_request,
     consume_pass_and_create_makeup,
     grant_makeup_for_excused_absence,
     is_restricted_annual_forfait,
@@ -43,6 +44,43 @@ class _FakeSession:
 
 
 class MakeupPassCancellationTests(unittest.TestCase):
+    def test_pending_makeup_is_claimed_by_the_replacement_booking(self) -> None:
+        now = datetime(2026, 9, 28, 18, 0, tzinfo=timezone.utc)
+        request = SimpleNamespace(
+            id=uuid4(),
+            reserved_booking_id=None,
+            status=MakeupRequestStatus.PROPOSED,
+            booked_at=None,
+            updated_at=None,
+        )
+        db = _FakeSession(request)
+        booking = SimpleNamespace(id=uuid4(), user_id=uuid4(), makeup_request_id=None)
+        subscription = SimpleNamespace(id=uuid4())
+
+        claimed = claim_pending_makeup_request(
+            db,
+            booking=booking,
+            subscription=subscription,
+            now=now,
+        )
+
+        self.assertIs(claimed, request)
+        self.assertEqual(request.reserved_booking_id, booking.id)
+        self.assertEqual(request.status, MakeupRequestStatus.BOOKED)
+        self.assertEqual(request.booked_at, now)
+        self.assertEqual(booking.makeup_request_id, request.id)
+
+    def test_replacement_booking_is_rejected_without_pending_makeup(self) -> None:
+        db = _FakeSession(None)
+
+        with self.assertRaisesRegex(ValueError, "MAKEUP_REQUEST_REQUIRED"):
+            claim_pending_makeup_request(
+                db,
+                booking=SimpleNamespace(id=uuid4(), user_id=uuid4(), makeup_request_id=None),
+                subscription=SimpleNamespace(id=uuid4()),
+                now=datetime(2026, 9, 28, 18, 0, tzinfo=timezone.utc),
+            )
+
     def test_restricted_forfait_matches_exact_2026_2027_name(self) -> None:
         self.assertTrue(
             is_restricted_annual_forfait(SimpleNamespace(kind=PlanKind.FORFAIT, name="Année 2026-2027"))

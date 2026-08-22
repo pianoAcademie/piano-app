@@ -28,12 +28,16 @@ class _FakeFamilyDeleteSession:
         self.added: list[object] = []
         self.commit_calls = 0
         self.flush_calls = 0
+        self.executed: list[object] = []
 
     def scalar(self, _query: object) -> object | None:
         return self._link
 
     def scalars(self, _query: object) -> _ScalarListResult:
         return _ScalarListResult(self._siblings)
+
+    def execute(self, query: object) -> None:
+        self.executed.append(query)
 
     def delete(self, obj: object) -> None:
         self.deleted.append(obj)

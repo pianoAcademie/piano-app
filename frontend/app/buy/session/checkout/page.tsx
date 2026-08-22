@@ -91,6 +91,9 @@ function memberActionLabel(option: ClientSessionReservationMemberOptionOut, lang
   if (normalized === "BOOK_WITH_CREDIT" && option.coverage_source === "TRIAL") {
     return uiText(language, "client.use_trial_credit");
   }
+  if (normalized === "BOOK_WITH_CREDIT" && option.coverage_source === "MAKEUP") {
+    return uiText(language, "client.use_makeup");
+  }
   if (language === "fr" && option.action_label?.trim()) {
     return option.action_label;
   }
@@ -113,13 +116,22 @@ function memberStatusLabel(option: ClientSessionReservationMemberOptionOut, lang
   if (normalized === "ALREADY_BOOKED") return uiText(language, "public_session_checkout.status_booked");
   if (normalized === "ALREADY_WAITLISTED" || normalized === "JOIN_WAITLIST") return uiText(language, "public_session_checkout.status_waitlist");
   if (normalized === "FINALIZE_PAYMENT") return uiText(language, "public_session_checkout.status_payment_pending");
-  if (normalized === "BOOK_WITH_CREDIT") return uiText(language, "public_session_checkout.status_credit_available");
+  if (normalized === "BOOK_WITH_CREDIT") {
+    if (option.coverage_source === "MAKEUP") return uiText(language, "client.makeup_available");
+    if (option.coverage_source === "FORFAIT") return uiText(language, "client.compatible_fixed_plan_available");
+    if (option.coverage_source === "SUBSCRIPTION") return uiText(language, "client.compatible_subscription_available");
+    if (option.coverage_source === "PACK") return uiText(language, "client.compatible_pack_available");
+    return uiText(language, "public_session_checkout.status_credit_available");
+  }
   if (normalized === "BUY_FORMULA_OR_PAY_UNIT" || normalized === "PAY_UNIT") return uiText(language, "public_session_checkout.status_payment_required");
   if (normalized === "BUY_FORMULA" || normalized === "UNAVAILABLE") return uiText(language, "public_session_checkout.status_no_coverage");
   return option.status_label || uiText(language, "public_session_checkout.status_unavailable");
 }
 
 function memberReasonLabel(option: ClientSessionReservationMemberOptionOut, language: UiLanguage): string {
+  if (option.reason_code === "ACTIVE_PACK_INCOMPATIBLE") {
+    return uiText(language, "public_session_checkout.reason_active_plan_incompatible");
+  }
   if (language === "fr" && option.reason?.trim()) {
     return option.reason;
   }
@@ -129,7 +141,9 @@ function memberReasonLabel(option: ClientSessionReservationMemberOptionOut, lang
   if (normalized === "FINALIZE_PAYMENT") return uiText(language, "public_session_checkout.reason_finalize_payment");
   if (normalized === "JOIN_WAITLIST") return uiText(language, "public_session_checkout.reason_join_waitlist");
   if (normalized === "BOOK_WITH_CREDIT") {
-    return option.coverage_source === "TRIAL"
+    return option.coverage_source === "MAKEUP"
+      ? uiText(language, "client.makeup_covers_slot", { member: option.member_display_name })
+      : option.coverage_source === "TRIAL"
       ? uiText(language, "client.trial_credit_covers_slot", { member: option.member_display_name })
       : option.coverage_source === "MANUAL_CREDIT"
       ? uiText(language, "public_session_checkout.reason_credit_manual")
@@ -260,6 +274,15 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
     <main className="page public-buy-page">
       <section className="public-buy-shell">
         <article className="card public-buy-card">
+          <nav className="public-buy-sticky-navigation" aria-label={t("public_session_checkout.back_to_planning")}>
+            <Link
+              className="mode-link public-buy-back-link"
+              href={planningReturnTo || `/embed/planning${language === "en" ? "?lang=en" : ""}`}
+            >
+              <span aria-hidden="true">←</span>
+              {t("public_session_checkout.back_to_planning")}
+            </Link>
+          </nav>
           <header className="public-buy-header">
             <PortalBrandLockup
               title="Piano Academie"

@@ -352,12 +352,15 @@ async def payment_webhook(
                     sub.current_period_end = next_end
                     sub.next_payment_at = next_end
                     sub.ends_at = next_end
-        elif lookup.cancelled:
+        elif lookup.cancelled or (lookup.failed and plan.kind == PlanKind.PACK):
             if sub.status == SubscriptionStatus.PENDING:
                 sub.status = SubscriptionStatus.CANCELLED
                 sub.auto_renew = False
                 sub.next_payment_at = None
         elif lookup.failed and sub.status == SubscriptionStatus.PENDING:
+            # Recurring subscriptions may remain recoverable after a failed
+            # charge. One-off packs, however, are cancelled above: no purchase
+            # was completed and there is nothing to refund.
             sub.status = SubscriptionStatus.PENDING
 
         db.add(sub)

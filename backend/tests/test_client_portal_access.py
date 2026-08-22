@@ -14,6 +14,15 @@ from app.services.client_portal_access import (
     create_password_setup_url,
     send_client_portal_access_email,
 )
+from app.services.messaging_templates import (
+    CLIENT_APP_ANDROID_URL,
+    CLIENT_APP_IOS_URL,
+    PREDEFINED_EMAIL_TEMPLATE_CLIENT_BOOKING_CONFIRMATION,
+    PREDEFINED_EMAIL_TEMPLATE_CLIENT_PORTAL_ACCESS,
+    PREDEFINED_EMAIL_TEMPLATE_TRIAL_ADULT_GUIDE,
+    PREDEFINED_TEMPLATE_BY_CODE,
+    PREDEFINED_TEMPLATE_TRANSLATIONS,
+)
 
 
 class _FakeSession:
@@ -29,6 +38,31 @@ class _FakeSession:
 
 
 class ClientPortalAccessTests(unittest.TestCase):
+    def test_client_facing_templates_include_both_client_apps(self) -> None:
+        template_codes = (
+            PREDEFINED_EMAIL_TEMPLATE_CLIENT_PORTAL_ACCESS,
+            PREDEFINED_EMAIL_TEMPLATE_CLIENT_BOOKING_CONFIRMATION,
+            PREDEFINED_EMAIL_TEMPLATE_TRIAL_ADULT_GUIDE,
+            "INVOICE_PAID",
+            "PAYMENT_CONFIRMED",
+        )
+
+        for code in template_codes:
+            french_body = PREDEFINED_TEMPLATE_BY_CODE[code].body
+            english_body = PREDEFINED_TEMPLATE_TRANSLATIONS[code]["body"]["en"]
+            for body in (french_body, english_body):
+                self.assertIn(CLIENT_APP_IOS_URL, body, code)
+                self.assertIn(CLIENT_APP_ANDROID_URL, body, code)
+
+        french_body = PREDEFINED_TEMPLATE_BY_CODE[PREDEFINED_EMAIL_TEMPLATE_CLIENT_PORTAL_ACCESS].body
+        english_body = PREDEFINED_TEMPLATE_TRANSLATIONS[PREDEFINED_EMAIL_TEMPLATE_CLIENT_PORTAL_ACCESS]["body"]["en"]
+        self.assertNotIn("disponible prochainement", french_body)
+        self.assertNotIn("available soon", english_body)
+        self.assertNotIn(
+            "&lt;p&gt;",
+            PREDEFINED_TEMPLATE_TRANSLATIONS[PREDEFINED_EMAIL_TEMPLATE_TRIAL_ADULT_GUIDE]["body"]["en"],
+        )
+
     def test_setup_url_stores_only_the_token_hash(self) -> None:
         db = _FakeSession()
         user = SimpleNamespace(id=uuid4())

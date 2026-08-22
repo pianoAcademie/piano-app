@@ -8,6 +8,7 @@ type UiLanguage = "fr" | "en";
 
 type CourseTypeOption = {
   id: string;
+  code: string;
   name: string;
   durationMinutes: number;
   defaultCapacity: number;
@@ -44,6 +45,7 @@ type SessionCreateMainFieldsProps = {
     title?: string;
     courseTypeId?: string;
     professorId?: string;
+    professorIds?: string[];
     locationId?: string;
     sessionTimezone?: string;
     startDate?: string;
@@ -112,6 +114,8 @@ export default function SessionCreateMainFields({
         withStudents: "with students",
         withoutStudent: "without student",
         teacher: "Teacher",
+        teachers: "Teachers (up to 4)",
+        teachersHint: "Hold Ctrl/Cmd to select several teachers.",
         selectTeacher: "Select a teacher",
         noTeacher: "No teacher",
         location: "Location",
@@ -147,6 +151,8 @@ export default function SessionCreateMainFields({
         withStudents: "avec eleves",
         withoutStudent: "sans eleve",
         teacher: "Professeur",
+        teachers: "Professeurs (jusqu'a 4)",
+        teachersHint: "Maintenez Ctrl/Cmd pour selectionner plusieurs professeurs.",
         selectTeacher: "Selectionner un professeur",
         noTeacher: "Sans professeur",
         location: "Lieu",
@@ -210,6 +216,11 @@ export default function SessionCreateMainFields({
   const timezoneDefaultValue = String(draft?.sessionTimezone || "").trim() || defaultSessionTimezone;
   const startDateDefaultValue = String(draft?.startDate || "").trim() || defaultStartDate;
   const professorDefaultValue = String(draft?.professorId || "").trim();
+  const professorDefaultValues = Array.from(new Set([
+    ...(draft?.professorIds ?? []),
+    ...(professorDefaultValue ? [professorDefaultValue] : []),
+  ])).slice(0, 4);
+  const isMasterclass = /master\s*class/i.test(`${selectedCourseType?.code ?? ""} ${selectedCourseType?.name ?? ""}`);
   const titleDefaultValue = String(draft?.title || "");
   const zoomLinkDefaultValue = String(draft?.zoomLink || "");
   const isAllDayDefaultValue = Boolean(draft?.isAllDay);
@@ -266,15 +277,40 @@ export default function SessionCreateMainFields({
         </label>
 
         <label>
-          {text.teacher}
-          <select name="professor_id" defaultValue={professorDefaultValue} required={Boolean(selectedCourseType?.requiresProfessor)}>
-            <option value="">{selectedCourseType?.requiresProfessor ? text.selectTeacher : text.noTeacher}</option>
-            {professors.map((row) => (
-              <option key={row.id} value={row.id}>
-                {row.firstName} {row.lastName}
-              </option>
-            ))}
-          </select>
+          {isMasterclass ? text.teachers : text.teacher}
+          {isMasterclass ? (
+            <>
+              <select
+                name="professor_ids"
+                multiple
+                size={Math.min(6, Math.max(3, professors.length))}
+                defaultValue={professorDefaultValues}
+                required={Boolean(selectedCourseType?.requiresProfessor)}
+                onChange={(event) => {
+                  const selected = Array.from(event.currentTarget.selectedOptions);
+                  if (selected.length > 4) {
+                    selected[selected.length - 1].selected = false;
+                  }
+                }}
+              >
+                {professors.map((row) => (
+                  <option key={row.id} value={row.id}>
+                    {row.firstName} {row.lastName}
+                  </option>
+                ))}
+              </select>
+              <small className="muted">{text.teachersHint}</small>
+            </>
+          ) : (
+            <select name="professor_id" defaultValue={professorDefaultValue} required={Boolean(selectedCourseType?.requiresProfessor)}>
+              <option value="">{selectedCourseType?.requiresProfessor ? text.selectTeacher : text.noTeacher}</option>
+              {professors.map((row) => (
+                <option key={row.id} value={row.id}>
+                  {row.firstName} {row.lastName}
+                </option>
+              ))}
+            </select>
+          )}
         </label>
 
         <label>

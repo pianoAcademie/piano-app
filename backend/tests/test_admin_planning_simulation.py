@@ -474,6 +474,38 @@ class AdminPlanningSimulationTests(unittest.TestCase):
         self.assertEqual(warnings["assas"], ["MULTI_SITE_HALF_DAY"])
         self.assertEqual(warnings["pompe"], ["MULTI_SITE_HALF_DAY"])
 
+    def test_teacher_assignment_warnings_include_secondary_masterclass_professors(self) -> None:
+        shared_professor_id = uuid4()
+        common = {
+            "activity_id": uuid4(),
+            "activity_name": "Masterclass piano",
+            "weekday": 6,
+            "weekday_label": "Dimanche",
+            "location_name": "Rue de Richelieu",
+            "occurrence_dates": [date(2026, 10, 4)],
+        }
+        first = self._teacher_need_slot(
+            **common,
+            slot_key="masterclass-first",
+            start_time="14:00",
+            end_time="16:00",
+        )
+        second = self._teacher_need_slot(
+            **common,
+            slot_key="masterclass-second",
+            start_time="15:00",
+            end_time="17:00",
+        )
+        first.teacher_assignment_professor_ids = [uuid4(), shared_professor_id]
+        first.teacher_assignment_labels = ["Premier professeur", "Professeur partagé"]
+        second.teacher_assignment_professor_ids = [uuid4(), uuid4(), shared_professor_id]
+        second.teacher_assignment_labels = ["Autre professeur", "Troisième professeur", "Professeur partagé"]
+
+        warnings = _planning_simulation_teacher_assignment_warnings([first, second])  # type: ignore[arg-type]
+
+        self.assertEqual(warnings["masterclass-first"], ["TIME_OVERLAP"])
+        self.assertEqual(warnings["masterclass-second"], ["TIME_OVERLAP"])
+
     def test_teacher_assignment_update_resolves_professor_label(self) -> None:
         professor_id = uuid4()
         current_user_id = uuid4()

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, String, UniqueConstraint, text
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, String, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -16,12 +16,14 @@ class PlanningSimulationTeacherAssignment(Base):
         UniqueConstraint(
             "school_year_label",
             "slot_key",
-            name="uq_planning_simulation_teacher_assignment_slot",
+            "position",
+            name="uq_planning_simulation_teacher_assignment_slot_position",
         ),
         CheckConstraint(
             "status IN ('PREVISIONAL', 'CONFIRMED')",
             name="ck_planning_simulation_teacher_assignment_status",
         ),
+        CheckConstraint("position >= 1 AND position <= 4", name="ck_planning_simulation_teacher_assignment_position"),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -32,6 +34,7 @@ class PlanningSimulationTeacherAssignment(Base):
     )
     school_year_label: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
     slot_key: Mapped[str] = mapped_column(String(600), nullable=False)
+    position: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
     professor_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("professors.id", ondelete="SET NULL"),

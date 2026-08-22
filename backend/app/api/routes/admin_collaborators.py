@@ -9,7 +9,7 @@ from pathlib import Path
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
-from sqlalchemy import case, delete, func, or_, select, update
+from sqlalchemy import and_, case, delete, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_admin_or_permissions, require_roles
@@ -87,6 +87,7 @@ from app.services.communication_journal import COMMUNICATION_TYPE_OPERATIONAL, l
 from app.services.session_notifications import send_session_operation_email
 from app.services.providers.sms import send_provider_sms
 from app.services.security import hash_password
+from app.services.session_teachers import effective_teacher_filter_for_professor
 
 router = APIRouter(prefix="/admin/collaborators")
 SUPPORTED_RATE_CURRENCIES = {"EUR", "USD"}
@@ -795,9 +796,15 @@ def _calculate_professor_due_amount(
 ) -> Decimal:
     rows = db.execute(
         select(CourseSession, ProfessorSessionPayout)
-        .outerjoin(ProfessorSessionPayout, ProfessorSessionPayout.session_id == CourseSession.id)
+        .outerjoin(
+            ProfessorSessionPayout,
+            and_(
+                ProfessorSessionPayout.session_id == CourseSession.id,
+                ProfessorSessionPayout.professor_id == professor.id,
+            ),
+        )
         .where(
-            CourseSession.professor_id == professor.id,
+            effective_teacher_filter_for_professor(professor_id=professor.id),
             CourseSession.status != SessionStatus.CANCELLED,
             CourseSession.end_at_utc < as_of_exclusive,
         )
@@ -816,6 +823,7 @@ def _calculate_professor_due_amount(
                 db,
                 session_obj=session_obj,
                 on_date=session_obj.start_at_utc.date(),
+                professor_id_override=professor.id,
                 default_grid_lines=default_grid_lines,
             )
             if resolved_rate is not None:
@@ -845,7 +853,7 @@ def _ensure_professor_payout_rows_until_reference(
     sessions = db.scalars(
         select(CourseSession)
         .where(
-            CourseSession.professor_id == professor.id,
+            effective_teacher_filter_for_professor(professor_id=professor.id),
             CourseSession.status != SessionStatus.CANCELLED,
             CourseSession.end_at_utc < as_of_exclusive,
         )
@@ -856,7 +864,10 @@ def _ensure_professor_payout_rows_until_reference(
     for session_obj in sessions:
         existing = db.scalar(
             select(ProfessorSessionPayout)
-            .where(ProfessorSessionPayout.session_id == session_obj.id)
+            .where(
+                ProfessorSessionPayout.session_id == session_obj.id,
+                ProfessorSessionPayout.professor_id == professor.id,
+            )
             .with_for_update()
         )
         if existing is not None:
@@ -866,6 +877,7 @@ def _ensure_professor_payout_rows_until_reference(
             db,
             session_obj=session_obj,
             on_date=session_obj.start_at_utc.date(),
+            professor_id_override=professor.id,
             default_grid_lines=default_grid_lines,
         )
         if resolved_rate is None:
@@ -1780,9 +1792,15 @@ def get_collaborator_payout_ledger(
         select(CourseSession, CourseType, Location, ProfessorSessionPayout)
         .join(CourseType, CourseType.id == CourseSession.course_type_id)
         .join(Location, Location.id == CourseSession.location_id)
-        .outerjoin(ProfessorSessionPayout, ProfessorSessionPayout.session_id == CourseSession.id)
+        .outerjoin(
+            ProfessorSessionPayout,
+            and_(
+                ProfessorSessionPayout.session_id == CourseSession.id,
+                ProfessorSessionPayout.professor_id == professor_id,
+            ),
+        )
         .where(
-            CourseSession.professor_id == professor_id,
+            effective_teacher_filter_for_professor(professor_id=professor_id),
             CourseSession.status != SessionStatus.CANCELLED,
             CourseSession.end_at_utc < as_of_exclusive,
         )
@@ -1809,6 +1827,7 @@ def get_collaborator_payout_ledger(
                 db,
                 session_obj=session_obj,
                 on_date=session_obj.start_at_utc.date(),
+                professor_id_override=professor_id,
                 default_grid_lines=default_grid_lines,
             )
             if resolved_rate is not None:

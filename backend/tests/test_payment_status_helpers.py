@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from pathlib import Path
 import sys
 import unittest
@@ -7,12 +8,15 @@ import unittest
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.api.routes.admin_clients import (
+    _invoice_status_from_payment_status as _admin_invoice_status_from_payment_status,
     _is_failed_payment_status as _admin_is_failed_payment_status,
     _subscription_payment_status as _admin_subscription_payment_status,
 )
 from app.api.routes.clients import (
+    _first_currency_invoice_total,
     _invoice_status_from_payment_status,
     _is_failed_payment_status as _client_is_failed_payment_status,
+    _manual_transaction_client_display,
     _subscription_payment_status as _client_subscription_payment_status,
     _sportigo_opening_balance_has_new_app_payment,
     _subscription_payment_occurred_at,
@@ -21,6 +25,23 @@ from app.services.payment_checkout import _looks_like_local_callback_url, _paypl
 
 
 class PaymentStatusHelpersTests(unittest.TestCase):
+    def test_manual_refunds_are_negative_client_movements(self) -> None:
+        self.assertEqual(_manual_transaction_client_display("PAYMENT"), ("MANUAL", Decimal("1")))
+        self.assertEqual(_manual_transaction_client_display("REFUND"), ("REFUND", Decimal("-1")))
+
+    def test_client_invoice_total_uses_net_amount_due(self) -> None:
+        amount, currency = _first_currency_invoice_total(
+            {
+                "totals_by_currency": {"EUR": "1152.00"},
+                "opening_balance_by_currency": {"EUR": "330.00"},
+                "applied_payment_totals_by_currency": {"EUR": "-200.00"},
+                "total_to_pay_by_currency": {"EUR": "1282.00"},
+            }
+        )
+
+        self.assertEqual(amount, Decimal("1282.00"))
+        self.assertEqual(currency, "EUR")
+
     def test_http_200_is_not_treated_as_failed(self) -> None:
         self.assertFalse(_client_is_failed_payment_status("HTTP_200"))
         self.assertFalse(_admin_is_failed_payment_status("HTTP_200"))
@@ -60,6 +81,23 @@ class PaymentStatusHelpersTests(unittest.TestCase):
 
     def test_invoice_status_treats_http_200_as_paid(self) -> None:
         self.assertEqual(_invoice_status_from_payment_status("HTTP_200"), "PAID")
+
+    def test_pending_subscription_uses_failed_provider_status(self) -> None:
+        subscription = type(
+            "Subscription",
+            (),
+            {
+                "status": type("Status", (), {"value": "PENDING"})(),
+                "last_payment_status": "FAILED",
+                "billing_method_code": "CARD_ONLINE",
+            },
+        )()
+        self.assertEqual(_client_subscription_payment_status(subscription), "FAILED")
+        self.assertEqual(_admin_subscription_payment_status(subscription), "FAILED")
+
+    def test_failed_payment_has_no_active_invoice(self) -> None:
+        self.assertEqual(_invoice_status_from_payment_status("FAILED"), "CANCELLED")
+        self.assertEqual(_admin_invoice_status_from_payment_status("FAILED"), "CANCELLED")
 
     def test_sportigo_opening_balance_is_not_a_new_app_payment(self) -> None:
         from datetime import datetime, timezone

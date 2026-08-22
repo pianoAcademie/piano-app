@@ -332,7 +332,11 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
     language,
   );
 
-  const locationsResult = await backendRequest<LocationOut[]>("/api/v1/locations?active=true");
+  const locationsParams = new URLSearchParams({ active: "true" });
+  if (courseTypeIds.length === 1 && participantKind === null) {
+    locationsParams.set("course_type_id", courseTypeIds[0]);
+  }
+  const locationsResult = await backendRequest<LocationOut[]>(`/api/v1/locations?${locationsParams.toString()}`);
   const locations = locationsResult.ok ? locationsResult.data : [];
   const parisLocationIds = resolveParisLocationIds(locations);
   const usesParisLocationGroup = locationGroup === PARIS_LOCATION_GROUP && parisLocationIds.length > 0;

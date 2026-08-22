@@ -5969,7 +5969,7 @@ def _ensure_form_config(
                 "line_templates": line_templates,
                 "default_vat_rate": "20.00",
                 "default_course_mode": "onsite",
-                "default_pre_registration_deposit_enabled": True,
+                "default_pre_registration_deposit_enabled": False,
                 "default_pre_registration_deposit_amount_ttc": "200.00",
             },
             is_active=True,
@@ -6187,7 +6187,7 @@ def _quote_meta_from_analysis(
 
 def _default_pre_registration_deposit_from_config(config: TypeformFormConfig) -> dict[str, object] | None:
     config_json = _json_object(config.configuration_json)
-    enabled = _bool_or_default(config_json.get("default_pre_registration_deposit_enabled"), True)
+    enabled = _bool_or_default(config_json.get("default_pre_registration_deposit_enabled"), False)
     if not enabled:
         return None
     amount = _q2(_parse_decimal(config_json.get("default_pre_registration_deposit_amount_ttc"), Decimal("200.00")))

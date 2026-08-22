@@ -5,10 +5,19 @@ from datetime import date, datetime
 from decimal import Decimal, ROUND_HALF_UP
 from uuid import UUID
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import exists, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, Location, Professor, SessionStatus
+from app.models.catalog import (
+    Booking,
+    BookingStatus,
+    CourseSession,
+    CourseSessionProfessor,
+    CourseType,
+    Location,
+    Professor,
+    SessionStatus,
+)
 from app.models.payout import PayoutStatus, ProfessorHourlyRate, ProfessorSessionPayout
 from app.services.professor_default_grid import (
     DefaultProfessorGridLine,
@@ -16,6 +25,7 @@ from app.services.professor_default_grid import (
     resolve_default_professor_grid_hourly_rate,
 )
 from app.services.professor_contracts import resolve_professor_contract_rate_for_session
+from app.services.session_teachers import effective_professor_ids_for_session
 
 
 def _quantize_2(value: Decimal) -> Decimal:
@@ -398,22 +408,24 @@ def run_calc_professor_payouts_job(
     limit: int = 200,
     force_recompute: bool = False,
 ) -> PayoutJobResult:
-    payouts_sq = select(ProfessorSessionPayout.session_id).subquery()
-
     sessions_stmt = (
         select(CourseSession)
         .where(
             CourseSession.status != SessionStatus.CANCELLED,
             CourseSession.end_at_utc <= now,
-            CourseSession.professor_id.is_not(None),
+            or_(
+                CourseSession.professor_id.is_not(None),
+                exists(
+                    select(CourseSessionProfessor.id).where(
+                        CourseSessionProfessor.session_id == CourseSession.id
+                    )
+                ),
+            ),
         )
         .order_by(CourseSession.end_at_utc.asc())
         .limit(limit)
         .with_for_update()
     )
-
-    if not force_recompute:
-        sessions_stmt = sessions_stmt.where(CourseSession.id.not_in(select(payouts_sq.c.session_id)))
 
     sessions = db.scalars(sessions_stmt).all()
     default_grid_lines, _ = load_default_professor_grid(db)
@@ -422,61 +434,67 @@ def run_calc_professor_payouts_job(
     updated = 0
     skipped_no_rate = 0
     skipped_existing_locked = 0
+    checked = 0
 
     for session_obj in sessions:
-        session_date = session_obj.start_at_utc.date()
-        rate = _resolve_hourly_rate(
-            db,
-            session_obj=session_obj,
-            on_date=session_date,
-            default_grid_lines=default_grid_lines,
-        )
-        if rate is None:
-            skipped_no_rate += 1
-            continue
-
-        duration_hours = _quantize_2(
-            Decimal((session_obj.end_at_utc - session_obj.start_at_utc).total_seconds()) / Decimal(3600)
-        )
-        hourly_rate = _quantize_2(Decimal(rate.hourly_rate))
-        amount = _quantize_2(duration_hours * hourly_rate)
-
-        payout = db.scalar(
-            select(ProfessorSessionPayout)
-            .where(ProfessorSessionPayout.session_id == session_obj.id)
-            .with_for_update()
-        )
-
-        if payout is None:
-            payout = ProfessorSessionPayout(
-                session_id=session_obj.id,
-                professor_id=session_obj.professor_id,
-                duration_hours=duration_hours,
-                hourly_rate_snapshot=hourly_rate,
-                currency_snapshot=rate.currency_code,
-                amount_snapshot=amount,
-                payout_status=PayoutStatus.PENDING,
+        for professor_id in effective_professor_ids_for_session(db, session_obj=session_obj):
+            checked += 1
+            payout = db.scalar(
+                select(ProfessorSessionPayout)
+                .where(
+                    ProfessorSessionPayout.session_id == session_obj.id,
+                    ProfessorSessionPayout.professor_id == professor_id,
+                )
+                .with_for_update()
             )
-            db.add(payout)
-            created += 1
-            continue
 
-        if payout.payout_status == PayoutStatus.PAID:
-            skipped_existing_locked += 1
-            continue
+            if payout is not None and (not force_recompute or payout.payout_status == PayoutStatus.PAID):
+                skipped_existing_locked += 1
+                continue
 
-        payout.professor_id = session_obj.professor_id
-        payout.duration_hours = duration_hours
-        payout.hourly_rate_snapshot = hourly_rate
-        payout.currency_snapshot = rate.currency_code
-        payout.amount_snapshot = amount
-        if payout.payout_status not in (PayoutStatus.PENDING, PayoutStatus.APPROVED):
-            payout.payout_status = PayoutStatus.PENDING
-            payout.paid_at = None
-        updated += 1
+            session_date = session_obj.start_at_utc.date()
+            rate = _resolve_hourly_rate(
+                db,
+                session_obj=session_obj,
+                on_date=session_date,
+                professor_id_override=professor_id,
+                default_grid_lines=default_grid_lines,
+            )
+            if rate is None:
+                skipped_no_rate += 1
+                continue
+
+            duration_hours = _quantize_2(
+                Decimal((session_obj.end_at_utc - session_obj.start_at_utc).total_seconds()) / Decimal(3600)
+            )
+            hourly_rate = _quantize_2(Decimal(rate.hourly_rate))
+            amount = _quantize_2(duration_hours * hourly_rate)
+
+            if payout is None:
+                payout = ProfessorSessionPayout(
+                    session_id=session_obj.id,
+                    professor_id=professor_id,
+                    duration_hours=duration_hours,
+                    hourly_rate_snapshot=hourly_rate,
+                    currency_snapshot=rate.currency_code,
+                    amount_snapshot=amount,
+                    payout_status=PayoutStatus.PENDING,
+                )
+                db.add(payout)
+                created += 1
+                continue
+
+            payout.duration_hours = duration_hours
+            payout.hourly_rate_snapshot = hourly_rate
+            payout.currency_snapshot = rate.currency_code
+            payout.amount_snapshot = amount
+            if payout.payout_status not in (PayoutStatus.PENDING, PayoutStatus.APPROVED):
+                payout.payout_status = PayoutStatus.PENDING
+                payout.paid_at = None
+            updated += 1
 
     return PayoutJobResult(
-        checked=len(sessions),
+        checked=checked,
         created=created,
         updated=updated,
         skipped_no_rate=skipped_no_rate,

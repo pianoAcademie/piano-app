@@ -29,6 +29,10 @@ function warningLabel(code: string, language: UiLanguage): string {
   return code;
 }
 
+function isMasterclass(slot: AdminPlanningSimulationSlotOut): boolean {
+  return /master\s*class/i.test(slot.course_type_name || "");
+}
+
 type StudentSection = {
   label: string;
   people: string[];
@@ -227,7 +231,11 @@ export function TeacherAssignmentGridCell({
                   <div className="simulation-teacher-assignment-dialog-current">
                     <div>
                       <span>{text(language, "Poste", "Position")} {index + 1}</span>
-                      <strong>{slot.teacher_assignment_label || text(language, "À affecter", "Unfilled")}</strong>
+                      <strong>
+                        {(slot.teacher_assignment_labels?.length
+                          ? slot.teacher_assignment_labels.join(" · ")
+                          : slot.teacher_assignment_label) || text(language, "À affecter", "Unfilled")}
+                      </strong>
                     </div>
                     <span className={`simulation-assignment-status ${slot.teacher_assignment_status?.toLowerCase() || "unfilled"}`}>
                       {slot.teacher_assignment_status === "CONFIRMED"
@@ -247,9 +255,11 @@ export function TeacherAssignmentGridCell({
                   ) : null}
 
                   {canEdit ? (
+                    <>
                     <form action={adminUpdatePlanningSimulationTeacherAssignmentAction} className="simulation-teacher-assignment-dialog-form">
                       <input type="hidden" name="school_year_label" value={schoolYearLabel} />
                       <input type="hidden" name="slot_key" value={slot.slot_key} />
+                      <input type="hidden" name="position" value="1" />
                       <input type="hidden" name="return_to" value={returnTo} />
                       <label>
                         <span>{text(language, "Professeur actif", "Active teacher")}</span>
@@ -278,11 +288,61 @@ export function TeacherAssignmentGridCell({
                       </label>
                       <div className="simulation-assignment-actions">
                         <button type="submit" name="operation" value="save">{text(language, "Enregistrer", "Save")}</button>
-                        {slot.teacher_assignment_label ? (
+                        {slot.teacher_assignment_label || slot.teacher_assignment_professor_id ? (
                           <button className="ghost" type="submit" name="operation" value="clear">{text(language, "Retirer", "Clear")}</button>
                         ) : null}
                       </div>
                     </form>
+                    {isMasterclass(slot) ? ([2, 3, 4] as const).map((position) => {
+                      const assignmentIndex = position - 1;
+                      const assignedProfessorId = slot.teacher_assignment_professor_ids?.[assignmentIndex] || "";
+                      const assignedLabel = slot.teacher_assignment_labels?.[assignmentIndex] || "";
+                      const assignedStatus = slot.teacher_assignment_statuses?.[assignmentIndex] || "PREVISIONAL";
+                      return (
+                        <form
+                          action={adminUpdatePlanningSimulationTeacherAssignmentAction}
+                          className="simulation-teacher-assignment-dialog-form"
+                          key={`${slot.slot_key}-teacher-${position}`}
+                        >
+                          <input type="hidden" name="school_year_label" value={schoolYearLabel} />
+                          <input type="hidden" name="slot_key" value={slot.slot_key} />
+                          <input type="hidden" name="position" value={position} />
+                          <input type="hidden" name="return_to" value={returnTo} />
+                          <label>
+                            <span>{text(language, `Professeur actif ${position}`, `Active teacher ${position}`)}</span>
+                            <select name="professor_id" defaultValue={assignedProfessorId}>
+                              <option value="">{text(language, "— Aucun / provisoire —", "— None / placeholder —")}</option>
+                              {activeProfessors.map((professor) => (
+                                <option value={professor.id} key={professor.id}>{professor.first_name} {professor.last_name}</option>
+                              ))}
+                            </select>
+                          </label>
+                          <label>
+                            <span>{text(language, "Ou libellé provisoire", "Or placeholder label")}</span>
+                            <input
+                              name="teacher_label"
+                              list="simulation-placeholder-teachers"
+                              defaultValue={assignedProfessorId ? "" : assignedLabel}
+                              placeholder={text(language, `Ex. Prof à confirmer ${position}`, `E.g. Teacher to confirm ${position}`)}
+                            />
+                          </label>
+                          <label>
+                            <span>{text(language, "Statut", "Status")}</span>
+                            <select name="assignment_status" defaultValue={assignedStatus}>
+                              <option value="PREVISIONAL">{text(language, "Prévisionnel", "Provisional")}</option>
+                              <option value="CONFIRMED">{text(language, "Confirmé", "Confirmed")}</option>
+                            </select>
+                          </label>
+                          <div className="simulation-assignment-actions">
+                            <button type="submit" name="operation" value="save">{text(language, "Enregistrer", "Save")}</button>
+                            {assignedLabel || assignedProfessorId ? (
+                              <button className="ghost" type="submit" name="operation" value="clear">{text(language, "Retirer", "Clear")}</button>
+                            ) : null}
+                          </div>
+                        </form>
+                      );
+                    }) : null}
+                    </>
                   ) : (
                     <p className="muted">{text(language, "Consultation uniquement.", "Read-only access.")}</p>
                   )}

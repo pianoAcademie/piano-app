@@ -13,13 +13,13 @@ const professorManifest = {
   theme_color: "#111827",
   icons: [
     {
-      src: "/app-icons/piano-academie-192.png",
+      src: "/app-icons/piano-academie-professeur-192.png",
       sizes: "192x192",
       type: "image/png",
       purpose: "any maskable",
     },
     {
-      src: "/app-icons/piano-academie-512.png",
+      src: "/app-icons/piano-academie-professeur-512.png",
       sizes: "512x512",
       type: "image/png",
       purpose: "any maskable",
@@ -30,19 +30,19 @@ const professorManifest = {
       name: "Planning",
       short_name: "Planning",
       url: "/prof?tab=planning",
-      icons: [{ src: "/app-icons/piano-academie-192.png", sizes: "192x192" }],
+      icons: [{ src: "/app-icons/piano-academie-professeur-192.png", sizes: "192x192" }],
     },
     {
       name: "Feuilles",
       short_name: "Feuilles",
       url: "/prof/statements",
-      icons: [{ src: "/app-icons/piano-academie-192.png", sizes: "192x192" }],
+      icons: [{ src: "/app-icons/piano-academie-professeur-192.png", sizes: "192x192" }],
     },
     {
       name: "Messages",
       short_name: "Messages",
       url: "/prof?tab=messages",
-      icons: [{ src: "/app-icons/piano-academie-192.png", sizes: "192x192" }],
+      icons: [{ src: "/app-icons/piano-academie-professeur-192.png", sizes: "192x192" }],
     },
   ],
 };

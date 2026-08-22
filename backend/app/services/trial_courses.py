@@ -21,7 +21,6 @@ TRIAL_USAGE_STATUSES: tuple[BookingStatus, ...] = (
 )
 
 TRIAL_CREDIT_STATUSES: tuple[SubscriptionStatus, ...] = (
-    SubscriptionStatus.PENDING,
     SubscriptionStatus.ACTIVE,
     SubscriptionStatus.PAYMENT_ALERT,
     SubscriptionStatus.PAUSED,

@@ -402,7 +402,11 @@ export default function ManualTransactionLegalEntityFields({
             <input type="hidden" name="check_deposit_label" value={checkDepositLabel} />
             <label>
               {text.checkDepositMonth}
-              <select name="check_deposit_month" value={checkDepositMonth} onChange={(event) => setCheckDepositMonth(event.currentTarget.value)}>
+              <select
+                name="check_deposit_month"
+                defaultValue=""
+                onChange={(event) => setCheckDepositMonth(event.currentTarget.value)}
+              >
                 <option value="">{text.checkDepositMonthPlaceholder}</option>
                 {monthOptions(resolvedLanguage).map((option) => (
                   <option key={option.value} value={option.value}>
@@ -413,7 +417,11 @@ export default function ManualTransactionLegalEntityFields({
             </label>
             <label>
               {text.checkDepositYearPlaceholder}
-              <select name="check_deposit_year" value={checkDepositYear} onChange={(event) => setCheckDepositYear(event.currentTarget.value)}>
+              <select
+                name="check_deposit_year"
+                defaultValue={checkDepositYear}
+                onChange={(event) => setCheckDepositYear(event.currentTarget.value)}
+              >
                 {checkDepositYearOptions.map((year) => (
                   <option key={year} value={year}>
                     {year}

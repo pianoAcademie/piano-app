@@ -15,11 +15,20 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, st
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from xhtml2pdf import pisa
-from sqlalchemy import Numeric, Text, case, cast, extract, func, or_, select, update
+from sqlalchemy import Numeric, Text, and_, case, cast, extract, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_roles
-from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, Location, Professor, SessionStatus
+from app.models.catalog import (
+    Booking,
+    BookingStatus,
+    CourseSession,
+    CourseSessionProfessor,
+    CourseType,
+    Location,
+    Professor,
+    SessionStatus,
+)
 from app.models.client_record import ClientInvoiceLine, ClientManualTransaction, ClientNoteEntry
 from app.models.family import ClientFamilyLink
 from app.models.ops import CommunicationChannel as CommunicationChannelModel, CommunicationLog, LegalEntity, ProfessorSessionMessage
@@ -3005,6 +3014,20 @@ def report_professor_statements(
     attended_case = case((Booking.status == BookingStatus.ATTENDED, 1), else_=0)
     no_show_case = case((Booking.status == BookingStatus.NO_SHOW, 1), else_=0)
     excused_case = case((Booking.status == BookingStatus.EXCUSED_ABSENCE, 1), else_=0)
+    effective_professor_id_expr = case(
+        (
+            and_(
+                CourseSessionProfessor.position == 1,
+                CourseSession.substitute_teacher_id.is_not(None),
+            ),
+            CourseSession.substitute_teacher_id,
+        ),
+        else_=func.coalesce(
+            CourseSessionProfessor.professor_id,
+            CourseSession.substitute_teacher_id,
+            CourseSession.professor_id,
+        ),
+    )
 
     stmt = (
         select(
@@ -3027,11 +3050,28 @@ def report_professor_statements(
             ProfessorSessionPayout.currency_snapshot.label("currency_snapshot"),
             ProfessorSessionPayout.payout_status.label("payout_status"),
         )
-        .join(Professor, Professor.id == CourseSession.professor_id)
+        .outerjoin(
+            CourseSessionProfessor,
+            and_(
+                CourseSessionProfessor.session_id == CourseSession.id,
+                or_(
+                    CourseSessionProfessor.position == 1,
+                    CourseSession.substitute_teacher_id.is_(None),
+                    CourseSessionProfessor.professor_id != CourseSession.substitute_teacher_id,
+                ),
+            ),
+        )
+        .join(Professor, Professor.id == effective_professor_id_expr)
         .join(CourseType, CourseType.id == CourseSession.course_type_id)
         .join(Location, Location.id == CourseSession.location_id)
         .outerjoin(Booking, Booking.session_id == CourseSession.id)
-        .outerjoin(ProfessorSessionPayout, ProfessorSessionPayout.session_id == CourseSession.id)
+        .outerjoin(
+            ProfessorSessionPayout,
+            and_(
+                ProfessorSessionPayout.session_id == CourseSession.id,
+                ProfessorSessionPayout.professor_id == Professor.id,
+            ),
+        )
         .where(CourseSession.status != SessionStatus.CANCELLED)
         .group_by(
             CourseSession.id,
@@ -3056,7 +3096,7 @@ def report_professor_statements(
     if to is not None:
         stmt = stmt.where(CourseSession.start_at_utc <= to)
     if professor_id is not None:
-        stmt = stmt.where(CourseSession.professor_id == professor_id)
+        stmt = stmt.where(effective_professor_id_expr == professor_id)
 
     rows = db.execute(stmt.order_by(CourseSession.start_at_utc.desc())).all()
 

@@ -65,8 +65,10 @@ from app.services.reminders import skip_pending_reminders_for_booking
 from app.services.makeup_passes import grant_makeup_for_excused_absence, revoke_pending_makeup_for_corrected_absence
 from app.services.session_notifications import send_session_operation_email
 from app.services.session_teachers import (
+    effective_professor_ids_for_session,
     effective_teacher_filter_for_professor,
     effective_teacher_id_for_session,
+    professor_can_manage_session,
     professor_display_name,
 )
 
@@ -156,7 +158,7 @@ def _require_professor_session(
     session_obj = db.scalar(stmt)
     if session_obj is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
-    if effective_teacher_id_for_session(session_obj) != professor_id:
+    if not professor_can_manage_session(db, session_obj=session_obj, professor_id=professor_id):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Session does not belong to this professor")
     return session_obj
 
@@ -486,7 +488,7 @@ def _build_effective_contract_grid(
     session_course_type_ids = db.scalars(
         select(CourseSession.course_type_id)
         .where(
-            CourseSession.professor_id == professor_id,
+            effective_teacher_filter_for_professor(professor_id=professor_id),
             CourseSession.course_type_id.is_not(None),
             CourseSession.status != SessionStatus.CANCELLED,
         )
@@ -645,11 +647,14 @@ def list_my_professor_sessions(
     rows = db.execute(stmt.order_by(CourseSession.start_at_utc.asc())).all()
     sessions = [row[0] for row in rows]
 
+    effective_teacher_ids_by_session = {
+        session_obj.id: effective_professor_ids_for_session(db, session_obj=session_obj)
+        for session_obj in sessions
+    }
     teacher_ids = {
         teacher_id
-        for session_obj in sessions
-        for teacher_id in (session_obj.professor_id, session_obj.substitute_teacher_id)
-        if teacher_id is not None
+        for teacher_ids_for_session in effective_teacher_ids_by_session.values()
+        for teacher_id in teacher_ids_for_session
     }
     professors_by_id = (
         {
@@ -667,7 +672,7 @@ def list_my_professor_sessions(
             # to the collaborator's own sessions unless explicit client rights are granted.
             if (
                 show_all_school_sessions
-                and effective_teacher_id_for_session(session_obj) != professor.id
+                and not professor_can_manage_session(db, session_obj=session_obj, professor_id=professor.id)
                 and not permissions["can_view_clients"]
             ):
                 students_by_session[session_obj.id] = []
@@ -698,6 +703,11 @@ def list_my_professor_sessions(
             effective_teacher_display_name=professor_display_name(
                 professors_by_id.get(effective_teacher_id_for_session(session))
             ),
+            effective_teacher_ids=effective_teacher_ids_by_session.get(session.id, []),
+            effective_teacher_display_names=[
+                professor_display_name(professors_by_id.get(teacher_id)) or "Professeur"
+                for teacher_id in effective_teacher_ids_by_session.get(session.id, [])
+            ],
             students=students_by_session.get(session.id, []),
             course_type=ProfessorSessionCourseTypeOut(
                 id=course_type.id,
@@ -1245,7 +1255,7 @@ def list_pending_attendance(
             (Booking.session_id == CourseSession.id) & (Booking.status.in_(tracked_statuses)),
         )
         .where(
-            CourseSession.professor_id == professor.id,
+            effective_teacher_filter_for_professor(professor_id=professor.id),
             CourseSession.end_at_utc <= now,
             CourseSession.status != SessionStatus.CANCELLED,
         )

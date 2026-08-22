@@ -446,6 +446,47 @@ class CourseSession(Base):
     )
 
 
+class CourseSessionProfessor(Base):
+    """Ordered professor assignments for a session.
+
+    The first row mirrors ``course_sessions.professor_id`` for backwards
+    compatibility. Masterclasses may have up to four rows; other activities
+    keep a single row.
+    """
+
+    __tablename__ = "course_session_professors"
+    __table_args__ = (
+        UniqueConstraint("session_id", "professor_id", name="uq_course_session_professors_session_professor"),
+        UniqueConstraint("session_id", "position", name="uq_course_session_professors_session_position"),
+        CheckConstraint("position >= 1 AND position <= 4", name="ck_course_session_professors_position"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        primary_key=True,
+        nullable=False,
+        server_default=text("gen_random_uuid()"),
+    )
+    session_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("course_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    professor_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("professors.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("now()"),
+    )
+
+
 class Booking(Base):
     __tablename__ = "bookings"
     __table_args__ = (

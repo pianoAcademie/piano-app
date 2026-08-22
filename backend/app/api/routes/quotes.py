@@ -22,6 +22,7 @@ from app.api.deps import get_db, require_admin_or_permissions, require_roles
 from app.core.config import settings
 from app.api.routes.admin_clients import (
     _allocate_invoice_number_for_seller_entity,
+    _build_admin_client_payments,
     _build_invoice_range_note_message,
     _compute_auto_invoice_next_run_date,
     _create_client_note,
@@ -29,6 +30,9 @@ from app.api.routes.admin_clients import (
     _effective_pack_credits_for_plan,
     _forfait_period_bounds,
     _invoice_issued_at_for_date,
+    _invoice_recipient_snapshot_for_client,
+    _payment_billing_entity,
+    _persist_invoice_lines_for_note,
 )
 from app.api.routes.bookings import (
     _count_booked,
@@ -71,6 +75,7 @@ from app.models.quote import (
 from app.models.typeform_intake import TypeformIntake
 from app.models.user import ClientKind, ClientStatus, User, UserRole
 from app.services.i18n import normalize_language
+from app.schemas.admin import AdminClientPaymentOut
 from app.schemas.quote import (
     PaymentPlanOut,
     PaymentPlanUpsertRequest,
@@ -140,7 +145,7 @@ from app.schemas.quote import (
     TermsTemplateVersionPublishRequest,
 )
 from app.services.email_delivery import email_delivery_disabled_reason, send_email
-from app.services.invoice_documents import normalize_billing_entity
+from app.services.invoice_documents import build_company_identity_snapshot, normalize_billing_entity
 from app.services.messaging_templates import resolve_frontend_base_url
 from app.services.pricing import resolve_vat_rate
 from app.services.notifications.application.orchestrator import enqueue_notifications, schedule_booking_created_notifications
@@ -209,6 +214,9 @@ QUOTE_TRANSFORMATION_PAYLOAD_KEY = "quote_to_enrollment"
 QUOTE_TRANSFORMATION_EXECUTION_KEY = "quote_to_enrollment_execution"
 QUOTE_MONTHLY_CARD_BILLING_START_DATE = date(2026, 9, 1)
 QUOTE_MONTHLY_CARD_DUE_DAYS_OFFSET = 1
+QUOTE_ANNUAL_INVOICE_PERIOD_START = date(2026, 8, 1)
+QUOTE_ANNUAL_INVOICE_PERIOD_END = date(2027, 6, 30)
+QUOTE_ANNUAL_INVOICE_DUE_DATE = date(2026, 9, 1)
 CARD_4X_FEES_PAYMENT_INSTRUCTION = (
     "Le paiement par carte bancaire en 4 fois est géré par notre partenaire Oney.\n"
     "Votre dossier sera donc soumis à Oney, qui pourra l’accepter ou le refuser.\n"
@@ -10428,6 +10436,243 @@ def _create_followup_deposit_invoice(
     return note.id
 
 
+def _quote_annual_invoice_selected_payments(
+    payments: list[AdminClientPaymentOut],
+    *,
+    booking_ids: set[UUID],
+    transaction_ids: set[UUID],
+) -> list[AdminClientPaymentOut]:
+    selected: list[AdminClientPaymentOut] = []
+    for payment in payments:
+        source = (payment.source or "").strip().upper()
+        if source == "BOOKING" and payment.id in booking_ids:
+            occurred_at = payment.occurred_at
+            if occurred_at.tzinfo is None:
+                occurred_at = occurred_at.replace(tzinfo=timezone.utc)
+            occurred_date = occurred_at.astimezone(timezone.utc).date()
+            if QUOTE_ANNUAL_INVOICE_PERIOD_START <= occurred_date <= QUOTE_ANNUAL_INVOICE_PERIOD_END:
+                selected.append(payment)
+            continue
+        if source == "MANUAL" and payment.id in transaction_ids:
+            selected.append(payment)
+    return sorted(selected, key=lambda row: (row.occurred_at, row.source, str(row.id)))
+
+
+def _quote_annual_invoice_applied_deposit_payments(
+    db: Session,
+    *,
+    billing: User,
+    deposit_invoice_note_id: UUID | None,
+) -> list[ClientManualTransaction]:
+    if deposit_invoice_note_id is None:
+        return []
+    note = db.get(ClientNoteEntry, deposit_invoice_note_id)
+    if note is None:
+        return []
+    metadata = _parse_quote_invoice_range_note_entry(note)
+    if not metadata or str(metadata.get("invoice_status") or "").strip().upper() != "PAID":
+        return []
+
+    payment_ids = [
+        payment_id
+        for payment_id in (
+            _parse_uuid_value(raw_value)
+            for raw_value in _json_list(metadata.get("reconciled_manual_payment_ids"))
+        )
+        if payment_id is not None
+    ]
+    if not payment_ids:
+        return []
+    rows = db.scalars(
+        select(ClientManualTransaction)
+        .where(ClientManualTransaction.id.in_(payment_ids))
+        .order_by(ClientManualTransaction.occurred_at, ClientManualTransaction.id)
+    ).all()
+    return [
+        row
+        for row in rows
+        if row.user_id == billing.id
+        and (row.transaction_type or "").strip().upper() == "PAYMENT"
+        and (row.status or "").strip().upper() == "COMPLETED"
+    ]
+
+
+def _quote_annual_invoice_amounts(
+    payments: list[AdminClientPaymentOut],
+    *,
+    applied_payments: list[ClientManualTransaction],
+) -> tuple[dict[str, Decimal], dict[str, Decimal], dict[str, Decimal]]:
+    totals: dict[str, Decimal] = {}
+    for payment in payments:
+        currency = (payment.currency or "EUR").strip().upper() or "EUR"
+        totals[currency] = _q2(totals.get(currency, Decimal("0.00")) + Decimal(payment.total_incl_vat or 0))
+
+    applied: dict[str, Decimal] = {}
+    for payment in applied_payments:
+        currency = (payment.currency or "EUR").strip().upper() or "EUR"
+        applied[currency] = _q2(
+            applied.get(currency, Decimal("0.00")) - abs(Decimal(payment.total_incl_vat or 0))
+        )
+
+    total_to_pay: dict[str, Decimal] = {}
+    for currency in sorted(set(totals) | set(applied)):
+        total_to_pay[currency] = _q2(totals.get(currency, Decimal("0.00")) + applied.get(currency, Decimal("0.00")))
+    return totals, applied, total_to_pay
+
+
+def _create_followup_annual_invoices(
+    db: Session,
+    *,
+    quote: Quote,
+    student: User,
+    billing: User,
+    current_user: User,
+    booking_ids: list[UUID],
+    transaction_ids: list[UUID],
+    deposit_invoice_note_id: UUID | None,
+    created_invoice_note_ids: list[UUID],
+) -> list[UUID]:
+    existing_notes = db.scalars(
+        select(ClientNoteEntry).where(
+            ClientNoteEntry.user_id == billing.id,
+            ClientNoteEntry.message.contains(str(quote.id)),
+            ClientNoteEntry.message.contains('"annual_invoice_auto_generated":true'),
+        )
+    ).all()
+    for existing_note in existing_notes:
+        existing_metadata = _parse_quote_invoice_range_note_entry(existing_note)
+        if (
+            existing_metadata
+            and str(existing_metadata.get("invoice_status") or "ISSUED").strip().upper() != "CANCELLED"
+            and existing_metadata.get("start_date") == QUOTE_ANNUAL_INVOICE_PERIOD_START.isoformat()
+            and existing_metadata.get("end_date") == QUOTE_ANNUAL_INVOICE_PERIOD_END.isoformat()
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Une facture annuelle active existe deja pour ce devis",
+            )
+
+    all_payments = _build_admin_client_payments(db, client_id=billing.id)
+    selected_payments = _quote_annual_invoice_selected_payments(
+        all_payments,
+        booking_ids=set(booking_ids),
+        transaction_ids=set(transaction_ids),
+    )
+    if not selected_payments:
+        return []
+
+    payments_by_seller: dict[UUID | None, list[AdminClientPaymentOut]] = {}
+    for payment in selected_payments:
+        seller_id = payment.seller_legal_entity_id or quote.legal_entity_id
+        payments_by_seller.setdefault(seller_id, []).append(payment)
+
+    applied_deposit_payments = _quote_annual_invoice_applied_deposit_payments(
+        db,
+        billing=billing,
+        deposit_invoice_note_id=deposit_invoice_note_id,
+    )
+    ordered_seller_ids = sorted(payments_by_seller, key=lambda value: str(value or ""))
+    deposit_seller_id = quote.legal_entity_id if quote.legal_entity_id in payments_by_seller else ordered_seller_ids[0]
+    now = _utcnow()
+    issued_date = now.date()
+    due_date = max(issued_date, QUOTE_ANNUAL_INVOICE_DUE_DATE)
+    issued_at = _invoice_issued_at_for_date(issued_date=issued_date, now=now)
+    recipient_snapshot = _invoice_recipient_snapshot_for_client(db, billing)
+    student_name = " ".join(
+        part.strip() for part in (student.first_name or "", student.last_name or "") if part.strip()
+    ) or student.email
+    created_note_ids: list[UUID] = []
+
+    for seller_id in ordered_seller_ids:
+        invoice_payments = payments_by_seller[seller_id]
+        invoice_applied_payments = applied_deposit_payments if seller_id == deposit_seller_id else []
+        totals, applied, total_to_pay = _quote_annual_invoice_amounts(
+            invoice_payments,
+            applied_payments=invoice_applied_payments,
+        )
+        billing_entity = _payment_billing_entity(invoice_payments[0])
+        invoice_number = _allocate_invoice_number_for_seller_entity(
+            db,
+            seller_legal_entity_id=seller_id,
+            issued_at=issued_at,
+        )
+        metadata: dict[str, object] = {
+            "kind": "INVOICE_RANGE",
+            "invoice_number": invoice_number,
+            "issued_date": issued_date.isoformat(),
+            "issued_at": issued_at.isoformat(),
+            "due_date": due_date.isoformat(),
+            "no_due_date": False,
+            "start_date": QUOTE_ANNUAL_INVOICE_PERIOD_START.isoformat(),
+            "end_date": QUOTE_ANNUAL_INVOICE_PERIOD_END.isoformat(),
+            "layout": "COMPILED",
+            "billing_entity": billing_entity,
+            "seller_legal_entity_id": str(seller_id) if seller_id is not None else None,
+            "generation_mode": "AUTO",
+            "auto_layout_style": "CONDENSED",
+            "group_adjustments_by_type": False,
+            "include_discount_adjustments": True,
+            "include_supplement_adjustments": True,
+            "auto_exclude_pack_subscription_lines": False,
+            "include_pending": True,
+            "include_cancelled": False,
+            "auto_include_previous_balance": False,
+            "included_payment_keys": [
+                f"{(payment.source or '').strip().upper()}:{payment.id}" for payment in invoice_payments
+            ],
+            "totals_by_currency": {
+                currency: f"{amount:.2f}" for currency, amount in sorted(totals.items())
+            },
+            "total_to_pay_by_currency": {
+                currency: f"{amount:.2f}" for currency, amount in sorted(total_to_pay.items())
+            },
+            "invoice_status": "ISSUED",
+            "student_user_id": str(student.id),
+            "client_name": recipient_snapshot["client_name"],
+            "client_billing_address": recipient_snapshot["client_billing_address"],
+            "issuer_snapshot": build_company_identity_snapshot(
+                db,
+                legal_entity_id=seller_id,
+                billing_entity=billing_entity,
+            ),
+            "source_quote_id": str(quote.id),
+            "source_quote_number": quote.quote_number,
+            "source_school_year_label": (quote.school_year_label or "").strip(),
+            "annual_invoice_auto_generated": True,
+            "public_note": (
+                f"Facture annuelle 2026-2027 - élève {student_name} - "
+                "prestations du 01/08/2026 au 30/06/2027."
+            ),
+            "private_note": f"Transformation devis {quote.quote_number} - facture annuelle automatique.",
+        }
+        if invoice_applied_payments:
+            metadata["reconciled_manual_payment_ids"] = [
+                str(payment.id) for payment in invoice_applied_payments
+            ]
+            metadata["applied_payment_totals_by_currency"] = {
+                currency: f"{amount:.2f}" for currency, amount in sorted(applied.items())
+            }
+
+        note = _create_client_note(
+            db,
+            client_id=billing.id,
+            author_user_id=current_user.id,
+            entry_type="MANUAL",
+            message=_build_invoice_range_note_message(metadata),
+        )
+        db.flush()
+        _persist_invoice_lines_for_note(
+            db,
+            note_id=note.id,
+            client_id=billing.id,
+            payments=invoice_payments,
+        )
+        created_invoice_note_ids.append(note.id)
+        created_note_ids.append(note.id)
+
+    return created_note_ids
+
+
 def _execute_quote_followup_transformation(
     db: Session,
     *,
@@ -10447,6 +10692,7 @@ def _execute_quote_followup_transformation(
     created_booking_ids: list[UUID] = []
     created_transaction_ids: list[UUID] = []
     created_invoice_note_ids: list[UUID] = []
+    created_annual_invoice_note_ids: list[UUID] = []
     created_makeup_pass_purchase_ids: list[UUID] = []
     quote_snapshot = _snapshot_quote_state(quote)
     followup_snapshot = _snapshot_quote_followup(followup)
@@ -10703,7 +10949,9 @@ def _execute_quote_followup_transformation(
         created_booking_ids=created_booking_ids,
         created_transaction_ids=created_transaction_ids,
     )
-    _create_followup_deposit_invoice(
+    annual_booking_ids = list(created_booking_ids)
+    annual_transaction_ids = list(created_transaction_ids)
+    deposit_invoice_note_id = _create_followup_deposit_invoice(
         db,
         quote=quote,
         followup=followup,
@@ -10713,6 +10961,21 @@ def _execute_quote_followup_transformation(
         created_transaction_ids=created_transaction_ids,
         created_invoice_note_ids=created_invoice_note_ids,
     )
+    annual_invoice_skipped_reason: str | None = None
+    if monthly_card_billing:
+        annual_invoice_skipped_reason = "MONTHLY_CARD_BILLING"
+    else:
+        created_annual_invoice_note_ids = _create_followup_annual_invoices(
+            db,
+            quote=quote,
+            student=student,
+            billing=billing,
+            current_user=current_user,
+            booking_ids=annual_booking_ids,
+            transaction_ids=annual_transaction_ids,
+            deposit_invoice_note_id=deposit_invoice_note_id,
+            created_invoice_note_ids=created_invoice_note_ids,
+        )
     bind_referral_after_quote_transformation(
         db,
         quote_id=quote.id,
@@ -10758,6 +11021,10 @@ def _execute_quote_followup_transformation(
         "created_booking_ids": _serialize_uuid_list(created_booking_ids),
         "created_transaction_ids": _serialize_uuid_list(created_transaction_ids),
         "created_invoice_note_ids": _serialize_uuid_list(created_invoice_note_ids),
+        "created_annual_invoice_note_ids": _serialize_uuid_list(created_annual_invoice_note_ids),
+        "annual_invoice_period_start": QUOTE_ANNUAL_INVOICE_PERIOD_START.isoformat(),
+        "annual_invoice_period_end": QUOTE_ANNUAL_INVOICE_PERIOD_END.isoformat(),
+        "annual_invoice_skipped_reason": annual_invoice_skipped_reason,
         "created_makeup_pass_purchase_ids": _serialize_uuid_list(created_makeup_pass_purchase_ids),
         "monthly_card_fixed_fee_date": monthly_card_fixed_fee_date.isoformat() if monthly_card_fixed_fee_date else None,
         "monthly_card_auto_invoice_rule_id": str(monthly_card_auto_rule_id) if monthly_card_auto_rule_id is not None else None,
@@ -10780,6 +11047,7 @@ def _execute_quote_followup_transformation(
                 "booking_count": len(created_booking_ids),
                 "transaction_count": len(created_transaction_ids),
                 "invoice_count": len(created_invoice_note_ids),
+                "annual_invoice_count": len(created_annual_invoice_note_ids),
             },
             created_at=now,
         )

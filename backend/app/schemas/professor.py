@@ -60,6 +60,8 @@ class ProfessorSessionOut(BaseModel):
     substitute_teacher_display_name: str | None = None
     effective_teacher_id: UUID | None = None
     effective_teacher_display_name: str | None = None
+    effective_teacher_ids: list[UUID] = Field(default_factory=list)
+    effective_teacher_display_names: list[str] = Field(default_factory=list)
     students: list[ProfessorSessionStudentOut] = Field(default_factory=list)
     course_type: ProfessorSessionCourseTypeOut
     location: ProfessorSessionLocationOut

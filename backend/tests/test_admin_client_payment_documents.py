@@ -15,6 +15,7 @@ from app.api.routes.admin_clients import (
     _admin_legacy_invoice_out,
     _apply_invoice_presentation_to_payment_item,
     _build_range_invoice_email_defaults,
+    _computed_invoice_range_display_totals,
     _forfait_booking_amounts_from_activity,
     _normalize_invoice_range_metadata,
     _send_invoice_range_payment_admin_emails,
@@ -25,6 +26,7 @@ from app.api.routes.admin_clients import (
     _resolve_public_payment_webhook_query_credentials,
     _should_count_in_client_balance,
     _sportigo_opening_balance_has_new_app_payment,
+    _synchronize_invoice_range_reconciled_payment_metadata,
     send_admin_client_range_invoice_email,
     download_admin_client_payment_invoice,
 )
@@ -68,6 +70,147 @@ class _FakeQueryParams:
 
 
 class AdminClientPaymentDocumentTests(unittest.TestCase):
+    def test_invoice_display_total_uses_live_reconciled_deposit(self) -> None:
+        deposit_id = uuid4()
+        deposit = AdminClientPaymentOut(
+            id=deposit_id,
+            source="MANUAL",
+            occurred_at=datetime(2026, 6, 21, tzinfo=timezone.utc),
+            label="Acompte",
+            status="PAID",
+            amount_excl_vat=Decimal("-200.00"),
+            vat_rate=Decimal("0.00"),
+            vat_amount=Decimal("0.00"),
+            total_incl_vat=Decimal("-200.00"),
+            currency="EUR",
+            reference=None,
+            manual_transaction_type="PAYMENT",
+        )
+        metadata = {
+            "totals_by_currency": {"EUR": "1521.00"},
+            "total_to_pay_by_currency": {"EUR": "1521.00"},
+            "auto_include_previous_balance": False,
+            "reconciled_manual_payment_ids": [str(deposit_id)],
+        }
+
+        with patch(
+            "app.api.routes.admin_clients._build_admin_client_payments",
+            return_value=[deposit],
+        ), patch(
+            "app.api.routes.admin_clients._frozen_invoice_selection_for_note",
+            return_value=([], None, None),
+        ):
+            totals, amount_due = _computed_invoice_range_display_totals(
+                SimpleNamespace(),
+                client_id=uuid4(),
+                note_id=uuid4(),
+                note_created_at=datetime(2026, 8, 17, tzinfo=timezone.utc),
+                metadata=metadata,
+            )
+
+        self.assertEqual(totals, {"EUR": "1521.00"})
+        self.assertEqual(amount_due, {"EUR": "1321.00"})
+
+    def test_invoice_display_total_preserves_implied_opening_balance(self) -> None:
+        payment_id = uuid4()
+        payment = AdminClientPaymentOut(
+            id=payment_id,
+            source="MANUAL",
+            occurred_at=datetime(2026, 6, 21, tzinfo=timezone.utc),
+            label="Paiement",
+            status="PAID",
+            amount_excl_vat=Decimal("-200.00"),
+            vat_rate=Decimal("0.00"),
+            vat_amount=Decimal("0.00"),
+            total_incl_vat=Decimal("-200.00"),
+            currency="EUR",
+            reference=None,
+            manual_transaction_type="PAYMENT",
+        )
+        metadata = {
+            "totals_by_currency": {"EUR": "1000.00"},
+            "applied_payment_totals_by_currency": {"EUR": "-100.00"},
+            "total_to_pay_by_currency": {"EUR": "1100.00"},
+            "auto_include_previous_balance": True,
+            "reconciled_manual_payment_ids": [str(payment_id)],
+        }
+
+        with patch(
+            "app.api.routes.admin_clients._build_admin_client_payments",
+            return_value=[payment],
+        ), patch(
+            "app.api.routes.admin_clients._frozen_invoice_selection_for_note",
+            return_value=([], None, None),
+        ):
+            _, amount_due = _computed_invoice_range_display_totals(
+                SimpleNamespace(),
+                client_id=uuid4(),
+                note_id=uuid4(),
+                note_created_at=datetime(2026, 8, 17, tzinfo=timezone.utc),
+                metadata=metadata,
+            )
+
+        self.assertEqual(amount_due, {"EUR": "1000.00"})
+
+    def test_synchronizing_payments_does_not_turn_old_applied_amount_into_opening_balance(self) -> None:
+        deposit_id = uuid4()
+        final_payment_id = uuid4()
+        payments = [
+            AdminClientPaymentOut(
+                id=deposit_id,
+                source="MANUAL",
+                occurred_at=datetime(2026, 5, 19, tzinfo=timezone.utc),
+                label="Acompte",
+                status="PAID",
+                amount_excl_vat=Decimal("-200.00"),
+                vat_rate=Decimal("0.00"),
+                vat_amount=Decimal("0.00"),
+                total_incl_vat=Decimal("-200.00"),
+                currency="EUR",
+                reference=None,
+                manual_transaction_type="PAYMENT",
+            ),
+            AdminClientPaymentOut(
+                id=final_payment_id,
+                source="MANUAL",
+                occurred_at=datetime(2026, 8, 19, tzinfo=timezone.utc),
+                label="Solde",
+                status="PAID",
+                amount_excl_vat=Decimal("-1232.00"),
+                vat_rate=Decimal("0.00"),
+                vat_amount=Decimal("0.00"),
+                total_incl_vat=Decimal("-1232.00"),
+                currency="EUR",
+                reference=None,
+                manual_transaction_type="PAYMENT",
+            ),
+        ]
+        metadata = {
+            "totals_by_currency": {"EUR": "1432.00"},
+            "applied_payment_totals_by_currency": {"EUR": "-200.00"},
+            "total_to_pay_by_currency": {"EUR": "1232.00"},
+            "auto_include_previous_balance": True,
+            "reconciled_manual_payment_ids": [str(deposit_id), str(final_payment_id)],
+        }
+
+        with patch(
+            "app.api.routes.admin_clients._build_admin_client_payments",
+            return_value=payments,
+        ), patch(
+            "app.api.routes.admin_clients._frozen_invoice_selection_for_note",
+            return_value=([], None, None),
+        ):
+            synchronized = _synchronize_invoice_range_reconciled_payment_metadata(
+                SimpleNamespace(),
+                client_id=uuid4(),
+                note_id=uuid4(),
+                note_created_at=datetime(2026, 8, 17, tzinfo=timezone.utc),
+                metadata=metadata,
+            )
+
+        self.assertEqual(synchronized["applied_payment_totals_by_currency"], {"EUR": "-1432.00"})
+        self.assertEqual(synchronized["total_to_pay_by_currency"], {"EUR": "0.00"})
+
     def test_locked_booking_price_snapshot_is_not_recomputed_for_a_forfait(self) -> None:
         booking = SimpleNamespace(pricing_snapshot_locked=True)
         plan = SimpleNamespace(kind=PlanKind.FORFAIT)
@@ -97,6 +240,23 @@ class AdminClientPaymentDocumentTests(unittest.TestCase):
             total_incl_vat=Decimal("125.00"),
             currency="EUR",
             reference="FA-PIANO-2026-857",
+        )
+
+        self.assertFalse(_should_count_in_client_balance(row))
+
+    def test_failed_plan_purchase_never_counts_in_client_balance(self) -> None:
+        row = AdminClientPaymentOut(
+            id=uuid4(),
+            source="PLAN_PURCHASE",
+            occurred_at=datetime(2026, 8, 18, 14, 13, tzinfo=timezone.utc),
+            label="Cours d'essai de piano en présentiel",
+            status="FAILED",
+            amount_excl_vat=Decimal("16.67"),
+            vat_rate=Decimal("20.00"),
+            vat_amount=Decimal("3.33"),
+            total_incl_vat=Decimal("20.00"),
+            currency="EUR",
+            reference="pay_failed",
         )
 
         self.assertFalse(_should_count_in_client_balance(row))

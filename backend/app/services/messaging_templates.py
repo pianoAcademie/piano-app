@@ -104,6 +104,8 @@ PREDEFINED_EMAIL_TEMPLATE_QUOTE_CHANGE_REQUESTED_DEFAULT = "QUOTE_CHANGE_REQUEST
 PREDEFINED_EMAIL_TEMPLATE_CLIENT_BOOKING_CONFIRMATION = "CLIENT_BOOKING_CONFIRMATION"
 PREDEFINED_EMAIL_TEMPLATE_ADMIN_BOOKING_CONFIRMATION = "ADMIN_BOOKING_CONFIRMATION"
 PREDEFINED_EMAIL_TEMPLATE_TRIAL_ADULT_GUIDE = "AUTOMATION_TRIAL_ADULT_BOOKING_GUIDE"
+CLIENT_APP_IOS_URL = "https://apps.apple.com/fr/app/piano-academie-client/id6772464779"
+CLIENT_APP_ANDROID_URL = "https://play.google.com/store/apps/details?id=com.pianoacademie.client"
 PREDEFINED_EMAIL_TEMPLATE_AUTO_CANCEL_PARTICIPANT = "AUTO_CANCEL_LOW_ATTENDANCE_PARTICIPANT"
 PREDEFINED_EMAIL_TEMPLATE_AUTO_CANCEL_TEACHER = "AUTO_CANCEL_LOW_ATTENDANCE_TEACHER"
 PREDEFINED_EMAIL_TEMPLATE_AUTO_CANCEL_ADMIN = "AUTO_CANCEL_LOW_ATTENDANCE_ADMIN"
@@ -691,6 +693,21 @@ def _email_button(url: str, label: str) -> str:
     )
 
 
+def _email_app_download_links(*, heading: str, ios_label: str, android_label: str) -> str:
+    return (
+        '<div style="margin:24px 0 0;">'
+        '<p style="margin:0 0 10px;font-size:14px;font-weight:700;color:#374151;">'
+        f'{heading}</p>'
+        f'<a href="{CLIENT_APP_IOS_URL}" style="display:inline-block;margin:0 8px 8px 0;padding:10px 14px;'
+        'background:#172033;color:#ffffff;text-decoration:none;border-radius:10px;font-weight:700;">'
+        f'{ios_label}</a>'
+        f'<a href="{CLIENT_APP_ANDROID_URL}" style="display:inline-block;margin:0 0 8px;padding:10px 14px;'
+        'background:#172033;color:#ffffff;text-decoration:none;border-radius:10px;font-weight:700;">'
+        f'{android_label}</a>'
+        '</div>'
+    )
+
+
 def _email_secondary(text: str) -> str:
     return f"<p style=\"margin:18px 0 0;font-size:14px;color:#4b5563;\">{text}</p>"
 
@@ -798,7 +815,12 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
             "<ul><li>ce qu’il faut apporter et ce qui est fourni par l’école ;</li>"
             "<li>le déroulé type de la séance ;</li>"
             "<li>des repères visuels (clavier, clés, doigtés) ;</li>"
-            "<li>quelques conseils pour adopter le bon état d’esprit.</li></ul>"
+            "<li>quelques conseils pour adopter le bon état d’esprit.</li></ul>" +
+            _email_app_download_links(
+                heading="Préparez aussi votre espace client mobile",
+                ios_label="Télécharger sur l’App Store",
+                android_label="Télécharger sur Google Play",
+            ) +
             "<p>Si vous avez la moindre question (accès, matériel, etc.), n’hésitez pas à nous contacter.</p>"
             "<p>En espérant vous accueillir très bientôt,<br>Cordialement,<br>L’équipe PIANO ACADÉMIE</p>"
             "<p>1 RUE DE RICHELIEU, 75001 PARIS</p>"
@@ -829,10 +851,15 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
                 ]
             ),
             _email_button("{primary_url}", "{primary_label}"),
+            _email_app_download_links(
+                heading="Application Piano Académie Client",
+                ios_label="Télécharger sur l’App Store",
+                android_label="Télécharger sur Google Play",
+            ),
             _email_secondary(
                 "Depuis votre espace client, vous pouvez consulter vos réservations, réserver un cours ou un studio, "
-                "retrouver vos crédits, factures et messages. L’application mobile Piano Académie sera également "
-                "disponible prochainement. Ce lien de création de mot de passe est personnel et temporaire."
+                "retrouver vos crédits, factures et messages. Les mêmes identifiants fonctionnent sur le site et dans "
+                "l’application mobile. Le lien de création de mot de passe est personnel et temporaire."
             ),
         ),
         description="Bienvenue et acces securise a l espace client, sans mot de passe transmis en clair.",
@@ -1152,6 +1179,11 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
             _email_secondary(
                 "Vous y retrouverez vos réservations et toutes les informations utiles avant le cours."
             ),
+            _email_app_download_links(
+                heading="Retrouvez votre réservation dans l’application Client",
+                ios_label="App Store",
+                android_label="Google Play",
+            ),
         ),
         description="Confirmation de reservation envoyee au client ou au responsable legal.",
         variables_hint=(
@@ -1283,6 +1315,11 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
                 "Retrouvez également cette facture dans votre espace client : "
                 "<a href=\"{account_url}\">accéder à mon compte</a>."
             ),
+            _email_app_download_links(
+                heading="Accédez aussi à vos factures dans l’application Client",
+                ios_label="App Store",
+                android_label="Google Play",
+            ),
         ),
         description="Envoi de facture deja integralement reglee.",
         variables_hint=(
@@ -1384,6 +1421,11 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
                 "Votre facture {invoice_number} est disponible ici : "
                 "<a href=\"{invoice_url}\">télécharger la facture</a>."
             ),
+            _email_app_download_links(
+                heading="Suivez vos paiements dans l’application Client",
+                ios_label="App Store",
+                android_label="Google Play",
+            ),
         ),
         description="Confirmation apres paiement valide.",
         variables_hint=(
@@ -1391,6 +1433,51 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
             "{payment_label} {payment_reference} {plan_name} {subscription_reference} "
             "{amount_paid} {currency} {paid_at} {transactions_url} "
             "{invoice_number} {invoice_url} {payment_url} {account_url}"
+        ),
+        body_format="HTML",
+    ),
+    MessagingTemplateDefinition(
+        code="STUDIO_PAYMENT_CONFIRMED",
+        name="Studio Payment Confirmed",
+        channel="EMAIL",
+        subject="Paiement reçu – réservez maintenant votre studio",
+        body=_email_layout(
+            _email_title(
+                "Votre crédit studio est prêt",
+                (
+                    "Bonjour {first_name}, votre paiement a bien été reçu. "
+                    "Aucun créneau n’est réservé automatiquement."
+                ),
+            ),
+            _email_summary(
+                [
+                    ("Formule achetée", "{payment_label}"),
+                    ("Montant réglé", "{amount_paid} {currency}"),
+                    ("Date de paiement", "{paid_at}"),
+                    ("Référence", "{payment_reference}"),
+                ]
+            ),
+            _email_button("{booking_url}", "Réserver mon studio"),
+            _email_secondary(
+                "Choisissez un créneau disponible, puis connectez-vous ou créez votre compte avec la même "
+                "adresse e-mail que celle utilisée pour le paiement. Votre crédit actif sera appliqué : "
+                "vous n’aurez pas à payer une seconde fois."
+            ),
+            _email_secondary(
+                "Votre facture {invoice_number} est disponible ici : "
+                "<a href=\"{invoice_url}\">télécharger la facture</a>. "
+                "Vous pouvez également <a href=\"{transactions_url}\">consulter vos transactions</a>."
+            ),
+            _email_app_download_links(
+                heading="Gérez aussi vos réservations dans l’application Client",
+                ios_label="App Store",
+                android_label="Google Play",
+            ),
+        ),
+        description="Confirmation d achat d une formule studio avec prochaine etape de reservation.",
+        variables_hint=(
+            "{first_name} {last_name} {full_name} {client_name} {payment_label} {payment_reference} "
+            "{amount_paid} {currency} {paid_at} {booking_url} {transactions_url} {invoice_number} {invoice_url}"
         ),
         body_format="HTML",
     ),
@@ -1718,6 +1805,31 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
 )
 
 PREDEFINED_TEMPLATE_TRANSLATIONS: dict[str, dict[str, dict[str, str]]] = {
+    PREDEFINED_EMAIL_TEMPLATE_TRIAL_ADULT_GUIDE: {
+        "subject": {"en": "Prepare for your Piano Académie trial lesson"},
+        "body": {
+            "en": (
+                "<p>Hello {first_name},</p>"
+                "<p>Thank you for booking a trial lesson at our school. To help you feel comfortable and make the "
+                "most of your experience, please read our practical guide:</p>"
+                "<p><a href=\"https://piano-academie.com/livret-cours-dessai/\">View the trial lesson guide</a></p>"
+                "<p>Inside, you will find:</p>"
+                "<ul><li>what to bring and what the school provides;</li>"
+                "<li>what to expect during the lesson;</li>"
+                "<li>visual guides to the keyboard, clefs and fingering;</li>"
+                "<li>a few tips to approach the lesson with the right mindset.</li></ul>" +
+                _email_app_download_links(
+                    heading="Prepare your mobile client portal too",
+                    ios_label="App Store",
+                    android_label="Google Play",
+                ) +
+                "<p>If you have any questions about access, equipment or anything else, please contact us.</p>"
+                "<p>We look forward to welcoming you soon.<br>Kind regards,<br>The PIANO ACADÉMIE team</p>"
+                "<p>1 RUE DE RICHELIEU, 75001 PARIS</p>"
+                "<p><a href=\"{unsubscribe_url}\">Click here to unsubscribe from our emails.</a></p>"
+            )
+        },
+    },
     PREDEFINED_EMAIL_TEMPLATE_CLIENT_PORTAL_ACCESS: {
         "subject": {"en": "Your Piano Academie access is ready"},
         "body": {
@@ -1733,13 +1845,53 @@ PREDEFINED_TEMPLATE_TRANSLATIONS: dict[str, dict[str, dict[str, str]]] = {
                     ]
                 ),
                 _email_button("{primary_url}", "{primary_label}"),
+                _email_app_download_links(
+                    heading="Piano Académie Client app",
+                    ios_label="Download on the App Store",
+                    android_label="Get it on Google Play",
+                ),
                 _email_secondary(
                     "Your client portal lets you view bookings, book a lesson or rehearsal studio, and access your "
-                    "credits, invoices and messages. The Piano Academie mobile app will also be available soon. "
+                    "credits, invoices and messages. The same login details work on the website and in the mobile app. "
                     "This password setup link is personal and time-limited."
                 ),
             ).replace(
-                "Besoin d aide ? Repondez simplement a cet e-mail.",
+                "Besoin d’aide ? Répondez simplement à cet e-mail.",
+                "Need help? Simply reply to this email.",
+            )
+        },
+    },
+    PREDEFINED_EMAIL_TEMPLATE_CLIENT_BOOKING_CONFIRMATION: {
+        "subject": {"en": "Your booking is confirmed - {activity_name}"},
+        "body": {
+            "en": _email_layout(
+                _email_title(
+                    "Booking confirmed",
+                    "Hello {recipient_name}, your booking has been successfully recorded.",
+                ),
+                _email_summary(
+                    [
+                        ("Student", "{student_name}"),
+                        ("Type", "{booking_type_label}"),
+                        ("Activity", "{course_activity_name}"),
+                        ("Date", "{session_date}"),
+                        ("Time", "{session_time}"),
+                        ("Time zone", "{session_timezone}"),
+                        ("Location", "{location_name}"),
+                        ("Teacher", "{teacher_name}"),
+                    ]
+                ),
+                _email_button("{account_url}", "Open my client portal"),
+                _email_secondary(
+                    "You will find your bookings and all the useful information for your lesson there."
+                ),
+                _email_app_download_links(
+                    heading="Find your booking in the Client app",
+                    ios_label="App Store",
+                    android_label="Google Play",
+                ),
+            ).replace(
+                "Besoin d’aide ? Répondez simplement à cet e-mail.",
                 "Need help? Simply reply to this email.",
             )
         },
@@ -1969,11 +2121,32 @@ PREDEFINED_TEMPLATE_TRANSLATIONS: dict[str, dict[str, dict[str, str]]] = {
     "INVOICE_PAID": {
         "subject": {"en": "Your invoice {invoice_number} is available and already paid"},
         "body": {
-            "en": (
-                "Hello {recipient_name},\n\n"
-                "Your invoice {invoice_number} is available and has already been paid.\n"
-                "Download: {invoice_url}\n\n"
-                "Piano Academie"
+            "en": _email_layout(
+                _email_title(
+                    "Your invoice is available",
+                    "Hello {recipient_name}, this invoice has already been paid. No additional payment is required.",
+                ),
+                _email_summary(
+                    [
+                        ("Invoice", "{invoice_number}"),
+                        ("Issue date", "{issued_date}"),
+                        ("Total incl. VAT", "{total_incl_vat} {currency}"),
+                        ("Payment received", "{amount_paid} {currency}"),
+                    ]
+                ),
+                _email_button("{invoice_url}", "Download invoice"),
+                _email_secondary(
+                    "You can also find this invoice in your client portal: "
+                    "<a href=\"{account_url}\">open my account</a>."
+                ),
+                _email_app_download_links(
+                    heading="Access your invoices in the Client app too",
+                    ios_label="App Store",
+                    android_label="Google Play",
+                ),
+            ).replace(
+                "Besoin d’aide ? Répondez simplement à cet e-mail.",
+                "Need help? Simply reply to this email.",
             )
         },
     },
@@ -2005,15 +2178,72 @@ PREDEFINED_TEMPLATE_TRANSLATIONS: dict[str, dict[str, dict[str, str]]] = {
     "PAYMENT_CONFIRMED": {
         "subject": {"en": "Piano Academie payment confirmation"},
         "body": {
-            "en": (
-                "Hello {first_name},\n\n"
-                "We confirm receipt of your payment for {plan_name}.\n"
-                "Amount paid: {amount_paid} {currency}\n"
-                "Subscription reference: {subscription_reference}\n"
-                "Payment date: {paid_at}\n\n"
-                "View your transactions: {transactions_url}\n"
-                "Download your invoice ({invoice_number}): {invoice_url}\n\n"
-                "Piano Academie"
+            "en": _email_layout(
+                _email_title(
+                    "Payment confirmed",
+                    "Hello {first_name}, we confirm receipt of your payment.",
+                ),
+                _email_summary(
+                    [
+                        ("Service / plan", "{payment_label}"),
+                        ("Amount paid", "{amount_paid} {currency}"),
+                        ("Payment date", "{paid_at}"),
+                        ("Reference", "{payment_reference}"),
+                    ]
+                ),
+                _email_button("{transactions_url}", "View my transactions"),
+                _email_secondary(
+                    "Your invoice {invoice_number} is available here: "
+                    "<a href=\"{invoice_url}\">download invoice</a>."
+                ),
+                _email_app_download_links(
+                    heading="Track your payments in the Client app",
+                    ios_label="App Store",
+                    android_label="Google Play",
+                ),
+            ).replace(
+                "Besoin d’aide ? Répondez simplement à cet e-mail.",
+                "Need help? Simply reply to this email.",
+            )
+        },
+    },
+    "STUDIO_PAYMENT_CONFIRMED": {
+        "subject": {"en": "Payment received – book your piano studio"},
+        "body": {
+            "en": _email_layout(
+                _email_title(
+                    "Your studio credit is ready",
+                    (
+                        "Hello {first_name}, your payment has been received. "
+                        "No time slot has been booked automatically."
+                    ),
+                ),
+                _email_summary(
+                    [
+                        ("Plan purchased", "{payment_label}"),
+                        ("Amount paid", "{amount_paid} {currency}"),
+                        ("Payment date", "{paid_at}"),
+                        ("Reference", "{payment_reference}"),
+                    ]
+                ),
+                _email_button("{booking_url}", "Book my studio"),
+                _email_secondary(
+                    "Choose an available time slot, then sign in or create your account using the same email "
+                    "address as for your payment. Your active credit will be applied, so you will not need to pay again."
+                ),
+                _email_secondary(
+                    "Your invoice {invoice_number} is available here: "
+                    "<a href=\"{invoice_url}\">download invoice</a>. "
+                    "You can also <a href=\"{transactions_url}\">view your transactions</a>."
+                ),
+                _email_app_download_links(
+                    heading="Manage your bookings in the Client app too",
+                    ios_label="App Store",
+                    android_label="Google Play",
+                ),
+            ).replace(
+                "Besoin d’aide ? Répondez simplement à cet e-mail.",
+                "Need help? Simply reply to this email.",
             )
         },
     },

@@ -3,8 +3,10 @@ from __future__ import annotations
 import base64
 import json
 import os
+import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 
@@ -19,6 +21,64 @@ ALLOWED_KEYS = {
     "FIREBASE_CLIENT_EMAIL",
     "FIREBASE_PRIVATE_KEY",
 }
+DEPLOYMENT_PRESENCE_ATTEMPTS = 6
+DEPLOYMENT_PRESENCE_RETRY_SECONDS = 20
+DEPLOYMENT_PRESENCE_WINDOW_SECONDS = 90
+SYSTEM_ADMIN_EMAIL = "admin@piano-academie.com"
+
+_ACTIVE_USER_QUERY = f"""
+from datetime import datetime, timedelta, timezone
+from sqlalchemy import func, select
+from app.db.session import SessionLocal
+from app.models.user import User, UserPresence
+
+db = SessionLocal()
+try:
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds={DEPLOYMENT_PRESENCE_WINDOW_SECONDS})
+    count = db.scalar(
+        select(func.count(func.distinct(UserPresence.user_id)))
+        .join(User, User.id == UserPresence.user_id)
+        .where(
+            UserPresence.last_seen_at >= cutoff,
+            User.is_active.is_(True),
+            func.lower(User.email) != {SYSTEM_ADMIN_EMAIL!r},
+        )
+    )
+    print(int(count or 0))
+finally:
+    db.close()
+""".strip()
+
+
+def _active_non_system_user_count() -> int:
+    result = subprocess.run(
+        ["docker", "compose", "exec", "-T", "backend", "python", "-c", _ACTIVE_USER_QUERY],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    output_lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    if not output_lines:
+        raise RuntimeError("the production presence query returned no result")
+    try:
+        return int(output_lines[-1])
+    except ValueError as exc:
+        raise RuntimeError("the production presence query returned an invalid result") from exc
+
+
+def _wait_until_no_real_user_is_online() -> None:
+    for attempt in range(1, DEPLOYMENT_PRESENCE_ATTEMPTS + 1):
+        active_count = _active_non_system_user_count()
+        if active_count == 0:
+            print("[OK] No active non-system user. Deployment is allowed.")
+            return
+        print(
+            f"Deployment delayed: {active_count} active non-system user(s) "
+            f"(attempt {attempt}/{DEPLOYMENT_PRESENCE_ATTEMPTS})."
+        )
+        if attempt < DEPLOYMENT_PRESENCE_ATTEMPTS:
+            time.sleep(DEPLOYMENT_PRESENCE_RETRY_SECONDS)
+    raise RuntimeError("deployment refused because a non-system user is still active")
 
 
 def _read_payload() -> dict[str, str]:
@@ -84,9 +144,10 @@ def _update_env_file(path: Path, payload: dict[str, str]) -> None:
 
 def main() -> int:
     try:
+        _wait_until_no_real_user_is_online()
         payload = _read_payload()
         _update_env_file(Path(".env"), payload)
-    except (ValueError, OSError, json.JSONDecodeError) as exc:
+    except (ValueError, OSError, RuntimeError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
         print(f"[ERROR] Unable to configure push environment: {exc}", file=sys.stderr)
         return 1
 

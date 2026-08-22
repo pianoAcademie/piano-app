@@ -26,6 +26,53 @@ def is_restricted_annual_forfait(plan: Plan) -> bool:
     return plan.kind == PlanKind.FORFAIT and _normalized(plan.name) == RESTRICTED_FORFAIT_NAME
 
 
+def pending_makeup_request_for_subscription(
+    db: Session,
+    *,
+    user_id: UUID,
+    subscription_id: UUID,
+    lock: bool = False,
+) -> MakeupRequest | None:
+    query = (
+        select(MakeupRequest)
+        .where(
+            MakeupRequest.user_id == user_id,
+            MakeupRequest.forfait_subscription_id == subscription_id,
+            MakeupRequest.status == MakeupRequestStatus.PROPOSED,
+            MakeupRequest.reserved_booking_id.is_(None),
+        )
+        .order_by(MakeupRequest.proposed_at.asc(), MakeupRequest.created_at.asc(), MakeupRequest.id.asc())
+        .limit(1)
+    )
+    if lock:
+        query = query.with_for_update()
+    return db.scalar(query)
+
+
+def claim_pending_makeup_request(
+    db: Session,
+    *,
+    booking: Booking,
+    subscription: ClientPlanSubscription,
+    now: datetime,
+) -> MakeupRequest:
+    request = pending_makeup_request_for_subscription(
+        db,
+        user_id=booking.user_id,
+        subscription_id=subscription.id,
+        lock=True,
+    )
+    if request is None:
+        raise ValueError("MAKEUP_REQUEST_REQUIRED")
+    request.reserved_booking_id = booking.id
+    request.status = MakeupRequestStatus.BOOKED
+    request.booked_at = now
+    request.updated_at = now
+    booking.makeup_request_id = request.id
+    db.add(request)
+    return request
+
+
 def active_restricted_forfait_for_booking(
     db: Session,
     *,

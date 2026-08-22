@@ -29,6 +29,7 @@ from app.services.communication_journal import (
     log_communication,
 )
 from app.services.email_delivery import send_email
+from app.services.session_teachers import effective_professor_ids_for_session, professor_display_name
 
 logger = logging.getLogger(__name__)
 HTML_TAG_RE = re.compile(r"<\s*[a-z!/][^>]*>", re.IGNORECASE)
@@ -232,8 +233,21 @@ def _build_email_payload(
         f"Rappel de votre cours: {course_type.name}",
         f"Date: {start_human}",
         f"Lieu: {location_label}",
-        f"Description: {session_obj.description or session_obj.title}",
     ]
+
+    professor_ids = effective_professor_ids_for_session(db, session_obj=session_obj)
+    if professor_ids:
+        professors = db.scalars(select(Professor).where(Professor.id.in_(professor_ids))).all()
+        professor_by_id = {professor.id: professor for professor in professors}
+        professor_names = [
+            professor_display_name(professor_by_id[professor_id])
+            for professor_id in professor_ids
+            if professor_id in professor_by_id and professor_display_name(professor_by_id[professor_id])
+        ]
+        if professor_names:
+            lines.append(f"Professeur{'s' if len(professor_names) > 1 else ''}: {', '.join(professor_names)}")
+
+    lines.append(f"Description: {session_obj.description or session_obj.title}")
 
     if location.is_online and session_obj.zoom_link:
         lines.append(f"Lien Zoom: {session_obj.zoom_link}")

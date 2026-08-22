@@ -71,6 +71,20 @@ class ClientOfferDepositLinkingTests(unittest.TestCase):
 
         self.assertIsNone(resolved)
 
+    def test_invoice_source_quote_id_recovers_quote_from_subscription_bookings(self) -> None:
+        quote_id = uuid4()
+        subscription_id = uuid4()
+        booking_id = uuid4()
+
+        resolved = _invoice_source_quote_id(
+            {"included_payment_keys": [f"BOOKING:{booking_id}"]},
+            manual_transactions_by_id={},
+            subscription_id_by_booking_id={booking_id: subscription_id},
+            quote_id_by_subscription_id={subscription_id: quote_id},
+        )
+
+        self.assertEqual(resolved, quote_id)
+
     def test_paid_deposit_is_deducted_from_offer_remaining_amount(self) -> None:
         subscription_id = uuid4()
         quote_id = uuid4()
@@ -102,12 +116,76 @@ class ClientOfferDepositLinkingTests(unittest.TestCase):
                     },
                 )
             },
+            invoice_metadata_by_quote_id={
+                quote_id: [
+                    (
+                        SimpleNamespace(id=invoice_note_id),
+                        {
+                            "invoice_number": "PA26-0044",
+                            "invoice_status": "PAID",
+                            "total_to_pay_by_currency": {"EUR": "200.00"},
+                        },
+                    )
+                ]
+            },
         )
 
         self.assertEqual(str(fields["offer_total_ttc"]), "1482.00")
         self.assertEqual(str(fields["offer_deposit_amount_ttc"]), "200.00")
         self.assertEqual(fields["offer_deposit_status"], "PAID")
+        self.assertEqual(str(fields["offer_paid_ttc"]), "200.00")
+        self.assertEqual(fields["offer_payment_status"], "PARTIALLY_PAID")
         self.assertEqual(str(fields["offer_remaining_ttc"]), "1282.00")
+
+    def test_paid_deposit_and_annual_invoice_mark_offer_paid_in_full(self) -> None:
+        subscription_id = uuid4()
+        quote_id = uuid4()
+        deposit_note_id = uuid4()
+        annual_note_id = uuid4()
+        quote = SimpleNamespace(
+            id=quote_id,
+            quote_number="DV-20260512094758-E181",
+            school_year_label="2026-2027",
+            total_ttc="1482.00",
+            currency="EUR",
+            meta={"pre_registration_deposit": {"enabled": True, "amount_ttc": "200.00"}},
+        )
+
+        fields = _client_offer_fields(
+            subscription_id=subscription_id,
+            quote_by_subscription_id={subscription_id: quote},
+            option_rows_by_quote_id={},
+            deposit_metadata_by_quote_id={
+                quote_id: (
+                    SimpleNamespace(id=deposit_note_id),
+                    {"invoice_status": "PAID", "paid_at": "2026-05-30T10:31:33+00:00"},
+                )
+            },
+            invoice_metadata_by_quote_id={
+                quote_id: [
+                    (
+                        SimpleNamespace(id=deposit_note_id),
+                        {
+                            "invoice_number": "PA26-0044",
+                            "invoice_status": "PAID",
+                            "total_to_pay_by_currency": {"EUR": "200.00"},
+                        },
+                    ),
+                    (
+                        SimpleNamespace(id=annual_note_id),
+                        {
+                            "invoice_number": "PA26-0375",
+                            "invoice_status": "PAID",
+                            "total_to_pay_by_currency": {"EUR": "1282.00"},
+                        },
+                    ),
+                ]
+            },
+        )
+
+        self.assertEqual(str(fields["offer_paid_ttc"]), "1482.00")
+        self.assertEqual(fields["offer_payment_status"], "PAID")
+        self.assertEqual(str(fields["offer_remaining_ttc"]), "0.00")
 
 
 if __name__ == "__main__":

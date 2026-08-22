@@ -227,6 +227,8 @@ export type SubscriptionOut = {
   offer_deposit_status?: string | null;
   offer_deposit_paid_at?: string | null;
   offer_deposit_invoice_id?: string | null;
+  offer_paid_ttc?: string | null;
+  offer_payment_status?: string | null;
   offer_remaining_ttc?: string | null;
   plan: {
     id: string;
@@ -767,6 +769,8 @@ export type AdminRangeInvoiceOut = {
   bank_transfer_order_paid_at: string | null;
   public_note: string | null;
   private_note: string | null;
+  recipient_client_name: string | null;
+  family_billing_payer_client_id: string | null;
   related_invoices: AdminRangeInvoiceReferenceOut[];
 };
 
@@ -865,12 +869,30 @@ export type FamilyLinkOut = {
   updated_at: string;
 };
 
+export type FamilyBillingAllocationOut = {
+  id: string;
+  child_client_id: string;
+  payer_client_id: string;
+  allocation_type: "PERCENT" | "FIXED" | "REMAINDER";
+  allocation_value: string | null;
+};
+
+export type FamilyBillingChildOut = {
+  child: FamilyMemberOut;
+  payers: Array<{
+    adult: FamilyMemberOut;
+    is_primary_billing_recipient: boolean;
+    allocation: FamilyBillingAllocationOut | null;
+  }>;
+};
+
 export type AdminClientFamilyOut = {
   client_id: string;
   client_kind: "ADULT" | "CHILD" | string;
   links_as_adult: FamilyLinkOut[];
   links_as_child: FamilyLinkOut[];
   billing_recipient_adult_id: string | null;
+  billing_children: FamilyBillingChildOut[];
 };
 
 export type ClientFamilyOverviewOut = {
@@ -940,6 +962,8 @@ export type ClientFamilyOverviewOut = {
     offer_deposit_status: string | null;
     offer_deposit_paid_at: string | null;
     offer_deposit_invoice_id: string | null;
+    offer_paid_ttc: string | null;
+    offer_payment_status: string | null;
     offer_remaining_ttc: string | null;
     plan: {
       id: string;
@@ -1053,6 +1077,7 @@ export type ClientContentMemberAccessOut = {
   member_email: string;
   course_type_ids: string[];
   course_type_names: string[];
+  next_release_at: string | null;
 };
 
 export type ClientContentCourseOut = {
@@ -1650,6 +1675,8 @@ export type AdminSessionOut = {
   course_type_id: string;
   location_id: string;
   professor_id: string | null;
+  professor_ids: string[];
+  professor_display_names: string[];
   substitute_teacher_id: string | null;
   substitute_set_at: string | null;
   substitute_set_by: string | null;
@@ -1661,6 +1688,8 @@ export type AdminSessionOut = {
   substitute_teacher_display_name: string | null;
   effective_teacher_id: string | null;
   effective_teacher_display_name: string;
+  effective_teacher_ids: string[];
+  effective_teacher_display_names: string[];
   requires_professor: boolean;
   allows_student_bookings: boolean;
   supports_student_time_overrides: boolean;
@@ -1759,7 +1788,8 @@ export type AdminConfigAccountOut = {
   country: string;
   allowed_currencies: string[];
   default_currency: string;
-  client_balance_default_date_mode: "TODAY" | "PACKAGE_END";
+  client_balance_default_date_mode: "TODAY" | "PACKAGE_END" | "FIXED_DATE";
+  client_balance_default_date: string | null;
   bank_transfer_account_holder: string;
   bank_transfer_iban: string;
   bank_transfer_bic: string;
@@ -2355,6 +2385,7 @@ export type ClientSessionReservationMemberOptionOut = {
   action_label: string;
   status_label: string;
   reason: string | null;
+  reason_code?: string | null;
   has_credit_coverage: boolean;
   coverage_source: string | null;
   direct_payment_amount_ttc: string | null;
@@ -2602,6 +2633,10 @@ export type AdminPlanningSimulationSlotOut = {
   teacher_assignment_professor_id: string | null;
   teacher_assignment_label: string | null;
   teacher_assignment_status: "PREVISIONAL" | "CONFIRMED" | null;
+  teacher_assignment_ids: string[];
+  teacher_assignment_professor_ids: Array<string | null>;
+  teacher_assignment_labels: string[];
+  teacher_assignment_statuses: Array<"PREVISIONAL" | "CONFIRMED">;
   teacher_assignment_warnings: Array<"TIME_OVERLAP" | "MULTI_SITE_HALF_DAY" | string>;
 };
 

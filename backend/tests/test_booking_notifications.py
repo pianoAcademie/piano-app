@@ -69,6 +69,7 @@ class BookingNotificationTests(unittest.TestCase):
             timezone_name="Asia/Riyadh",
             location_name="Online",
             meeting_link="https://example.test/online-lesson",
+            teacher_names=["Prof Test", "Guest Teacher"],
             language="en",
             account_url="https://app.example.test/client?tab=planning",
         )
@@ -82,6 +83,8 @@ class BookingNotificationTests(unittest.TestCase):
         self.assertIn('href="https://example.test/online-lesson"', body)
         self.assertIn("If the button does not work, copy this link", body)
         self.assertIn("View or manage my booking", body)
+        self.assertIn("Teachers", body)
+        self.assertIn("Prof Test, Guest Teacher", body)
         self.assertIn('href="https://app.example.test/client?tab=planning"', body)
 
     def test_reminder_schedules_email_for_guardian_only(self) -> None:
@@ -132,7 +135,7 @@ class BookingNotificationTests(unittest.TestCase):
             zoom_link="https://example.test/teacher-room",
             active=True,
         )
-        fake_db = _FakeSession([location, student, teacher, guardian])
+        fake_db = _FakeSession([location, student, guardian])
         guardian_recipient = ResolvedRecipient(
             contact_type="USER",
             contact_id=guardian_id,
@@ -151,8 +154,8 @@ class BookingNotificationTests(unittest.TestCase):
             "app.services.notifications.application.orchestrator.resolve_reminder_recipients",
             return_value=[guardian_recipient],
         ), patch(
-            "app.services.notifications.application.orchestrator.effective_teacher_id_for_session",
-            return_value=teacher_id,
+            "app.services.notifications.application.orchestrator._effective_session_professors",
+            return_value=[teacher],
         ), patch(
             "app.services.notifications.application.orchestrator.create_domain_event",
             return_value=SimpleNamespace(id=uuid4()),
@@ -173,6 +176,7 @@ class BookingNotificationTests(unittest.TestCase):
         self.assertIn("Sunday, August 2, 2026", guardian_kwargs["body_snapshot"])
         self.assertIn("Join the Zoom lesson", guardian_kwargs["body_snapshot"])
         self.assertIn('href="https://example.test/online-lesson"', guardian_kwargs["body_snapshot"])
+        self.assertIn("Prof Test", guardian_kwargs["body_snapshot"])
         self.assertEqual(guardian_kwargs["payload_snapshot"]["body_format"], "HTML")
         self.assertEqual([item.notification_id for item in queued], notification_ids)
         self.assertTrue(all(item.queue_name == QUEUE_NOTIFICATIONS_SCHEDULED for item in queued))
@@ -310,7 +314,7 @@ class BookingNotificationTests(unittest.TestCase):
             active=True,
         )
         planning_config = SimpleNamespace(notify_coach=True)
-        fake_db = _FakeSession([session_obj, course_type, student, location, teacher, planning_config])
+        fake_db = _FakeSession([session_obj, course_type, student, location, planning_config])
 
         created_notification_id = uuid4()
         with patch(
@@ -325,6 +329,9 @@ class BookingNotificationTests(unittest.TestCase):
         ), patch(
             "app.services.notifications.application.orchestrator.render_booking_confirmation_email",
             return_value=SimpleNamespace(subject="Reservation", body="<p>OK</p>", body_format="HTML"),
+        ), patch(
+            "app.services.notifications.application.orchestrator._effective_session_professors",
+            return_value=[teacher],
         ), patch(
             "app.services.notifications.application.orchestrator.create_notification_if_new",
             return_value=SimpleNamespace(id=created_notification_id),

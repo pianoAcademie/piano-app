@@ -10,6 +10,7 @@ type AutoSubmitSelectProps = {
   defaultValue: string;
   options: AutoSubmitSelectOption[];
   required?: boolean;
+  clearNamesOnChange?: string[];
 };
 
 export default function AutoSubmitSelect({
@@ -17,6 +18,7 @@ export default function AutoSubmitSelect({
   defaultValue,
   options,
   required = false,
+  clearNamesOnChange = [],
 }: AutoSubmitSelectProps): JSX.Element {
   return (
     <select
@@ -24,7 +26,16 @@ export default function AutoSubmitSelect({
       defaultValue={defaultValue}
       required={required}
       onChange={(event) => {
-        event.currentTarget.form?.requestSubmit();
+        const form = event.currentTarget.form;
+        if (!form) {
+          return;
+        }
+        for (const fieldName of clearNamesOnChange) {
+          for (const field of Array.from(form.querySelectorAll(`[name="${CSS.escape(fieldName)}"]`))) {
+            field.remove();
+          }
+        }
+        form.requestSubmit();
       }}
     >
       {options.map((option) => (
@@ -35,4 +46,3 @@ export default function AutoSubmitSelect({
     </select>
   );
 }
-

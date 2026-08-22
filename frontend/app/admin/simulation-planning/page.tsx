@@ -693,7 +693,11 @@ function TeacherAssignmentBoard({
                               ? text(language, "Prévisionnel", "Provisional")
                               : text(language, "À pourvoir", "Unfilled")}
                         </span>
-                        <strong>{slot.teacher_assignment_label || text(language, "Aucun professeur", "No teacher")}</strong>
+                        <strong>
+                          {(slot.teacher_assignment_labels?.length
+                            ? slot.teacher_assignment_labels.join(" · ")
+                            : slot.teacher_assignment_label) || text(language, "Aucun professeur", "No teacher")}
+                        </strong>
                       </div>
                     </div>
 
@@ -709,6 +713,7 @@ function TeacherAssignmentBoard({
                       <form action={adminUpdatePlanningSimulationTeacherAssignmentAction} className="simulation-assignment-form">
                         <input type="hidden" name="school_year_label" value={schoolYearLabel} />
                         <input type="hidden" name="slot_key" value={slot.slot_key} />
+                        <input type="hidden" name="position" value="1" />
                         <input type="hidden" name="return_to" value={returnTo} />
                         <label>
                           <span>{text(language, "Professeur connu", "Known teacher")}</span>
@@ -743,6 +748,50 @@ function TeacherAssignmentBoard({
                         </div>
                       </form>
                     ) : null}
+                    {canEdit && /master\s*class/i.test(slot.course_type_name) ? ([2, 3, 4] as const).map((position) => {
+                      const assignmentIndex = position - 1;
+                      const assignedProfessorId = slot.teacher_assignment_professor_ids?.[assignmentIndex] || "";
+                      const assignedLabel = slot.teacher_assignment_labels?.[assignmentIndex] || "";
+                      const assignedStatus = slot.teacher_assignment_statuses?.[assignmentIndex] || "PREVISIONAL";
+                      return (
+                        <form action={adminUpdatePlanningSimulationTeacherAssignmentAction} className="simulation-assignment-form" key={`${slot.slot_key}-${position}`}>
+                          <input type="hidden" name="school_year_label" value={schoolYearLabel} />
+                          <input type="hidden" name="slot_key" value={slot.slot_key} />
+                          <input type="hidden" name="position" value={position} />
+                          <input type="hidden" name="return_to" value={returnTo} />
+                          <label>
+                            <span>{text(language, `Professeur ${position}`, `Teacher ${position}`)}</span>
+                            <select name="professor_id" defaultValue={assignedProfessorId}>
+                              <option value="">{text(language, "— Aucun / provisoire —", "— None / placeholder —")}</option>
+                              {activeProfessors.map((professor) => (
+                                <option value={professor.id} key={professor.id}>{professor.first_name} {professor.last_name}</option>
+                              ))}
+                            </select>
+                          </label>
+                          <label>
+                            <span>{text(language, "Ou libellé provisoire", "Or placeholder label")}</span>
+                            <input
+                              name="teacher_label"
+                              list="simulation-placeholder-teachers"
+                              defaultValue={assignedProfessorId ? "" : assignedLabel}
+                            />
+                          </label>
+                          <label>
+                            <span>{text(language, "Statut", "Status")}</span>
+                            <select name="assignment_status" defaultValue={assignedStatus}>
+                              <option value="PREVISIONAL">{text(language, "Prévisionnel", "Provisional")}</option>
+                              <option value="CONFIRMED">{text(language, "Confirmé", "Confirmed")}</option>
+                            </select>
+                          </label>
+                          <div className="simulation-assignment-actions">
+                            <button type="submit" name="operation" value="save">{text(language, "Enregistrer", "Save")}</button>
+                            {assignedLabel ? (
+                              <button className="ghost" type="submit" name="operation" value="clear">{text(language, "Retirer", "Clear")}</button>
+                            ) : null}
+                          </div>
+                        </form>
+                      );
+                    }) : null}
                   </section>
                 ))}
             </div>

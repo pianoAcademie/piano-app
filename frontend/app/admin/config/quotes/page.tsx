@@ -427,7 +427,7 @@ function moneyNumber(value: unknown): number | null {
 function typeformDepositEnabled(config: TypeformFormConfigOut): boolean {
   const configJson = config.configuration_json ?? {};
   if (!Object.prototype.hasOwnProperty.call(configJson, "default_pre_registration_deposit_enabled")) {
-    return true;
+    return false;
   }
   return boolish(configJson.default_pre_registration_deposit_enabled);
 }

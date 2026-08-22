@@ -6,17 +6,21 @@ const targets = {
   client: {
     appName: "Piano Academie Client",
     bundleId: "com.pianoacademie.client",
+    appIconName: "AppIcon",
     configFile: "capacitor.client.config.json",
     envPrefix: "PA_CLIENT",
     defaultVersionName: "1.0",
+    defaultVersionCode: "4",
     entitlementsPath: "App/App.entitlements",
   },
   prof: {
     appName: "Piano Academie Professeur",
     bundleId: "com.pianoacademie.professeur",
+    appIconName: "AppIconProf",
     configFile: "capacitor.prof.config.json",
     envPrefix: "PA_PROF",
-    defaultVersionName: "1.0.0",
+    defaultVersionName: "1.0",
+    defaultVersionCode: "5",
     entitlementsPath: "App/App.entitlements",
   },
 };
@@ -69,10 +73,17 @@ replaceOrFail(
   "CODE_SIGN_ENTITLEMENTS",
 );
 
+replaceOrFail(
+  projectPath,
+  /ASSETCATALOG_COMPILER_APPICON_NAME = [^;]+;/g,
+  `ASSETCATALOG_COMPILER_APPICON_NAME = ${target.appIconName};`,
+  "ASSETCATALOG_COMPILER_APPICON_NAME",
+);
+
 copyFileSync(targetConfigPath, activeConfigPath);
 
 const versionName = process.env[`${target.envPrefix}_VERSION_NAME`] || target.defaultVersionName;
-const versionCode = process.env[`${target.envPrefix}_VERSION_CODE`] || "1";
+const versionCode = process.env[`${target.envPrefix}_VERSION_CODE`] || target.defaultVersionCode;
 replaceOrFail(
   projectPath,
   /MARKETING_VERSION = [^;]+;/g,

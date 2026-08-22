@@ -2,6 +2,11 @@
   "appId": "com.pianoacademie.professeur",
   "appName": "Piano Academie Professeur",
   "webDir": "public",
+  "plugins": {
+    "PushNotifications": {
+      "presentationOptions": ["badge", "sound", "alert"]
+    }
+  },
   "server": {
     "url": "https://app.piano-academie.com/prof",
     "cleartext": false,

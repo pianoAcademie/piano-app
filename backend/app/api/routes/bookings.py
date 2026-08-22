@@ -39,7 +39,13 @@ from app.models.plan import (
 )
 from app.models.user import ClientKind, User, UserRole
 from app.schemas.booking import BookingCreateRequest, BookingOut, ClientBookingOut, SessionMiniOut
-from app.services.makeup_passes import active_restricted_forfait_for_booking, consume_pass_and_create_makeup
+from app.services.makeup_passes import (
+    active_restricted_forfait_for_booking,
+    claim_pending_makeup_request,
+    consume_pass_and_create_makeup,
+    is_restricted_annual_forfait,
+    pending_makeup_request_for_subscription,
+)
 from app.services.automation_triggers import schedule_booking_created_triggers
 from app.services.family_billing import resolve_billing_profile
 from app.services.notifications.application.orchestrator import (
@@ -970,6 +976,12 @@ def _select_eligible_subscription(
             course_type_service_code=course_type_service_code,
         ):
             continue
+        if is_restricted_annual_forfait(plan) and pending_makeup_request_for_subscription(
+            db,
+            user_id=user_id,
+            subscription_id=subscription.id,
+        ) is None:
+            continue
         is_pending_preview = include_pending_preview and subscription.status == SubscriptionStatus.PENDING
         if not is_pending_preview and reconcile_subscription_status(subscription, now=now, plan_kind=plan.kind):
             db.add(subscription)
@@ -1161,7 +1173,23 @@ def _promote_waitlist_if_possible(
             db.flush()
             continue
 
-        def confirm_promotion() -> None:
+        def confirm_promotion(
+            eligible_subscription: ClientPlanSubscription | None = None,
+            eligible_plan: Plan | None = None,
+        ) -> None:
+            if eligible_subscription is not None and eligible_plan is not None and is_restricted_annual_forfait(eligible_plan):
+                try:
+                    claim_pending_makeup_request(
+                        db,
+                        booking=next_waitlisted,
+                        subscription=eligible_subscription,
+                        now=now,
+                    )
+                except ValueError:
+                    next_waitlisted.status = BookingStatus.CANCELLED
+                    next_waitlisted.cancelled_at = now
+                    next_waitlisted.cancellation_reason = "WAITLIST_PROMOTION_NO_MAKEUP_REQUEST"
+                    return
             next_waitlisted.status = BookingStatus.BOOKED
             next_waitlisted.booked_at = now
             next_waitlisted.cancelled_at = None
@@ -1259,7 +1287,7 @@ def _promote_waitlist_if_possible(
             db.flush()
             continue
 
-        confirm_promotion()
+        confirm_promotion(subscription, plan)
 
 
 def _book_session_internal(
@@ -1511,6 +1539,19 @@ def _book_session_internal(
 
     if booking_status == BookingStatus.BOOKED:
         db.flush()
+        if subscription is not None and plan is not None and is_restricted_annual_forfait(plan):
+            try:
+                claim_pending_makeup_request(
+                    db,
+                    booking=booking,
+                    subscription=subscription,
+                    now=now,
+                )
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Aucune recuperation de cours n est disponible pour ce forfait.",
+                ) from exc
         orchestrated_notifications.extend(
             _activate_confirmed_booking(
                 db,

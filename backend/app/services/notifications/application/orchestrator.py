@@ -71,7 +71,11 @@ from app.services.notifications.infrastructure.repository import (
     create_notification_if_new,
     resolve_notification_rule,
 )
-from app.services.session_teachers import effective_teacher_id_for_session, professor_display_name
+from app.services.session_teachers import (
+    effective_professor_ids_for_session,
+    effective_teacher_id_for_session,
+    professor_display_name,
+)
 from app.services.shared.queue.redis_queue import queue_push
 
 
@@ -224,6 +228,15 @@ def _reminder_display_name(user: User | None, *, fallback: str) -> str:
     return full_name or (user.email or fallback)
 
 
+def _effective_session_professors(db: Session, *, session_obj: CourseSession) -> list[Professor]:
+    professor_ids = effective_professor_ids_for_session(db, session_obj=session_obj)
+    if not professor_ids:
+        return []
+    professors = db.scalars(select(Professor).where(Professor.id.in_(professor_ids))).all()
+    professor_by_id = {professor.id: professor for professor in professors}
+    return [professor_by_id[professor_id] for professor_id in professor_ids if professor_id in professor_by_id]
+
+
 def _course_timezone_name(session_obj: CourseSession, location: Location | None) -> str:
     return resolve_timezone_name(
         getattr(session_obj, "timezone", None),
@@ -291,6 +304,7 @@ def _build_lesson_reminder_email(
     timezone_name: str | None,
     location_name: str,
     meeting_link: str | None,
+    teacher_names: list[str] | None,
     language: str | None,
     account_url: str | None = None,
 ) -> tuple[str, str]:
@@ -322,6 +336,7 @@ def _build_lesson_reminder_email(
         date_label = "Date"
         time_label = "Time"
         location_label = "Location"
+        teachers_label = "Teachers" if len(teacher_names or []) > 1 else "Teacher"
         timezone_label = "Time zone"
         online_label = "ONLINE LESSON"
         online_title = "Join your lesson on Zoom"
@@ -345,6 +360,7 @@ def _build_lesson_reminder_email(
         date_label = "Date"
         time_label = "Horaire"
         location_label = "Lieu"
+        teachers_label = "Professeurs" if len(teacher_names or []) > 1 else "Professeur"
         timezone_label = "Fuseau horaire"
         online_label = "COURS EN LIGNE"
         online_title = "Rejoignez votre cours sur Zoom"
@@ -358,6 +374,17 @@ def _build_lesson_reminder_email(
             f"{french_months[local_start.month - 1]} {local_start.year}"
         )
         displayed_location = "En ligne" if location_name.strip().lower() in {"online", "en ligne"} else location_name
+
+    normalized_teacher_names = list(
+        dict.fromkeys(name.strip() for name in (teacher_names or []) if name and name.strip())
+    )
+    teachers_row = ""
+    if normalized_teacher_names:
+        teachers_value = ", ".join(normalized_teacher_names)
+        teachers_row = (
+            f'<tr><td style="padding:8px 12px 18px 20px;font-size:13px;font-weight:700;color:#667085;">{escape(teachers_label)}</td>'
+            f'<td style="padding:8px 20px 18px 12px;font-size:15px;color:#172033;">{escape(teachers_value)}</td></tr>'
+        )
 
     if local_start.date() == local_end.date():
         time_value = f"{local_start.strftime('%H:%M')} – {local_end.strftime('%H:%M')}"
@@ -436,8 +463,9 @@ def _build_lesson_reminder_email(
         f'<td style="padding:8px 20px 8px 12px;font-size:15px;font-weight:700;color:#172033;">{escape(time_value)}</td></tr>'
         f'<tr><td style="padding:8px 12px 8px 20px;font-size:13px;font-weight:700;color:#667085;">{escape(timezone_label)}</td>'
         f'<td style="padding:8px 20px 8px 12px;font-size:15px;color:#172033;">{escape(normalized_timezone)}</td></tr>'
-        f'<tr><td style="padding:8px 12px 18px 20px;font-size:13px;font-weight:700;color:#667085;">{escape(location_label)}</td>'
-        f'<td style="padding:8px 20px 18px 12px;font-size:15px;color:#172033;">{escape(displayed_location)}</td></tr>'
+        f'<tr><td style="padding:8px 12px {"8px" if teachers_row else "18px"} 20px;font-size:13px;font-weight:700;color:#667085;">{escape(location_label)}</td>'
+        f'<td style="padding:8px 20px {"8px" if teachers_row else "18px"} 12px;font-size:15px;color:#172033;">{escape(displayed_location)}</td></tr>'
+        f'{teachers_row}'
         '</table>'
         f'{account_block}'
         f'<p style="margin:22px 0 0 0;font-size:12px;line-height:19px;color:#7b8494;text-align:center;">{escape(footer)}</p>'
@@ -500,10 +528,10 @@ def schedule_booking_created_notifications(
         student.email if student is not None else str(booking.user_id)
     )
     location = db.scalar(select(Location).where(Location.id == session_obj.location_id))
-    teacher_id = effective_teacher_id_for_session(session_obj)
-    teacher = db.scalar(select(Professor).where(Professor.id == teacher_id)) if teacher_id is not None else None
+    teachers = _effective_session_professors(db, session_obj=session_obj)
+    teacher_names = [name for teacher in teachers if (name := professor_display_name(teacher))]
     location_label = (location.name or "").strip() if location is not None else ""
-    teacher_label = professor_display_name(teacher)
+    teacher_label = ", ".join(teacher_names)
 
     event = create_domain_event(
         db,
@@ -581,13 +609,16 @@ def schedule_booking_created_notifications(
         if created is not None:
             out.append(OrchestratedNotification(notification_id=created.id, queue_name=QUEUE_NOTIFICATIONS_IMMEDIATE))
 
-    teacher_recipient = _teacher_booking_notification_recipient(db, session_obj=session_obj, teacher=teacher)
-    if teacher_recipient is not None:
+    for teacher in teachers:
+        teacher_recipient = _teacher_booking_notification_recipient(db, session_obj=session_obj, teacher=teacher)
+        if teacher_recipient is None:
+            continue
         teacher_email, teacher_contact_id = teacher_recipient
+        recipient_teacher_label = professor_display_name(teacher)
         rendered = render_booking_confirmation_email(
             db,
             audience="ADMIN",
-            recipient_name=teacher_label,
+            recipient_name=recipient_teacher_label,
             student_name=student_label,
             activity_name=course_type.name,
             start_at=session_obj.start_at_utc,
@@ -1222,8 +1253,8 @@ def schedule_reminder_notifications_for_booking(
     recipients = resolve_reminder_recipients(db, booking=booking)
     location = db.scalar(select(Location).where(Location.id == session_obj.location_id))
     student = db.scalar(select(User).where(User.id == booking.user_id))
-    teacher_id = effective_teacher_id_for_session(session_obj)
-    teacher = db.scalar(select(Professor).where(Professor.id == teacher_id)) if teacher_id is not None else None
+    teachers = _effective_session_professors(db, session_obj=session_obj)
+    teacher_names = [name for teacher in teachers if (name := professor_display_name(teacher))]
 
     if not recipients:
         return []
@@ -1258,7 +1289,11 @@ def schedule_reminder_notifications_for_booking(
     location_name = "Online" if is_online else ((location.name or "").strip() if location is not None else "-")
     meeting_link = None
     if is_online:
-        meeting_link = (session_obj.zoom_link or (teacher.zoom_link if teacher is not None else None) or "").strip() or None
+        meeting_link = (
+            session_obj.zoom_link
+            or next(((teacher.zoom_link or "").strip() for teacher in teachers if (teacher.zoom_link or "").strip()), None)
+            or ""
+        ).strip() or None
 
     for recipient in recipients:
         recipient_user = (
@@ -1285,6 +1320,7 @@ def schedule_reminder_notifications_for_booking(
                 timezone_name=recipient_timezone,
                 location_name=location_name,
                 meeting_link=meeting_link,
+                teacher_names=teacher_names,
                 language=language,
                 account_url=f"{resolve_frontend_base_url(db).rstrip('/')}/client?tab=planning",
             )

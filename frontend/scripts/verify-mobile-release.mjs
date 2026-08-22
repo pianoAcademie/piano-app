@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -42,13 +43,45 @@ const mainActivity = readRequired("android/app/src/main/java/com/pianoacademie/m
 const iosProject = readRequired("ios/App/App.xcodeproj/project.pbxproj");
 const iosAppDelegate = readRequired("ios/App/App/AppDelegate.swift");
 const packageJson = JSON.parse(readRequired("package.json") || "{}");
+const prepareIosTarget = readRequired("scripts/prepare-ios-target.mjs");
 
 requireFile("android/gradlew");
 requireFile("ios/App/App.xcworkspace/contents.xcworkspacedata");
 requireFile("ios/App/App/PrivacyInfo.xcprivacy");
 requireFile("ios/App/App/App.entitlements");
 requireFile("public/app-icons/piano-academie-512.png");
+requireFile("public/app-icons/piano-academie-professeur-1024-v2.png");
+requireFile("public/app-icons/piano-academie-professeur-192.png");
+requireFile("public/app-icons/piano-academie-professeur-512.png");
 requireFile("app/client/manifest.webmanifest");
+requireFile("app/prof/manifest.webmanifest");
+
+const fileHash = (relativePath) => {
+  const path = requireFile(relativePath);
+  return existsSync(path) ? createHash("sha256").update(readFileSync(path)).digest("hex") : "";
+};
+
+const clientIosIconHash = fileHash("ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png");
+const professorIosIconHash = fileHash("ios/App/App/Assets.xcassets/AppIconProf.appiconset/AppIconProf-512@2x.png");
+const clientAndroidIconHash = fileHash("android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png");
+const professorAndroidIconHash = fileHash("android/app/src/professeur/res/mipmap-xxxhdpi/ic_launcher.png");
+const professorManifest = readRequired("app/prof/manifest.webmanifest/route.ts");
+
+if (clientIosIconHash && clientIosIconHash === professorIosIconHash) {
+  failures.push("iOS client and professor app icons must be distinct");
+}
+if (clientAndroidIconHash && clientAndroidIconHash === professorAndroidIconHash) {
+  failures.push("Android client and professor app icons must be distinct");
+}
+if (!prepareIosTarget.includes('appIconName: "AppIcon"') || !prepareIosTarget.includes('appIconName: "AppIconProf"')) {
+  failures.push("iOS target preparation must select a distinct client/professor icon set");
+}
+if (!packageJson.scripts?.["mobile:sync:prof:android"]?.includes("MOBILE_APP_TARGET=prof")) {
+  failures.push("Android professor sync must use MOBILE_APP_TARGET=prof");
+}
+if (!professorManifest.includes("piano-academie-professeur-192.png") || !professorManifest.includes("piano-academie-professeur-512.png")) {
+  failures.push("Professor installable web app must use the professor icon set");
+}
 
 for (const targetName of targets) {
   const target = definitions[targetName];
@@ -67,6 +100,9 @@ for (const targetName of targets) {
   }
   if (!Array.isArray(iosConfig.plugins?.PushNotifications?.presentationOptions)) {
     failures.push(`iOS ${targetName} must configure foreground push presentation options`);
+  }
+  if (!Array.isArray(androidConfig.plugins?.PushNotifications?.presentationOptions)) {
+    failures.push(`Android ${targetName} must configure foreground push presentation options`);
   }
 
   if (!gradle.includes(`${target.flavor} {`)) failures.push(`Android flavor ${target.flavor} is missing`);

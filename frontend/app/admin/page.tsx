@@ -29,7 +29,6 @@ import SessionVisibilityFields from "../../components/session-visibility-fields"
 import ModalA11yFrame from "../../components/modal-a11y-frame";
 import PresenceButtonsGroup from "../../components/presence-buttons-group";
 import AttendanceInternalNoteField from "../../components/attendance-internal-note-field";
-import AdminOnlinePresenceDashboard from "../../components/admin-online-presence-dashboard";
 import DayEventsDrawer from "../../components/planning/day-events-drawer";
 import SessionEditModalBridge from "../../components/planning/session-edit-modal-bridge";
 import MonthDayCard from "../../components/planning/month-day-card";
@@ -61,6 +60,7 @@ type CreateSessionDraft = {
   title: string;
   course_type_id: string;
   professor_id: string;
+  professor_ids: string[];
   location_id: string;
   session_timezone: string;
   start_date: string;
@@ -886,6 +886,9 @@ function parseCreateSessionDraft(raw: string): CreateSessionDraft | null {
       title: String(parsed.title ?? ""),
       course_type_id: String(parsed.course_type_id ?? ""),
       professor_id: String(parsed.professor_id ?? ""),
+      professor_ids: Array.isArray(parsed.professor_ids)
+        ? parsed.professor_ids.map((value) => String(value).trim()).filter(Boolean).slice(0, 4)
+        : [],
       location_id: String(parsed.location_id ?? ""),
       session_timezone: String(parsed.session_timezone ?? ""),
       start_date: String(parsed.start_date ?? ""),
@@ -960,6 +963,22 @@ function parseRecurrenceRuleDefaults(
 function clientDisplayName(client: AdminClientOut): string {
   const fullName = `${client.first_name ?? ""} ${client.last_name ?? ""}`.trim();
   return fullName || client.email;
+}
+
+function compareSessionBookingsByFirstName(
+  left: AdminSessionBookingOut,
+  right: AdminSessionBookingOut,
+  locale: string,
+): number {
+  const compare = (leftValue: string | null | undefined, rightValue: string | null | undefined): number =>
+    (leftValue || "").localeCompare(rightValue || "", locale, { sensitivity: "base", numeric: true });
+
+  return (
+    compare(left.client_first_name, right.client_first_name) ||
+    compare(left.client_last_name, right.client_last_name) ||
+    compare(left.client_display_name, right.client_display_name) ||
+    left.id.localeCompare(right.id)
+  );
 }
 
 function compactList(values: string[], limit = 2): string {
@@ -1071,7 +1090,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
     backendRequest<LocationOut[]>("/api/v1/locations", {}, token),
     backendRequest<AdminProfessorOut[]>("/api/v1/admin/professors", {}, token),
     backendRequest<AdminSessionOut[]>(sessionsEndpoint, {}, token),
-    backendRequest<AdminClientOut[]>("/api/v1/admin/clients?active_only=true&limit=500", {}, token),
+    backendRequest<AdminClientOut[]>("/api/v1/admin/clients?active_only=true&limit=5000", {}, token),
     backendRequest<AdminMessagingTemplateOut[]>(
       "/api/v1/admin/config/messaging-templates?kind=CUSTOM&channel=GROUP_NOTE",
       {},
@@ -1088,8 +1107,27 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
         return [] as LocationOut[];
       })();
 
+  const professorSortLocale = localeForUiLanguage(language);
   const professors = professorsResult.ok
-    ? professorsResult.data
+    ? [...professorsResult.data].sort((a, b) => {
+        const firstNameComparison = (a.first_name || "").localeCompare(
+          b.first_name || "",
+          professorSortLocale,
+          { sensitivity: "base" },
+        );
+        if (firstNameComparison !== 0) {
+          return firstNameComparison;
+        }
+        const lastNameComparison = (a.last_name || "").localeCompare(
+          b.last_name || "",
+          professorSortLocale,
+          { sensitivity: "base" },
+        );
+        if (lastNameComparison !== 0) {
+          return lastNameComparison;
+        }
+        return a.id.localeCompare(b.id);
+      })
     : (() => {
         errors.push(`professors: ${professorsResult.message}`);
         return [] as AdminProfessorOut[];
@@ -1322,9 +1360,10 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const selectedSessionWaitlistedBookings = selectedSessionBookings.filter(
     (booking) => booking.status === "WAITLISTED",
   );
-  const selectedSessionConfirmedBookings = selectedSessionBookings.filter(
-    (booking) => booking.status !== "WAITLISTED",
-  );
+  const sessionBookingSortLocale = localeForUiLanguage(language);
+  const selectedSessionConfirmedBookings = selectedSessionBookings
+    .filter((booking) => booking.status !== "WAITLISTED")
+    .sort((left, right) => compareSessionBookingsByFirstName(left, right, sessionBookingSortLocale));
   const selectedSessionAdultConfirmedCount = selectedSessionConfirmedBookings.filter(
     (booking) => booking.client_kind === "ADULT",
   ).length;
@@ -1433,6 +1472,9 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
       || courseTypeById.get(selectedSession.course_type_id)?.mode === "ONLINE"
     : false;
   const selectedSessionRequiresProfessor = selectedSession ? selectedSession.requires_professor !== false : true;
+  const selectedSessionIsMasterclass = selectedSession
+    ? /master\s*class/i.test(`${courseTypeById.get(selectedSession.course_type_id)?.code ?? ""} ${selectedCourseTypeName}`)
+    : false;
   const selectedSessionAllowsStudentBookings = selectedSession ? selectedSession.allows_student_bookings !== false : true;
   const selectedSessionSupportsStudentTimeOverrides = selectedSession ? selectedSession.supports_student_time_overrides === true : false;
   const selectedHabitualProfessorName = selectedSession
@@ -1710,8 +1752,6 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
         </div>
       </section>
 
-      <AdminOnlinePresenceDashboard language={language} />
-
       <section className="card planning-filters-card">
         <form method="get" className="planning-quick-form">
           {language === "en" ? <input type="hidden" name="lang" value="en" /> : null}
@@ -1738,6 +1778,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
             <AutoSubmitSelect
               name="location_id"
               defaultValue={focusedLocationId}
+              clearNamesOnChange={["location_ids"]}
               options={[{ value: "", label: isEnglish ? "-- All locations --" : "-- Tous les lieux --" }, ...locations.map((row) => ({ value: row.id, label: row.name }))]}
             />
           </label>
@@ -1969,6 +2010,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                   language={language}
                   courseTypes={courseTypes.map((row) => ({
                     id: row.id,
+                    code: row.code,
                     name: row.name,
                     durationMinutes: row.duration_minutes,
                     defaultCapacity: row.default_capacity,
@@ -2002,6 +2044,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                         title: createDraft.title,
                         courseTypeId: createDraft.course_type_id,
                         professorId: createDraft.professor_id,
+                        professorIds: createDraft.professor_ids,
                         locationId: createDraft.location_id,
                         sessionTimezone: createDraft.session_timezone,
                         startDate: createDraft.start_date,
@@ -2434,6 +2477,17 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                                     ) : (
                                       <input type="hidden" name="scope" value="OCCURRENCE" />
                                     )}
+                                    <fieldset className="scope-inline compact">
+                                      <legend>{isEnglish ? "Notify the client by email?" : "Avertir le client par e-mail ?"}</legend>
+                                      <label className="checkline">
+                                        <input type="radio" name="notify_client" value="no" defaultChecked />
+                                        {isEnglish ? "No" : "Non"}
+                                      </label>
+                                      <label className="checkline">
+                                        <input type="radio" name="notify_client" value="yes" />
+                                        {isEnglish ? "Yes" : "Oui"}
+                                      </label>
+                                    </fieldset>
                                     <button className="danger" type="submit">
                                       {isEnglish ? "Confirm" : "Confirmer"}
                                     </button>
@@ -2715,11 +2769,21 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                         ) : null}
 
                         <div className="session-enroll-submit">
+                          <fieldset className="session-enroll-scope-options">
+                            <legend>{isEnglish ? "Notify the client by email?" : "Avertir le client par e-mail ?"}</legend>
+                            <label className="checkline">
+                              <input type="radio" name="notify_client" value="no" defaultChecked />
+                              {isEnglish ? "No" : "Non"}
+                            </label>
+                            <label className="checkline">
+                              <input type="radio" name="notify_client" value="yes" />
+                              {isEnglish ? "Yes" : "Oui"}
+                            </label>
+                          </fieldset>
                           {selectedSession.recurrence_group_id ? (
-                            <details className="session-slot-add-confirm">
-                              <summary>{isEnglish ? "Add" : "Ajouter"}</summary>
-                              <div className="session-slot-inline-confirm-panel session-slot-scope-panel">
-                                <p className="muted">{isEnglish ? "Book the student on this session or on the future series?" : "Inscrire l eleve sur cette seance ou sur la serie future ?"}</p>
+                            <div className="session-enroll-series-confirm">
+                              <fieldset className="session-enroll-scope-options">
+                                <legend>{isEnglish ? "Enrollment scope" : "Portee de l inscription"}</legend>
                                 <label className="checkline">
                                   <input type="radio" name="scope" value="OCCURRENCE" defaultChecked />
                                   {isEnglish ? "This session only" : "Cette seance uniquement"}
@@ -2728,9 +2792,9 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                                   <input type="radio" name="scope" value="SERIES_FUTURE" />
                                   {isEnglish ? "Whole series (future sessions)" : "Toute la serie (futures)"}
                                 </label>
-                                <button type="submit">{isEnglish ? "Confirm" : "Confirmer"}</button>
-                              </div>
-                            </details>
+                              </fieldset>
+                              <button type="submit">{isEnglish ? "Confirm enrollment" : "Confirmer l inscription"}</button>
+                            </div>
                           ) : (
                             <>
                               <input type="hidden" name="scope" value="OCCURRENCE" />
@@ -2867,15 +2931,37 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                     </label>
 
                     <label>
-                      {isEnglish ? "Teacher" : "Coach"}
-                      <select name="professor_id" defaultValue={selectedSession.professor_id ?? ""}>
-                        <option value="">{isEnglish ? "No teacher" : "Sans professeur"}</option>
-                        {professors.map((row) => (
-                          <option key={row.id} value={row.id}>
-                            {row.first_name} {row.last_name}
-                          </option>
-                        ))}
-                      </select>
+                      {selectedSessionIsMasterclass
+                        ? (isEnglish ? "Teachers (up to 4)" : "Professeurs (jusqu'a 4)")
+                        : (isEnglish ? "Teacher" : "Professeur")}
+                      {selectedSessionIsMasterclass ? (
+                        <select
+                          name="professor_ids"
+                          multiple
+                          size={Math.min(6, Math.max(3, professors.length))}
+                          defaultValue={selectedSession.professor_ids ?? []}
+                        >
+                          {professors.map((row) => (
+                            <option key={row.id} value={row.id}>
+                              {row.first_name} {row.last_name}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <select name="professor_id" defaultValue={selectedSession.professor_id ?? ""}>
+                          <option value="">{isEnglish ? "No teacher" : "Sans professeur"}</option>
+                          {professors.map((row) => (
+                            <option key={row.id} value={row.id}>
+                              {row.first_name} {row.last_name}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                      {selectedSessionIsMasterclass ? (
+                        <small className="muted">
+                          {isEnglish ? "Hold Ctrl/Cmd to select several teachers." : "Maintenez Ctrl/Cmd pour selectionner plusieurs professeurs."}
+                        </small>
+                      ) : null}
                       {!selectedSessionRequiresProfessor ? (
                         <small className="muted">{isEnglish ? "Teacher is optional for this slot type." : "Le professeur est optionnel pour ce type de creneau."}</small>
                       ) : null}

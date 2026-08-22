@@ -813,12 +813,25 @@ def list_plans(
             current_user=current_user,
             requested_user_id=purchase_user_id,
         )
+    elif purchase_user_id is not None:
+        pricing_owner = db.scalar(
+            select(User).where(
+                User.id == purchase_user_id,
+                User.role == UserRole.CLIENT,
+            )
+        )
+        if pricing_owner is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target client not found")
     _, entitlement_names_by_plan = _entitlements_by_plan(db, plan_ids=[plan.id for plan in plans])
     output: list[PlanOut] = []
     for plan in plans:
         has_prior_purchase = (
-            _has_prior_purchase_for_plan(db, user_id=pricing_owner.id, plan_id=plan.id)
-            if current_user.role == UserRole.CLIENT
+            _has_prior_purchase_for_plan(
+                db,
+                user_id=pricing_owner.id,
+                plan_id=plan.id,
+            )
+            if current_user.role == UserRole.CLIENT or purchase_user_id is not None
             else True
         )
         pricing = _purchase_pricing(

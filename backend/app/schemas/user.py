@@ -187,6 +187,8 @@ class FamilySubscriptionOut(BaseModel):
     offer_deposit_status: str | None = None
     offer_deposit_paid_at: datetime | None = None
     offer_deposit_invoice_id: str | None = None
+    offer_paid_ttc: Decimal | None = None
+    offer_payment_status: str | None = None
     offer_remaining_ttc: Decimal | None = None
 
 
@@ -245,6 +247,7 @@ class ClientContentMemberAccessOut(BaseModel):
     member_email: str
     course_type_ids: list[UUID] = Field(default_factory=list)
     course_type_names: list[str] = Field(default_factory=list)
+    next_release_at: datetime | None = None
 
 
 class ClientContentCourseOut(BaseModel):
@@ -376,6 +379,7 @@ class ClientSessionReservationMemberOptionOut(BaseModel):
     action_label: str
     status_label: str
     reason: str | None = None
+    reason_code: str | None = None
     has_credit_coverage: bool = False
     coverage_source: str | None = None
     direct_payment_amount_ttc: Decimal | None = None

@@ -78,7 +78,7 @@ import TransactionRow from "../../components/ui-client/transaction-row";
 import UpcomingLessonRow from "../../components/ui-client/upcoming-lesson-row";
 import UrgentPayCard from "../../components/ui-client/urgent-pay-card";
 import { localeForUiLanguage, normalizeUiLanguage, resolveAuthErrorMessage, resolveAuthOkMessage, translateBackendMessage, type UiLanguage, uiText } from "../../lib/ui-i18n";
-import { sanitizeRichHtml } from "../../lib/sanitize-rich-html";
+import { sanitizeExternalCourseContentHtml, sanitizeRichHtml } from "../../lib/sanitize-rich-html";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 type AgendaView = "agenda" | "week" | "day";
@@ -1213,6 +1213,18 @@ function courseAudienceLabel(course: ClientContentCourseOut, language: UiLanguag
   return uiText(language, "client.member_count", { count: course.member_accesses.length });
 }
 
+function courseNextReleaseAt(course: ClientContentCourseOut | null, memberId: string): string | null {
+  if (!course) {
+    return null;
+  }
+  const releaseTimes = course.member_accesses
+    .filter((access) => memberId === "ALL" || access.member_id === memberId)
+    .map((access) => access.next_release_at)
+    .filter((value): value is string => Boolean(value))
+    .sort((left, right) => new Date(left).getTime() - new Date(right).getTime());
+  return releaseTimes[0] ?? null;
+}
+
 function emptyAsAll(value: string): string {
   return value.trim() || "ALL";
 }
@@ -1772,6 +1784,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     ?? filteredContentCourses[0]
     ?? null;
   const selectedContentLessons = flattenCourseLessons(selectedContentCourse);
+  const selectedContentNextReleaseAt = courseNextReleaseAt(selectedContentCourse, contentMemberFilter);
   const selectedContentLesson =
     selectedContentLessons.find((entry) => entry.lesson.id === selectedContentLessonId)
     ?? selectedContentLessons[0]
@@ -2114,9 +2127,6 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     }
     return Array.from(groups.values());
   })();
-  const paidOfferDeposits = subscriptions
-    .filter((sub) => selectedMemberFilter === "ALL" || sub.owner_client_id === selectedMemberFilter)
-    .filter((sub) => normalizeStatus(sub.offer_deposit_status || "") === "PAID" && Number(sub.offer_deposit_amount_ttc || 0) > 0);
   const homeSubscriptions = subscriptions
     .filter((sub) => selectedMemberFilter === "ALL" || sub.owner_client_id === selectedMemberFilter)
     .filter((sub) => isSubscriptionVisibleInPortal(sub, now))
@@ -2748,7 +2758,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     ? formatPackCreditLabel(selectedSessionPackCreditSummary, true)
     : null;
   const selectedSessionCoverageLabel =
-    selectedReservationMemberOption?.coverage_source === "TRIAL"
+    selectedReservationMemberOption?.coverage_source === "MAKEUP"
+      ? t("client.makeup_available")
+      : selectedReservationMemberOption?.coverage_source === "TRIAL"
       ? t("client.trial_credit_available")
       : selectedReservationMemberOption?.coverage_source === "MANUAL_CREDIT"
       ? t("client.manual_credit_available")
@@ -2789,7 +2801,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       case "FINALIZE_PAYMENT":
         return t("client.finalize_payment_for", { member: option.member_display_name });
       case "BOOK_WITH_CREDIT":
-        return option.coverage_source === "TRIAL"
+        return option.coverage_source === "MAKEUP"
+          ? t("client.use_makeup")
+          : option.coverage_source === "TRIAL"
           ? t("client.use_trial_credit")
           : option.coverage_source === "PACK" ? t("client.use_your_credits") : t("client.book_without_paying");
       case "BUY_FORMULA_OR_PAY_UNIT":
@@ -2805,10 +2819,16 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     }
   };
   const reservationOptionReasonLabel = (option: ClientSessionReservationMemberOptionOut): string | null => {
+    if (option.reason_code === "ACTIVE_PACK_INCOMPATIBLE") {
+      return t("client.active_plan_incompatible_for_course", { member: option.member_display_name });
+    }
     if (option.action_code === "FINALIZE_PAYMENT") {
       return t("client.finalize_payment_for", { member: option.member_display_name });
     }
     if (option.action_code === "BOOK_WITH_CREDIT") {
+      if (option.coverage_source === "MAKEUP") {
+        return t("client.makeup_covers_slot", { member: option.member_display_name });
+      }
       if (option.coverage_source === "TRIAL") {
         return t("client.trial_credit_covers_slot", { member: option.member_display_name });
       }
@@ -2871,6 +2891,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       });
     }
     if (option.action_code === "BOOK_WITH_CREDIT") {
+      if (option.coverage_source === "MAKEUP") {
+        return t("client.makeup_available");
+      }
       if (option.coverage_source === "TRIAL") {
         return t("client.trial_credit_available");
       }
@@ -2907,8 +2930,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
         ? t("client.renewal_required_title")
       : selectedSessionEffectiveActionCode === "FINALIZE_PAYMENT" && selectedReservationMemberOption
         ? t("client.finalize_payment_for", { member: selectedReservationMemberOption.member_display_name })
-        : selectedSessionEffectiveActionCode === "BOOK_WITH_CREDIT" && selectedReservationMemberOption
-          ? selectedReservationMemberOption.coverage_source === "TRIAL"
+      : selectedSessionEffectiveActionCode === "BOOK_WITH_CREDIT" && selectedReservationMemberOption
+          ? selectedReservationMemberOption.coverage_source === "MAKEUP"
+            ? t("client.use_makeup")
+            : selectedReservationMemberOption.coverage_source === "TRIAL"
             ? t("client.use_trial_credit")
             : selectedReservationMemberOption.coverage_source === "PACK"
             ? t("client.use_your_credits")
@@ -2932,7 +2957,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
           ? t("client.pending_payment_other_member", { member: selectedReservationMemberOption.member_display_name })
           : reservationOptionReasonLabel(selectedReservationMemberOption) || selectedSessionPlanningState?.contextLine || ""
         : selectedSessionEffectiveActionCode === "BOOK_WITH_CREDIT" && selectedReservationMemberOption
-          ? selectedReservationMemberOption.coverage_source === "TRIAL"
+          ? selectedReservationMemberOption.coverage_source === "MAKEUP"
+            ? t("client.makeup_covers_slot", { member: selectedReservationMemberOption.member_display_name })
+            : selectedReservationMemberOption.coverage_source === "TRIAL"
             ? t("client.trial_credit_covers_slot", { member: selectedReservationMemberOption.member_display_name })
             : selectedReservationMemberOption.coverage_source === "PACK" && selectedSessionPackCreditLabel
             ? t("client.pack_covers_slot", {
@@ -2953,7 +2980,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     !selectedReservationMemberOption
       ? null
       : selectedSessionEffectiveActionCode === "BOOK_WITH_CREDIT"
-        ? selectedReservationMemberOption.coverage_source === "TRIAL"
+        ? selectedReservationMemberOption.coverage_source === "MAKEUP"
+          ? t("client.use_makeup")
+          : selectedReservationMemberOption.coverage_source === "TRIAL"
           ? t("client.use_trial_credit")
           : selectedReservationMemberOption.coverage_source === "PACK"
           ? t("client.use_my_credits")
@@ -3035,13 +3064,18 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     (credit) => selectedMemberFilter === "ALL" || credit.owner_client_id === selectedMemberFilter,
   );
 
-  const paidTotal = paymentRows
+  const financeSummaryPaymentRows = basePaymentRows
+    .filter((row) => matchesFinancePeriod(row.occurred_at, financePeriodFilter, now))
+    .filter((row) => matchesFinanceAsOf(row.occurred_at, financeAsOfUtcEnd));
+  const financeSummaryInvoiceRows = baseInvoiceRows
+    .filter((row) => matchesFinanceAsOf(row.issued_at, financeAsOfUtcEnd));
+  const paidTotal = financeSummaryPaymentRows
     .filter((row) => FINANCE_PAID_STATUSES.has(normalizeStatus(row.status)))
     .reduce((sum, row) => sum + Number(row.total_incl_vat || "0"), 0);
-  const pendingTransactionsTotal = paymentRows
+  const pendingTransactionsTotal = financeSummaryPaymentRows
     .filter((row) => FINANCE_PENDING_STATUSES.has(normalizeStatus(row.status)))
     .reduce((sum, row) => sum + Number(row.total_incl_vat || "0"), 0);
-  const financePendingInvoices = invoiceRows
+  const financePendingInvoices = financeSummaryInvoiceRows
     .filter((invoice) => statusMatchesFinanceFilter(invoice.status, "TO_PAY"))
     .filter((invoice) => parseMoneyValue(invoice.total_incl_vat) > 0);
   const financeDueTotal = financePendingInvoices.reduce((sum, invoice) => sum + parseMoneyValue(invoice.total_incl_vat), 0);
@@ -3589,7 +3623,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             : offerActivityCount > 0
                               ? t("client.offer_program_summary", { activities: offerActivityCount, sessions: offerBookings.length })
                               : `${toMoney(sub.plan.kind === "FORFAIT" ? "0" : subscriptionPrice, subscriptionCurrency, language)} ${language === "en" ? "/ period" : "/ periode"} · ${paymentMethodLabel(sub.billing_method_code, language)}`;
-                          const expiryLine = sub.offer_deposit_amount_ttc && normalizeStatus(sub.offer_deposit_status || "") === "PAID"
+                          const expiryLine = sub.offer_paid_ttc && normalizeStatus(sub.offer_payment_status || "") === "PAID"
+                            ? t("client.offer_fully_paid_amount", { amount: toMoney(sub.offer_paid_ttc, sub.offer_currency || subscriptionCurrency, language) })
+                            : sub.offer_paid_ttc && Number(sub.offer_paid_ttc) > 0
+                            ? t("client.offer_partially_paid_amount", { amount: toMoney(sub.offer_paid_ttc, sub.offer_currency || subscriptionCurrency, language) })
+                            : sub.offer_deposit_amount_ttc && normalizeStatus(sub.offer_deposit_status || "") === "PAID"
                             ? t("client.deposit_paid_amount", { amount: toMoney(sub.offer_deposit_amount_ttc, sub.offer_currency || subscriptionCurrency, language) })
                             : sub.ends_at
                             ? t("client.expiration", { date: formatDate(sub.ends_at, language) })
@@ -4201,6 +4239,13 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                   <article className="modal-panel modal-client-session-details">
                     <header className="client-session-modal-header">
                       <a
+                        className="mode-link client-session-modal-top-back"
+                        href={selectedSessionCloseHref}
+                      >
+                        <span aria-hidden="true">←</span>
+                        {t("client.back_to_schedule")}
+                      </a>
+                      <a
                         className="modal-close-x"
                         href={selectedSessionCloseHref}
                         aria-label={t("client.close_slot_detail")}
@@ -4224,50 +4269,49 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       </div>
                     </header>
 
-                    <section className="modal-card client-session-modal-grid">
-                      <article className="item">
-                        <small className="muted">{t("client.coach_label")}</small>
-                        <p>
-                          {sessionProfessorName(selectedSession)}
-                        </p>
-                      </article>
-                      <article className="item">
-                        <small className="muted">{t("client.location_label")}</small>
-                        <p>{selectedSession.location.name}</p>
-                      </article>
-                      <article className="item">
-                        <small className="muted">{t("client.activity_label")}</small>
-                        <p>{selectedSession.course_type.name}</p>
-                      </article>
-                      <article className="item">
-                        <small className="muted">{t("client.duration_label")}</small>
-                        <p>
-                          {Math.max(
-                            1,
-                            Math.round((new Date(selectedSession.end_at_utc).getTime() - new Date(selectedSession.start_at_utc).getTime()) / 60000),
-                          )}{" "}
-                          min
-                        </p>
-                      </article>
-                    </section>
-
-                    {selectedSession.description ? (
-                      <section className="modal-card">
-                        <small className="muted">{t("client.description_label")}</small>
-                        <p>{selectedSession.description}</p>
+                    <details className="modal-card client-session-details-disclosure">
+                      <summary>{language === "en" ? "View lesson details" : "Voir les détails du cours"}</summary>
+                      <section className="client-session-modal-grid">
+                        <article className="item">
+                          <small className="muted">{t("client.coach_label")}</small>
+                          <p>{sessionProfessorName(selectedSession)}</p>
+                        </article>
+                        <article className="item">
+                          <small className="muted">{t("client.location_label")}</small>
+                          <p>{selectedSession.location.name}</p>
+                        </article>
+                        <article className="item">
+                          <small className="muted">{t("client.activity_label")}</small>
+                          <p>{selectedSession.course_type.name}</p>
+                        </article>
+                        <article className="item">
+                          <small className="muted">{t("client.duration_label")}</small>
+                          <p>
+                            {Math.max(
+                              1,
+                              Math.round((new Date(selectedSession.end_at_utc).getTime() - new Date(selectedSession.start_at_utc).getTime()) / 60000),
+                            )}{" "}
+                            min
+                          </p>
+                        </article>
                       </section>
-                    ) : null}
-
-                    {selectedSession.zoom_link ? (
-                      <section className="modal-card">
-                        <small className="muted">{t("client.zoom_link_label")}</small>
-                        <p>
-                          <a href={selectedSession.zoom_link} target="_blank" rel="noreferrer">
-                            {selectedSession.zoom_link}
-                          </a>
-                        </p>
-                      </section>
-                    ) : null}
+                      {selectedSession.description ? (
+                        <div className="client-session-detail-copy">
+                          <small className="muted">{t("client.description_label")}</small>
+                          <p>{selectedSession.description}</p>
+                        </div>
+                      ) : null}
+                      {selectedSession.zoom_link ? (
+                        <div className="client-session-detail-copy">
+                          <small className="muted">{t("client.zoom_link_label")}</small>
+                          <p>
+                            <a href={selectedSession.zoom_link} target="_blank" rel="noreferrer">
+                              {selectedSession.zoom_link}
+                            </a>
+                          </p>
+                        </div>
+                      ) : null}
+                    </details>
 
                     {selectedSessionHasBooking && selectedReservationMemberOption ? (
                       <section className="modal-card client-session-modal-state">
@@ -4284,7 +4328,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           ) : null}
                         </div>
                       </section>
-                    ) : selectedSessionPlanningState ? (
+                    ) : selectedSessionPlanningState && !selectedSessionRequiresMemberChoice ? (
                       <section className="modal-card client-session-modal-state">
                         <div className="row spread">
                           <div className="client-session-modal-state-copy">
@@ -4317,8 +4361,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       <section className="modal-card">
                         <div className="client-session-member-picker">
                           <div className="client-session-member-picker-heading">
-                            <small className="muted">{t("client.member_concerned")}</small>
-                            <p>{t("client.member_picker_help")}</p>
+                            <strong>{language === "en" ? "Who are you booking for?" : "Pour qui réservez-vous ?"}</strong>
                           </div>
                           <div className="client-session-member-grid">
                             {reservationOptionsMembers.map((option) => {
@@ -4355,12 +4398,6 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                       </span>
                                     </div>
                                   </div>
-                                  <small className="muted">{reservationOptionReasonLabel(option) || reservationOptionActionLabel(option)}</small>
-                                  {reservationOptionSupportLabel(option) ? (
-                                    <small className={`client-session-member-support ${isSelected ? "active" : ""}`}>
-                                      {reservationOptionSupportLabel(option)}
-                                    </small>
-                                  ) : null}
                                 </a>
                               );
                             })}
@@ -4654,9 +4691,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             <button
                               type="submit"
                               className={
-                                ["PAY_UNIT", "FINALIZE_PAYMENT"].includes(selectedSessionEffectiveActionCode)
-                                  ? "client-session-primary-button"
-                                  : "client-session-secondary-button"
+                                selectedSessionEffectiveActionCode === "JOIN_WAITLIST"
+                                  ? "client-session-secondary-button"
+                                  : "client-session-primary-button"
                               }
                             >
                               {selectedSessionPrimaryActionLabel || selectedReservationMemberOption.action_label}
@@ -4774,6 +4811,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         const totalLessons =
                           course.standalone_lessons.length +
                           course.sections.reduce((sum, section) => sum + section.lessons.length, 0);
+                        const nextReleaseAt = courseNextReleaseAt(course, contentMemberFilter);
                         return (
                           <a
                             key={course.id}
@@ -4801,6 +4839,13 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                   .filter((value, index, array) => array.indexOf(value) === index)
                                   .join(" · ")}
                               </span>
+                              {nextReleaseAt ? (
+                                <span>
+                                  {t("client.next_content_release", {
+                                    date: formatDateTimeInTimezone(nextReleaseAt, timezone, language),
+                                  })}
+                                </span>
+                              ) : null}
                             </div>
                           </a>
                         );
@@ -4934,7 +4979,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                               {selectedContentLesson.lesson.content_html ? (
                                 <div
                                   className="client-content-lesson-body"
-                                  dangerouslySetInnerHTML={{ __html: sanitizeRichHtml(selectedContentLesson.lesson.content_html) }}
+                                  dangerouslySetInnerHTML={{ __html: sanitizeExternalCourseContentHtml(selectedContentLesson.lesson.content_html) }}
                                 />
                               ) : (
                                 <div className="client-content-empty-state">
@@ -4945,7 +4990,16 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             </>
                           ) : (
                             <div className="client-content-empty-state">
-                              <strong>{t("client.no_published_lesson")}</strong>
+                              <strong>
+                                {selectedContentNextReleaseAt
+                                  ? t("client.content_available_from", {
+                                      date: formatDateTimeInTimezone(selectedContentNextReleaseAt, timezone, language),
+                                    })
+                                  : t("client.no_published_lesson")}
+                              </strong>
+                              {selectedContentNextReleaseAt ? (
+                                <p className="muted">{t("client.content_release_schedule_help")}</p>
+                              ) : null}
                             </div>
                           )}
                         </article>
@@ -5276,12 +5330,16 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                 {t("client.offer_program_summary", { activities: activityCount, sessions: offerBookings.length })}
                               </p>
                             ) : null}
-                            {sub.offer_deposit_amount_ttc && normalizeStatus(sub.offer_deposit_status || "") === "PAID" ? (
+                            {sub.offer_paid_ttc && Number(sub.offer_paid_ttc) > 0 ? (
                               <p className="client-offer-deposit-preview">
                                 <span aria-hidden="true">✓</span>
-                                {t("client.deposit_paid_amount", {
-                                  amount: toMoney(sub.offer_deposit_amount_ttc, sub.offer_currency || planCurrency, language),
-                                })}
+                                {normalizeStatus(sub.offer_payment_status || "") === "PAID"
+                                  ? t("client.offer_fully_paid_amount", {
+                                      amount: toMoney(sub.offer_paid_ttc, sub.offer_currency || planCurrency, language),
+                                    })
+                                  : t("client.offer_partially_paid_amount", {
+                                      amount: toMoney(sub.offer_paid_ttc, sub.offer_currency || planCurrency, language),
+                                    })}
                               </p>
                             ) : null}
                             <div className="row spread">
@@ -5408,14 +5466,14 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         <span>{t("client.offer_total")}</span>
                         <strong>{selectedOfferSubscription.offer_total_ttc ? toMoney(selectedOfferSubscription.offer_total_ttc, selectedOfferSubscription.offer_currency || me.preferred_currency, language) : "—"}</strong>
                       </div>
-                      <div className={normalizeStatus(selectedOfferSubscription.offer_deposit_status || "") === "PAID" ? "is-paid" : ""}>
-                        <span>{t("client.deposit")}</span>
-                        <strong>{selectedOfferSubscription.offer_deposit_amount_ttc ? toMoney(selectedOfferSubscription.offer_deposit_amount_ttc, selectedOfferSubscription.offer_currency || me.preferred_currency, language) : "—"}</strong>
-                        {normalizeStatus(selectedOfferSubscription.offer_deposit_status || "") === "PAID" ? <small>✓ {t("client.paid")}</small> : null}
+                      <div className={Number(selectedOfferSubscription.offer_paid_ttc || 0) > 0 ? "is-paid" : ""}>
+                        <span>{t("client.offer_paid_total")}</span>
+                        <strong>{selectedOfferSubscription.offer_paid_ttc ? toMoney(selectedOfferSubscription.offer_paid_ttc, selectedOfferSubscription.offer_currency || me.preferred_currency, language) : toMoney("0", selectedOfferSubscription.offer_currency || me.preferred_currency, language)}</strong>
+                        {normalizeStatus(selectedOfferSubscription.offer_payment_status || "") === "PAID" ? <small>✓ {t("client.paid")}</small> : null}
                       </div>
                       <div>
                         <span>{t("client.remaining_amount")}</span>
-                        <strong>{selectedOfferSubscription.offer_remaining_ttc ? toMoney(selectedOfferSubscription.offer_remaining_ttc, selectedOfferSubscription.offer_currency || me.preferred_currency, language) : "—"}</strong>
+                        <strong>{selectedOfferSubscription.offer_remaining_ttc != null ? toMoney(selectedOfferSubscription.offer_remaining_ttc, selectedOfferSubscription.offer_currency || me.preferred_currency, language) : "—"}</strong>
                       </div>
                     </div>
                     {selectedOfferInvoices.length > 0 ? (
@@ -5788,37 +5846,17 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
               >
                 <section className="client-kpi-grid">
                   <KPIBlock label={t("client.amount_due")} value={toMoney(String(financeDueTotal), me.preferred_currency, language)} helper={t("client.pending_invoices")} />
-                  <KPIBlock label={t("client.paid_total")} value={toMoney(String(paidTotal), me.preferred_currency, language)} helper={t("client.confirmed_payments")} />
+                  <KPIBlock
+                    label={t("client.net_payments_for_period", { period: financePeriodLabel(financePeriodFilter, language) })}
+                    value={toMoney(String(paidTotal), me.preferred_currency, language)}
+                    helper={t("client.confirmed_payments")}
+                  />
                   <KPIBlock
                     label={t("client.pending_transactions")}
                     value={toMoney(String(pendingTransactionsTotal), me.preferred_currency, language)}
                     helper={t("client.unsettled_movements")}
                   />
                 </section>
-                {paidOfferDeposits.length > 0 ? (
-                  <section className="client-finance-deposits" aria-label={t("client.paid_deposits")}>
-                    <div className="client-finance-deposits-heading">
-                      <div>
-                        <p className="client-offer-section-kicker">{t("client.payments_received")}</p>
-                        <h3>{t("client.paid_deposits")}</h3>
-                      </div>
-                      <span className="status-pill success">✓ {t("client.paid")}</span>
-                    </div>
-                    {paidOfferDeposits.map((sub) => (
-                      <article key={`finance-deposit-${sub.id}`}>
-                        <div>
-                          <strong>{t("client.deposit_for", { name: sub.owner_display_name })}</strong>
-                          <p>{sub.offer_quote_number ? `${t("client.quote")} ${sub.offer_quote_number} · ` : ""}{sub.plan.name}</p>
-                        </div>
-                        <div className="client-finance-deposit-amount">
-                          <strong>{toMoney(sub.offer_deposit_amount_ttc, sub.offer_currency || me.preferred_currency, language)}</strong>
-                          {sub.offer_deposit_paid_at ? <small>{t("client.paid_on", { date: formatDate(sub.offer_deposit_paid_at, language) })}</small> : null}
-                        </div>
-                        <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "offers", offer_detail_id: sub.id })}>{t("client.view_offer")}</a>
-                      </article>
-                    ))}
-                  </section>
-                ) : null}
                 <p className="muted">{t("client.accounts_as_of", { date: formatDate(financeAsOfDateKey, language) })}</p>
 
                 <div className="client-finance-toolbar">
@@ -6012,7 +6050,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     <div className="client-finance-list">
                       {pagedInvoiceRows.map((row) => {
                         const linkedPayment = paymentByInvoiceId.get(row.id);
-                        const canPayInvoice = (linkedPayment ? canPayNowForPayment(linkedPayment) : false) || Boolean(row.payment_url);
+                        const canPayInvoice =
+                          statusMatchesFinanceFilter(row.status, "TO_PAY")
+                          && parseMoneyValue(row.total_incl_vat) > 0
+                          && ((linkedPayment ? canPayNowForPayment(linkedPayment) : false) || Boolean(row.payment_url));
                         return (
                           <CompactInvoiceRow
                             key={`inv-${row.id}`}

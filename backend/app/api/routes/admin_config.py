@@ -179,7 +179,8 @@ SUPPORTED_CURRENCIES = {"EUR", "USD"}
 ACCOUNT_ALLOWED_CURRENCIES_KEY = "config_account_allowed_currencies"
 ACCOUNT_DEFAULT_CURRENCY_KEY = "config_account_default_currency"
 ACCOUNT_CLIENT_BALANCE_DEFAULT_DATE_MODE_KEY = "config_account_client_balance_default_date_mode"
-ACCOUNT_CLIENT_BALANCE_DEFAULT_DATE_MODES = {"TODAY", "PACKAGE_END"}
+ACCOUNT_CLIENT_BALANCE_DEFAULT_DATE_KEY = "config_account_client_balance_default_date"
+ACCOUNT_CLIENT_BALANCE_DEFAULT_DATE_MODES = {"TODAY", "PACKAGE_END", "FIXED_DATE"}
 
 ACCOUNT_SETTING_MAP = {
     "contact_first_name": "config_account_contact_first_name",
@@ -2323,6 +2324,17 @@ def get_admin_config_account(
     ).strip().upper()
     if client_balance_default_date_mode not in ACCOUNT_CLIENT_BALANCE_DEFAULT_DATE_MODES:
         client_balance_default_date_mode = "TODAY"
+    client_balance_default_date_raw = _get_setting_value(
+        db,
+        ACCOUNT_CLIENT_BALANCE_DEFAULT_DATE_KEY,
+        "",
+    ).strip()
+    try:
+        client_balance_default_date = date.fromisoformat(client_balance_default_date_raw) if client_balance_default_date_raw else None
+    except ValueError:
+        client_balance_default_date = None
+    if client_balance_default_date_mode == "FIXED_DATE" and client_balance_default_date is None:
+        client_balance_default_date_mode = "TODAY"
 
     return AdminConfigAccountOut(
         contact_first_name=_get_setting_value(db, ACCOUNT_SETTING_MAP["contact_first_name"], current_user.first_name or ""),
@@ -2342,6 +2354,7 @@ def get_admin_config_account(
         allowed_currencies=allowed_currencies,
         default_currency=default_currency,
         client_balance_default_date_mode=client_balance_default_date_mode,
+        client_balance_default_date=client_balance_default_date,
         bank_transfer_account_holder=_get_setting_value(db, ACCOUNT_SETTING_MAP["bank_transfer_account_holder"], "SAS PIANO ACADEMIE"),
         bank_transfer_iban=_get_setting_value(db, ACCOUNT_SETTING_MAP["bank_transfer_iban"], "FR76 1020 7000 9822 2117 9625 586"),
         bank_transfer_bic=_get_setting_value(db, ACCOUNT_SETTING_MAP["bank_transfer_bic"], "CCBPFRPPMTG"),
@@ -2373,12 +2386,20 @@ def update_admin_config_account(
     client_balance_default_date_mode = str(values.get("client_balance_default_date_mode") or "TODAY").strip().upper()
     if client_balance_default_date_mode not in ACCOUNT_CLIENT_BALANCE_DEFAULT_DATE_MODES:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unsupported balance default date mode")
+    client_balance_default_date = values.get("client_balance_default_date")
+    if client_balance_default_date_mode == "FIXED_DATE" and client_balance_default_date is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="A fixed balance default date is required")
 
     for field_name, setting_key in ACCOUNT_SETTING_MAP.items():
         _set_setting(db, setting_key, values[field_name].strip())
     _set_setting(db, ACCOUNT_ALLOWED_CURRENCIES_KEY, ",".join(allowed_currencies))
     _set_setting(db, ACCOUNT_DEFAULT_CURRENCY_KEY, default_currency)
     _set_setting(db, ACCOUNT_CLIENT_BALANCE_DEFAULT_DATE_MODE_KEY, client_balance_default_date_mode)
+    _set_setting(
+        db,
+        ACCOUNT_CLIENT_BALANCE_DEFAULT_DATE_KEY,
+        client_balance_default_date.isoformat() if client_balance_default_date is not None else "",
+    )
     db.commit()
     return get_admin_config_account(db=db, current_user=current_user)
 

@@ -33,6 +33,7 @@ import {
   refundAdminClientPaymentReceiptAction,
   sendAdminClientPaymentReceiptAction,
   sendAdminClientRangeInvoiceEmailAction,
+  splitAdminClientRangeInvoiceByFamilyAction,
   sendAdminClientMessageAction,
   setFamilyBillingRecipientAction,
   setupAdminClientSubscriptionBillingAction,
@@ -65,6 +66,8 @@ import SearchMultiSelect from "../../../../components/search-multi-select";
 import ClientActionSubmitButton from "../../../../components/client-action-submit-button";
 import SendClientAccessLink from "../../../../components/send-client-access-link";
 import InvoiceLineSelection from "../../../../components/invoice-line-selection";
+import FamilyBillingSplitEditor from "../../../../components/family-billing-split-editor";
+import ConfirmSubmitButton from "../../../../components/confirm-submit-button";
 import type {
   AdminClientBookingOut,
   AdminClientFamilyOut,
@@ -570,7 +573,13 @@ function shouldCountInClientBalance(row: AdminClientPaymentOut): boolean {
     return false;
   }
   const status = normalizePaymentStatus(row.status);
-  if (status === "NOT_BILLABLE" || status === "INCLUDED_PLAN" || status === "REFUNDED" || CANCELLED_PAYMENT_STATUSES.has(status)) {
+  if (
+    status === "NOT_BILLABLE" ||
+    status === "INCLUDED_PLAN" ||
+    status === "REFUNDED" ||
+    status === "FAILED" ||
+    CANCELLED_PAYMENT_STATUSES.has(status)
+  ) {
     return false;
   }
   if (isPaidPreRegistrationDepositCharge(row)) {
@@ -582,6 +591,14 @@ function shouldCountInClientBalance(row: AdminClientPaymentOut): boolean {
   }
 
   return PENDING_PAYMENT_STATUSES.has(status);
+}
+
+function isRefundablePlanPurchase(row: AdminClientPaymentOut): boolean {
+  return (
+    (row.source || "").trim().toUpperCase() === "PLAN_PURCHASE" &&
+    PAID_PAYMENT_STATUSES.has(normalizePaymentStatus(row.status)) &&
+    !isRecordedClientRefund(row)
+  );
 }
 
 function isManualPaymentMovement(row: AdminClientPaymentOut): boolean {
@@ -597,6 +614,14 @@ function isManualPaymentMovement(row: AdminClientPaymentOut): boolean {
     return true;
   }
   return false;
+}
+
+function isManualRefundMovement(row: AdminClientPaymentOut): boolean {
+  return (
+    (row.source || "").trim().toUpperCase() === "MANUAL" &&
+    (row.manual_transaction_type || "").trim().toUpperCase() === "REFUND" &&
+    PAID_PAYMENT_STATUSES.has(normalizePaymentStatus(row.status))
+  );
 }
 
 function isTrackedCheckPayment(row: AdminClientPaymentOut): boolean {
@@ -1088,6 +1113,7 @@ type InvoiceListRow =
       viewHref: string;
       sellerLegalEntityId: string | null;
       billingEntity: string | null;
+      familyBillingPayerName: string | null;
     };
 
 type RangeInvoiceListRow = Extract<InvoiceListRow, { kind: "range" }>;
@@ -1922,7 +1948,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     backendRequest<UserOut>("/api/v1/auth/me", {}, token),
     backendRequest<AdminConfigAccountOut>("/api/v1/admin/config/account", {}, token),
     backendRequest<AdminClientOut>(`/api/v1/admin/clients/${params.clientId}`, {}, token),
-    backendRequest<PlanOut[]>("/api/v1/plans", {}, token),
+    backendRequest<PlanOut[]>(`/api/v1/plans?purchase_user_id=${encodeURIComponent(params.clientId)}`, {}, token),
     backendRequest<AdminFormulaOut[]>("/api/v1/admin/formulas", {}, token),
     backendRequest<AdminClientSubscriptionOut[]>(`/api/v1/admin/clients/${params.clientId}/subscriptions`, {}, token),
     backendRequest<AdminClientBookingOut[]>(`/api/v1/admin/clients/${params.clientId}/bookings`, {}, token),
@@ -2072,18 +2098,21 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
         errors.push(`legacy_invoices: ${legacyInvoicesResult.message}`);
         return [] as AdminLegacyInvoiceOut[];
       })();
+  const configuredFixedBalanceDate = dateInputFromMaybeIso(accountConfig?.client_balance_default_date);
   const defaultBalanceDate =
-    accountConfig?.client_balance_default_date_mode === "PACKAGE_END"
-      ? latestDateInput([
-          ...rangeInvoices
-            .filter((row) => (row.invoice_status || "").toUpperCase() !== "CANCELLED")
-            .map((row) => row.end_date),
-          ...subscriptions
-            .filter((row) => row.plan?.kind === "FORFAIT" && (row.status || "").toUpperCase() !== "CANCELLED")
-            .map((row) => row.ends_at),
-          ...payments.map((row) => row.occurred_at),
-        ]) ?? todayInputValue
-      : todayInputValue;
+    accountConfig?.client_balance_default_date_mode === "FIXED_DATE" && configuredFixedBalanceDate
+      ? configuredFixedBalanceDate
+      : accountConfig?.client_balance_default_date_mode === "PACKAGE_END"
+        ? latestDateInput([
+            ...rangeInvoices
+              .filter((row) => (row.invoice_status || "").toUpperCase() !== "CANCELLED")
+              .map((row) => row.end_date),
+            ...subscriptions
+              .filter((row) => row.plan?.kind === "FORFAIT" && (row.status || "").toUpperCase() !== "CANCELLED")
+              .map((row) => row.ends_at),
+            ...payments.map((row) => row.occurred_at),
+          ]) ?? todayInputValue
+        : todayInputValue;
   const selectedBalanceDate = isDateInput(balanceDateParam) ? balanceDateParam : defaultBalanceDate;
   const selectedBalanceDateEndMs = endOfDateUtcMs(selectedBalanceDate);
 
@@ -2139,8 +2168,12 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
           links_as_adult: [],
           links_as_child: [],
           billing_recipient_adult_id: null,
+          billing_children: [],
         } as AdminClientFamilyOut;
       })();
+  const hasConfiguredFamilyBillingSplit = family.billing_children.some(
+    (billingChild) => billingChild.payers.filter((payer) => payer.allocation !== null).length >= 2,
+  );
 
   if (currentTab === "factures" && client.client_kind === "CHILD") {
     if (family.billing_recipient_adult_id) {
@@ -2415,7 +2448,11 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const selectedPlanBaseTotal =
     normalizedPurchaseType === "PRODUCT"
       ? selectedCatalogProductForPurchase?.price_incl_vat ?? null
-      : selectedPlanForPurchase?.monthly_price_excl_vat ?? null;
+      : selectedPlanForPurchase?.base_price_ttc ?? selectedPlanForPurchase?.monthly_price_excl_vat ?? null;
+  const selectedPlanPurchaseTotal =
+    normalizedPurchaseType === "PRODUCT"
+      ? selectedCatalogProductForPurchase?.price_incl_vat ?? null
+      : selectedPlanForPurchase?.price_ttc ?? selectedPlanBaseTotal;
   const selectedPlanCurrency =
     normalizedPurchaseType === "PRODUCT"
       ? client.preferred_currency || "EUR"
@@ -2745,7 +2782,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
             ? ` | ${t("admin.client_detail.invoice_scope_upcoming")}`
             : ` | ${t("admin.client_detail.invoice_scope_previous")}`
           : ""
-      }`,
+      }${row.family_billing_payer_client_id && row.recipient_client_name ? ` | Payeur : ${row.recipient_client_name}` : ""}`,
       status: row.invoice_status,
       issuedDate: row.issued_date,
       startDate: row.start_date,
@@ -2769,7 +2806,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       bankTransferOrderPaidAt: row.bank_transfer_order_paid_at ?? null,
       includedPaymentKeys: row.included_payment_keys ?? [],
       totalLabel: rangeInvoiceTotalLabel(
-        Object.keys(row.total_to_pay_by_currency || {}).length > 0
+        row.invoice_status === "ISSUED" && Object.keys(row.total_to_pay_by_currency || {}).length > 0
           ? row.total_to_pay_by_currency
           : row.totals_by_currency,
         language,
@@ -2778,6 +2815,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       viewHref: rangeInvoicePdfHref(client.id, row.note_id, true),
       sellerLegalEntityId: row.seller_legal_entity_id ?? null,
       billingEntity: row.billing_entity ?? null,
+      familyBillingPayerName: row.family_billing_payer_client_id ? row.recipient_client_name ?? null : null,
     }));
 
   const historicalInvoices: InvoiceListRow[] = legacyInvoices.map((row) => ({
@@ -2941,6 +2979,9 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     } else if (isManualPaymentMovement(row)) {
       const current = paidTotalsByCurrency.get(currency) ?? 0;
       paidTotalsByCurrency.set(currency, current + Math.abs(amount));
+    } else if (isManualRefundMovement(row)) {
+      const current = paidTotalsByCurrency.get(currency) ?? 0;
+      paidTotalsByCurrency.set(currency, current - Math.abs(amount));
     }
   }
 
@@ -3956,12 +3997,21 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               ) : (
                 <p className="muted">{t("admin.client_detail.purchase_no_discount")}</p>
               )}
+              {!hasDiscountedTotalForPurchase && normalizedPurchaseType === "FORMULA"
+                ? selectedPlanForPurchase?.first_purchase_breakdown
+                    .filter((line) => line.code !== "FORMULA")
+                    .map((line) => (
+                      <p className="muted" key={line.code}>
+                        {line.label}: {formatMoney(line.amount_ttc, selectedPlanCurrency, language)}
+                      </p>
+                    ))
+                : null}
               <p className="purchase-total-line">
                 {t("admin.client_detail.purchase_total_due", {
                   amount: hasDiscountedTotalForPurchase
                     ? formatMoney(String(discountedTotalForPurchase), selectedPlanCurrency, language)
-                    : selectedPlanBaseTotal
-                      ? formatMoney(selectedPlanBaseTotal, selectedPlanCurrency, language)
+                    : selectedPlanPurchaseTotal
+                      ? formatMoney(selectedPlanPurchaseTotal, selectedPlanCurrency, language)
                       : formatMoney("0", selectedPlanCurrency, language),
                 })}
               </p>
@@ -4975,6 +5025,44 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               </div>
             )}
           </article>
+
+          {family.billing_children.length > 0 ? (
+            <article className="card span-2">
+              <div className="row spread">
+                <div>
+                  <h3>Répartition de facturation</h3>
+                  <p className="muted">
+                    Attribuez un pourcentage, un montant fixe ou le solde à chaque parent. Les valeurs sont contrôlées avant enregistrement.
+                  </p>
+                </div>
+              </div>
+              <div className="billing-split-list">
+                {family.billing_children.map((billingChild) => {
+                  const payerIds = new Set(billingChild.payers.map((payer) => payer.adult.id));
+                  const eligibleSiblings = family.billing_children
+                    .filter(
+                      (candidate) =>
+                        candidate.child.id !== billingChild.child.id &&
+                        [...payerIds].every((payerId) => candidate.payers.some((payer) => payer.adult.id === payerId)),
+                    )
+                    .map((candidate) => ({
+                      id: candidate.child.id,
+                      label:
+                        [candidate.child.first_name, candidate.child.last_name].filter(Boolean).join(" ") ||
+                        candidate.child.email || "Enfant",
+                    }));
+                  return (
+                    <FamilyBillingSplitEditor
+                      key={billingChild.child.id}
+                      billingChild={billingChild}
+                      returnClientId={client.id}
+                      eligibleSiblings={eligibleSiblings}
+                    />
+                  );
+                })}
+              </div>
+            </article>
+          ) : null}
 
           <article className="card">
             <h3>{t("admin.client_detail.attach_existing_account_title")}</h3>
@@ -6021,6 +6109,25 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                   </button>
                                 </form>
                               )}
+                              {row.status === "ISSUED" && hasConfiguredFamilyBillingSplit ? (
+                                <form
+                                  id={`family-invoice-split-${row.noteId}`}
+                                  action={splitAdminClientRangeInvoiceByFamilyAction}
+                                >
+                                  <input type="hidden" name="client_id" value={client.id} />
+                                  <input type="hidden" name="note_id" value={row.noteId} />
+                                  <ConfirmSubmitButton
+                                    formId={`family-invoice-split-${row.noteId}`}
+                                    label="%"
+                                    title="Répartir cette facture entre les payeurs ?"
+                                    description="La facture d’origine sera annulée et remplacée par une facture distincte pour chaque payeur, selon la répartition enregistrée dans l’onglet Famille. Les acomptes déjà reçus sont répartis selon la même clé afin que chaque payeur règle sa part du solde restant. Aucun e-mail ne sera envoyé automatiquement."
+                                    confirmLabel="Créer les factures"
+                                    language={language}
+                                    className="client-action-icon"
+                                    pendingLabel="…"
+                                  />
+                                </form>
+                              ) : null}
                               {row.status !== "CANCELLED" ? (
                                 <form action={reissueAdminClientRangeInvoiceAction}>
                                   <input type="hidden" name="client_id" value={client.id} />
@@ -6378,7 +6485,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                 ) : null}
                               </>
                             ) : null}
-                            {row.status !== "REFUNDED" && row.source.toUpperCase() === "PLAN_PURCHASE" ? (
+                            {isRefundablePlanPurchase(row) ? (
                               <Link
                                 className="client-action-icon danger"
                                 href={paymentsHref(client.id, {

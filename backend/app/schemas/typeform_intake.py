@@ -28,7 +28,7 @@ class TypeformFormConfigOut(BaseModel):
 
 
 class TypeformFormConfigQuoteDefaultsRequest(BaseModel):
-    default_pre_registration_deposit_enabled: bool = True
+    default_pre_registration_deposit_enabled: bool = False
     default_pre_registration_deposit_amount_ttc: Decimal = Field(default=Decimal("200.00"), ge=Decimal("0"))
 
 

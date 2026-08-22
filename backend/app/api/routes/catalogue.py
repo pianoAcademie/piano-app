@@ -246,8 +246,16 @@ def list_course_types(
 
 
 @router.get("/locations", response_model=list[LocationOut])
-def list_locations(active: bool = True, db: Session = Depends(get_db)) -> list[LocationOut]:
+def list_locations(
+    active: bool = True,
+    course_type_id: UUID | None = None,
+    db: Session = Depends(get_db),
+) -> list[LocationOut]:
     stmt = select(Location)
+    if course_type_id is not None:
+        stmt = stmt.join(PlanningCourseType, PlanningCourseType.location_id == Location.id).where(
+            PlanningCourseType.course_type_id == course_type_id
+        )
     if active:
         stmt = stmt.where(Location.active.is_(True))
     stmt = stmt.order_by(Location.name.asc())

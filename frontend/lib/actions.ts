@@ -532,6 +532,7 @@ type CreateSessionDraftPayload = {
   title: string;
   course_type_id: string;
   professor_id: string;
+  professor_ids: string[];
   location_id: string;
   session_timezone: string;
   start_date: string;
@@ -2889,6 +2890,10 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
   const course_type_id = String(formData.get("course_type_id") ?? "").trim();
   const location_id = String(formData.get("location_id") ?? "").trim();
   const professor_id = String(formData.get("professor_id") ?? "").trim();
+  const professor_ids = Array.from(new Set([
+    ...formData.getAll("professor_ids").map((value) => String(value).trim()).filter(Boolean),
+    ...(professor_id ? [professor_id] : []),
+  ])).slice(0, 4);
   const title = String(formData.get("title") ?? "").trim();
   const public_description = optionalField(formData, "public_description");
   const private_description = optionalField(formData, "private_description");
@@ -2945,6 +2950,7 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
     title: clampDraftValue(title, 255),
     course_type_id,
     professor_id,
+    professor_ids,
     location_id,
     session_timezone,
     start_date: String(start_date || "").trim(),
@@ -3044,6 +3050,7 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
     timezone: session_timezone,
   };
   payload.professor_id = professor_id || null;
+  payload.professor_ids = professor_ids;
 
   if (public_description !== null) {
     payload.public_description = public_description;
@@ -3111,6 +3118,10 @@ export async function updateAdminSessionAction(formData: FormData): Promise<void
   const course_type_id = String(formData.get("course_type_id") ?? "").trim();
   const location_id = String(formData.get("location_id") ?? "").trim();
   const professor_id = String(formData.get("professor_id") ?? "").trim();
+  const professor_ids = Array.from(new Set([
+    ...formData.getAll("professor_ids").map((value) => String(value).trim()).filter(Boolean),
+    ...(professor_id ? [professor_id] : []),
+  ])).slice(0, 4);
   const substitute_teacher_id = String(formData.get("substitute_teacher_id") ?? "").trim();
   const substitute_note = optionalField(formData, "substitute_note");
   const zoom_link = optionalField(formData, "zoom_link");
@@ -3246,6 +3257,7 @@ export async function updateAdminSessionAction(formData: FormData): Promise<void
     auto_cancel_hours_before_start_override: autoCancelRuleMode === "CUSTOM" ? autoCancelHours : null,
   };
   payload.professor_id = professor_id || null;
+  payload.professor_ids = professor_ids;
   if (apply_scope === "ONE") {
     payload.substitute_teacher_id = substitute_teacher_id || null;
     payload.substitute_note = substitute_note;
@@ -3571,6 +3583,7 @@ export async function adminAddClientToSessionAction(formData: FormData): Promise
   const recurrenceEndDate = String(formData.get("recurrence_end_date") ?? "").trim();
   const studentStartTimeLocal = String(formData.get("student_start_time_local") ?? "").trim();
   const studentEndTimeLocal = String(formData.get("student_end_time_local") ?? "").trim();
+  const notifyClient = String(formData.get("notify_client") ?? "no").trim() === "yes";
   const shouldApplyFuture = scope === "SERIES_FUTURE" || recurrenceChecked;
 
   if (!sessionId || !clientId) {
@@ -3582,6 +3595,7 @@ export async function adminAddClientToSessionAction(formData: FormData): Promise
 
   const payload: Record<string, unknown> = {
     client_id: clientId,
+    notify_client: notifyClient,
   };
   if (clientPlanSubscriptionIdRaw) {
     payload.client_plan_subscription_id = clientPlanSubscriptionIdRaw;
@@ -3639,6 +3653,8 @@ export async function adminUpdatePlanningSimulationTeacherAssignmentAction(formD
   const schoolYearLabel = String(formData.get("school_year_label") ?? "").trim();
   const slotKeys = formData.getAll("slot_key").map((value) => String(value).trim()).filter(Boolean);
   const operation = String(formData.get("operation") ?? "save").trim();
+  const positionRaw = Number.parseInt(String(formData.get("position") ?? "1"), 10);
+  const position = Number.isFinite(positionRaw) ? Math.min(4, Math.max(1, positionRaw)) : 1;
   const professorId = operation === "clear" ? null : parseUuid(String(formData.get("professor_id") ?? ""));
   const teacherLabel = operation === "clear" ? null : optionalField(formData, "teacher_label");
   const statusValue = String(formData.get("assignment_status") ?? "PREVISIONAL").trim().toUpperCase();
@@ -3673,6 +3689,7 @@ export async function adminUpdatePlanningSimulationTeacherAssignmentAction(formD
         body: JSON.stringify({
           school_year_label: schoolYearLabel,
           slot_key: slotKey,
+          position,
           professor_id: professorId,
           teacher_label: teacherLabel,
           status: assignmentStatus,
@@ -3715,12 +3732,13 @@ export async function adminRemoveClientFromSessionAction(formData: FormData): Pr
   const sessionId = String(formData.get("session_id") ?? "").trim();
   const bookingId = String(formData.get("booking_id") ?? "").trim();
   const scope = parseBookingScope(String(formData.get("scope") ?? "").trim());
+  const notifyClient = String(formData.get("notify_client") ?? "no").trim() === "yes";
   if (!sessionId || !bookingId) {
     redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.invalid_booking")));
   }
 
   const result = await backendRequest<Record<string, never>>(
-    `/api/v1/admin/sessions/${sessionId}/bookings/${bookingId}?scope=${scope}`,
+    `/api/v1/admin/sessions/${sessionId}/bookings/${bookingId}?scope=${scope}&notify_client=${notifyClient ? "true" : "false"}`,
     {
       method: "DELETE",
     },
@@ -6191,6 +6209,37 @@ export async function updateAdminClientRangeInvoiceStatusAction(formData: FormDa
   redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=${returnTab}`, "ok", t("admin.client_action.invoice_status_updated")));
 }
 
+export async function splitAdminClientRangeInvoiceByFamilyAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+  await ensureAdminAndGetLanguage(token);
+  const clientId = String(formData.get("client_id") ?? "").trim();
+  const noteId = String(formData.get("note_id") ?? "").trim();
+  if (!clientId || !noteId) {
+    redirect(appendQueryMessage("/admin/clients", "error", "Facture invalide"));
+  }
+
+  const result = await backendRequest<{
+    source_invoice_number: string;
+    created_invoices: Array<{ invoice_number: string }>;
+  }>(`/api/v1/admin/clients/${clientId}/invoices/range/${noteId}/family-split`, { method: "POST" }, token);
+  if (!result.ok) {
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=factures`, "error", result.message));
+  }
+
+  const createdNumbers = result.data.created_invoices.map((row) => row.invoice_number).join(", ");
+  revalidatePath(`/admin/clients/${clientId}`);
+  redirect(
+    appendQueryMessage(
+      `/admin/clients/${clientId}?tab=factures`,
+      "ok",
+      `Facture répartie entre les payeurs : ${createdNumbers}. Aucun e-mail n'a été envoyé.`,
+    ),
+  );
+}
+
 export async function markAdminClientRangeInvoiceBankTransferPaidAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
@@ -7437,6 +7486,67 @@ export async function setFamilyBillingRecipientAction(formData: FormData): Promi
 
   revalidatePath(`/admin/clients/${returnClientId}`);
   redirect(appendQueryMessage(`/admin/clients/${returnClientId}?tab=famille`, "ok", t("admin.client_action.invoice_recipient_updated")));
+}
+
+export async function updateFamilyBillingAllocationsAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
+  const childId = String(formData.get("child_id") ?? "").trim();
+  const returnClientId = String(formData.get("return_client_id") ?? "").trim() || childId;
+  if (!childId || !returnClientId) {
+    redirect(appendQueryMessage("/admin/clients", "error", "Enfant invalide pour la répartition de facturation."));
+  }
+
+  const disable = String(formData.get("disable_split") ?? "") === "1";
+  const payerIds = disable
+    ? []
+    : formData
+        .getAll("payer_id")
+        .map((value) => String(value).trim())
+        .filter(Boolean);
+  const allocations = payerIds.map((payerId) => {
+    const allocationType = String(formData.get(`allocation_type:${payerId}`) ?? "PERCENT").trim().toUpperCase();
+    const rawValue = String(formData.get(`allocation_value:${payerId}`) ?? "").trim().replace(",", ".");
+    return {
+      payer_client_id: payerId,
+      allocation_type: allocationType,
+      allocation_value: allocationType === "REMAINDER" ? null : rawValue,
+    };
+  });
+  const applyToSiblingIds = disable
+    ? []
+    : formData
+        .getAll("apply_to_sibling_id")
+        .map((value) => String(value).trim())
+        .filter((value) => value && value !== childId);
+
+  const result = await backendRequest<{ client_id: string }>(
+    `/api/v1/admin/clients/family/billing-allocations/${childId}`,
+    {
+      method: "PUT",
+      body: JSON.stringify({ allocations, apply_to_sibling_ids: applyToSiblingIds }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(`/admin/clients/${returnClientId}?tab=famille`, "error", result.message));
+  }
+  revalidatePath(`/admin/clients/${returnClientId}`);
+  revalidatePath(`/admin/clients/${childId}`);
+  for (const siblingId of applyToSiblingIds) {
+    revalidatePath(`/admin/clients/${siblingId}`);
+  }
+  redirect(
+    appendQueryMessage(
+      `/admin/clients/${returnClientId}?tab=famille`,
+      "ok",
+      disable ? "Répartition de facturation désactivée." : "Répartition de facturation enregistrée.",
+    ),
+  );
 }
 
 export async function unlinkFamilyMembersAction(formData: FormData): Promise<void> {
@@ -9480,6 +9590,7 @@ export async function updateAdminConfigAccountAction(formData: FormData): Promis
     allowed_currencies: parseStringList(formData.getAll("allowed_currencies")).map((code) => code.toUpperCase()),
     default_currency: String(formData.get("default_currency") ?? "EUR").trim().toUpperCase(),
     client_balance_default_date_mode: String(formData.get("client_balance_default_date_mode") ?? "TODAY").trim().toUpperCase(),
+    client_balance_default_date: String(formData.get("client_balance_default_date") ?? "").trim() || null,
     bank_transfer_account_holder: String(formData.get("bank_transfer_account_holder") ?? "").trim(),
     bank_transfer_iban: String(formData.get("bank_transfer_iban") ?? "").trim(),
     bank_transfer_bic: String(formData.get("bank_transfer_bic") ?? "").trim(),
@@ -15124,7 +15235,7 @@ export async function updateAdminTypeformQuoteDefaultsConfigAction(formData: For
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=catalogs"));
   const configId = parseUuid(String(formData.get("config_id") ?? ""));
-  const enabled = parseCheckboxFlag(formData, "default_pre_registration_deposit_enabled", true);
+  const enabled = parseCheckboxFlag(formData, "default_pre_registration_deposit_enabled", false);
   const amountRaw = String(formData.get("default_pre_registration_deposit_amount_ttc") ?? "").trim().replace(",", ".");
   const amount = Number(amountRaw || "0");
   if (!configId || !Number.isFinite(amount) || amount < 0) {

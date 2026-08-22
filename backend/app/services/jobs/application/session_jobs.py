@@ -154,8 +154,9 @@ def run_session_auto_completion_job(
                         )
                         continue
 
-                    if created:
-                        invoices_generated += 1
+                    if not created:
+                        continue
+                    invoices_generated += 1
 
                     invoice_customer = db.scalar(
                         select(User).where(User.id == note.user_id, User.role == UserRole.CLIENT)

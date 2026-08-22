@@ -18,7 +18,12 @@ from app.services.client_purchase_notifications import (
     send_payment_success_notifications,
     send_plan_purchase_admin_notifications,
 )
-from app.services.messaging_templates import PREDEFINED_TEMPLATE_DEFINITIONS, recipient_display_name, render_template_content
+from app.services.messaging_templates import (
+    PREDEFINED_TEMPLATE_DEFINITIONS,
+    PREDEFINED_TEMPLATE_TRANSLATIONS,
+    recipient_display_name,
+    render_template_content,
+)
 
 
 class ClientEmailTemplateTests(unittest.TestCase):
@@ -130,6 +135,9 @@ class ClientEmailTemplateTests(unittest.TestCase):
         ), patch(
             "app.services.client_purchase_notifications.create_plan_invoice_download_token",
             return_value="signed.invoice.token",
+        ), patch(
+            "app.services.client_purchase_notifications._studio_booking_url",
+            return_value="https://app.piano-academie.com/embed/planning?course_type_id=studio&location_group=paris",
         ):
             send_client_payment_success_notifications(
                 db=object(),
@@ -143,11 +151,75 @@ class ClientEmailTemplateTests(unittest.TestCase):
                 currency="EUR",
             )
 
+        payment_kwargs = send_template_email.call_args_list[0].kwargs
+        self.assertEqual(payment_kwargs["template_code"], "STUDIO_PAYMENT_CONFIRMED")
+        self.assertEqual(
+            payment_kwargs["context"]["booking_url"],
+            "https://app.piano-academie.com/embed/planning?course_type_id=studio&location_group=paris",
+        )
         invoice_context = send_template_email.call_args_list[1].kwargs["context"]
         self.assertEqual(
             invoice_context["invoice_url"],
             f"https://app.piano-academie.com/api/v1/public/invoices/plans/{subscription_id}/download?token=signed.invoice.token",
         )
+
+    def test_non_studio_plan_keeps_standard_payment_confirmation(self) -> None:
+        subscription_id = uuid4()
+        with patch(
+            "app.services.client_purchase_notifications._send_template_email",
+            side_effect=["msg-payment", "msg-invoice"],
+        ) as send_template_email, patch(
+            "app.services.client_purchase_notifications._frontend_url",
+            side_effect=lambda path: f"https://app.piano-academie.com{path}",
+        ), patch(
+            "app.services.client_purchase_notifications.create_plan_invoice_download_token",
+            return_value="signed.invoice.token",
+        ), patch(
+            "app.services.client_purchase_notifications._studio_booking_url",
+        ) as studio_booking_url:
+            send_client_payment_success_notifications(
+                db=object(),
+                to_email="hector@example.com",
+                first_name="Hector",
+                last_name="Souza",
+                plan_name="Carnet 10 cours collectifs",
+                subscription_id=subscription_id,
+                paid_at=datetime(2026, 4, 3, 7, 0, tzinfo=timezone.utc),
+                amount_paid=Decimal("280.00"),
+                currency="EUR",
+            )
+
+        studio_booking_url.assert_not_called()
+        self.assertEqual(send_template_email.call_args_list[0].kwargs["template_code"], "PAYMENT_CONFIRMED")
+        self.assertEqual(send_template_email.call_args_list[0].kwargs["context"]["booking_url"], "")
+
+    def test_studio_payment_email_explains_booking_step_in_french_and_english(self) -> None:
+        definition = next(
+            item for item in PREDEFINED_TEMPLATE_DEFINITIONS if item.code == "STUDIO_PAYMENT_CONFIRMED"
+        )
+        english_body = PREDEFINED_TEMPLATE_TRANSLATIONS["STUDIO_PAYMENT_CONFIRMED"]["body"]["en"]
+        context = {
+            "first_name": "Matt",
+            "payment_label": "1 reservation de studio",
+            "amount_paid": "15.00",
+            "currency": "EUR",
+            "paid_at": "19/08/2026 22:46",
+            "payment_reference": "payment-123",
+            "booking_url": "https://app.piano-academie.com/embed/planning?course_type_id=studio",
+            "invoice_number": "FAC-20260819-PAYMENT1",
+            "invoice_url": "https://app.piano-academie.com/invoice",
+            "transactions_url": "https://app.piano-academie.com/transactions",
+        }
+
+        french_rendered = render_template_content(definition.body, context)
+        english_rendered = render_template_content(english_body, context)
+
+        self.assertIn("Réserver mon studio", french_rendered)
+        self.assertIn("vous n’aurez pas à payer une seconde fois", french_rendered)
+        self.assertIn("Book my studio", english_rendered)
+        self.assertIn("you will not need to pay again", english_rendered)
+        self.assertIn(f'href="{context["booking_url"]}"', french_rendered)
+        self.assertIn(f'href="{context["booking_url"]}"', english_rendered)
 
     def test_plan_purchase_admin_notification_uses_admin_recipients_and_paris_time(self) -> None:
         subscription_id = uuid4()

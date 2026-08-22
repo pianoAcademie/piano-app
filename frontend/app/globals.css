@@ -6647,6 +6647,28 @@ button.danger:focus-visible {
   padding: 0 18px;
 }
 
+.session-enroll-series-confirm {
+  width: 100%;
+  display: grid;
+  gap: 10px;
+}
+
+.session-enroll-scope-options {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #e6e8ee;
+  border-radius: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.session-enroll-scope-options legend {
+  padding: 0 5px;
+  color: #30455f;
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .session-slot-details-list {
   gap: 12px;
 }
@@ -10817,6 +10839,12 @@ button.danger:focus-visible {
   position: relative;
 }
 
+.client-session-modal-top-back {
+  justify-self: start;
+  min-height: 42px;
+  padding: 8px 12px;
+}
+
 .client-session-modal-header .modal-close-x {
   position: absolute;
   top: 4px;
@@ -10845,6 +10873,32 @@ button.danger:focus-visible {
 
 .client-session-modal-grid .item p {
   margin: 4px 0 0;
+}
+
+.client-session-details-disclosure {
+  display: grid;
+  gap: 10px;
+}
+
+.client-session-details-disclosure summary {
+  cursor: pointer;
+  color: #4b3716;
+  font-weight: 800;
+  list-style-position: inside;
+}
+
+.client-session-details-disclosure:not([open]) {
+  padding-block: 12px;
+}
+
+.client-session-detail-copy {
+  border-top: 1px solid #efe3d2;
+  padding-top: 8px;
+}
+
+.client-session-detail-copy p {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
 }
 
 .client-more-block {
@@ -14553,6 +14607,11 @@ button.danger:focus-visible {
 .client-session-modal-actions {
   display: grid;
   gap: 12px;
+  position: sticky;
+  bottom: -12px;
+  z-index: 4;
+  border-top: 1px solid #e3d1b2;
+  box-shadow: 0 -12px 24px rgba(45, 31, 15, 0.08);
 }
 
 .client-session-modal-back-link {
@@ -14709,17 +14768,91 @@ button.danger:focus-visible {
 }
 
 @media (max-width: 720px) {
+  .modal-client-session-details {
+    gap: 6px;
+  }
+
+  .client-session-modal-header {
+    gap: 4px;
+    padding: 4px 48px 6px 4px;
+  }
+
+  .client-session-modal-top-back {
+    min-height: 36px;
+    padding: 6px 9px;
+    font-size: 14px;
+  }
+
+  .client-session-modal-header h2 {
+    padding-right: 0;
+    font-size: 25px;
+    line-height: 1.12;
+  }
+
+  .client-session-modal-header > p {
+    margin: 2px 0;
+    font-size: 15px;
+  }
+
+  .client-session-modal-header .row {
+    gap: 6px;
+  }
+
+  .client-session-details-disclosure {
+    font-size: 14px;
+  }
+
+  .client-session-member-picker {
+    gap: 8px;
+  }
+
+  .client-session-member-picker-heading strong {
+    font-size: 18px;
+  }
+
   .client-session-member-grid {
     grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
   }
 
   .client-session-member-card-head {
-    flex-direction: column;
-    align-items: flex-start;
+    flex-direction: row;
+    align-items: center;
   }
 
   .client-session-member-card-badges {
-    justify-content: flex-start;
+    justify-content: flex-end;
+  }
+
+  .client-session-member-card {
+    gap: 6px;
+    padding: 10px 12px;
+  }
+
+  .client-session-modal-state {
+    gap: 6px;
+  }
+
+  .client-session-modal-state-copy > p:not(.client-session-modal-state-title) {
+    font-size: 14px;
+    line-height: 1.35;
+  }
+
+  .client-session-modal-actions {
+    bottom: -8px;
+    margin: 0 -8px -8px;
+    padding: 10px 8px calc(10px + env(safe-area-inset-bottom));
+    background: rgba(255, 253, 249, 0.97);
+    backdrop-filter: blur(10px);
+  }
+
+  .client-session-modal-back-link {
+    display: none;
+  }
+
+  .client-session-modal-action-list button {
+    min-height: 50px;
+    font-size: 16px;
   }
 }
 
@@ -16931,6 +17064,25 @@ button.danger:focus-visible {
 .public-buy-card {
   display: grid;
   gap: 14px;
+}
+
+.public-buy-sticky-navigation {
+  position: sticky;
+  top: 8px;
+  z-index: 12;
+  display: flex;
+  margin: -4px -4px 0;
+  padding: 4px;
+  border: 1px solid rgba(196, 138, 58, 0.2);
+  border-radius: 14px;
+  background: rgba(255, 253, 249, 0.96);
+  box-shadow: 0 8px 22px rgba(50, 35, 19, 0.1);
+  backdrop-filter: blur(10px);
+}
+
+.public-buy-back-link {
+  min-height: 44px;
+  padding: 9px 12px;
 }
 
 .public-buy-header {
@@ -24491,4 +24643,120 @@ button.client-danger-button {
 
 button.client-danger-button:hover {
   background: #7e2722;
+}
+.billing-split-list {
+  display: grid;
+  gap: 18px;
+  margin-top: 16px;
+}
+
+.billing-split-editor {
+  border: 1px solid var(--border, #d9e0ea);
+  border-radius: 14px;
+  background: #fbfcfe;
+  padding: 18px;
+}
+
+.billing-split-editor-heading p {
+  margin: 4px 0 0;
+}
+
+.billing-split-form {
+  display: grid;
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.billing-split-table {
+  display: grid;
+  gap: 8px;
+}
+
+.billing-split-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.4fr) minmax(150px, 0.8fr) minmax(180px, 0.8fr);
+  gap: 12px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid #e1e6ee;
+  border-radius: 10px;
+  background: #fff;
+  opacity: 0.68;
+}
+
+.billing-split-row.is-enabled,
+.billing-split-header {
+  opacity: 1;
+}
+
+.billing-split-header {
+  padding-top: 0;
+  padding-bottom: 0;
+  border: 0;
+  background: transparent;
+  color: #667085;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.billing-split-payer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.billing-split-payer span {
+  display: grid;
+  gap: 2px;
+}
+
+.billing-split-payer small {
+  color: #667085;
+}
+
+.billing-split-value {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.billing-split-value input {
+  width: 100%;
+}
+
+.billing-split-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: #edf8f0;
+  color: #245c32;
+}
+
+.billing-split-summary.has-error {
+  background: #fff4f2;
+  color: #7a3028;
+}
+
+.billing-split-error {
+  width: 100%;
+  font-weight: 700;
+}
+
+.billing-split-siblings {
+  padding: 12px 14px;
+  border: 1px solid #e1e6ee;
+  border-radius: 10px;
+}
+
+@media (max-width: 760px) {
+  .billing-split-row {
+    grid-template-columns: 1fr;
+  }
+
+  .billing-split-header {
+    display: none;
+  }
 }

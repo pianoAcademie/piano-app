@@ -17,6 +17,7 @@ from app.api.routes.typeform_intakes import (
     CLIENT_MODE_EXISTING_FAMILY,
     CLIENT_MODE_NEW_PARENT_CHILD,
     _default_resolution,
+    _default_pre_registration_deposit_from_config,
     _extract_estimated_solfege_level,
     _find_existing_adult_parent_client,
     _find_pass_recup_product,
@@ -53,6 +54,11 @@ from app.schemas.typeform_intake import TypeformQuotePreviewLineOut
 
 
 class TypeformIntakeMatchingTests(unittest.TestCase):
+    def test_typeform_quote_defaults_to_no_pre_registration_deposit(self) -> None:
+        config = SimpleNamespace(configuration_json={})
+
+        self.assertIsNone(_default_pre_registration_deposit_from_config(config))
+
     def test_mixed_eveil_form_detects_eveil_branch_from_answered_labels(self) -> None:
         activity_type = _requested_activity_type_from_simplified_answers(
             [

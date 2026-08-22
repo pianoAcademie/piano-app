@@ -43,7 +43,8 @@ class AdminConfigAccountOut(BaseModel):
     country: str
     allowed_currencies: list[str] = Field(default_factory=list)
     default_currency: str
-    client_balance_default_date_mode: Literal["TODAY", "PACKAGE_END"] = "TODAY"
+    client_balance_default_date_mode: Literal["TODAY", "PACKAGE_END", "FIXED_DATE"] = "TODAY"
+    client_balance_default_date: date | None = None
     bank_transfer_account_holder: str = ""
     bank_transfer_iban: str = ""
     bank_transfer_bic: str = ""
@@ -69,7 +70,8 @@ class AdminConfigAccountUpdateRequest(BaseModel):
     country: str = Field(default="", max_length=120)
     allowed_currencies: list[str] = Field(default_factory=list)
     default_currency: str = Field(default="EUR", min_length=3, max_length=3)
-    client_balance_default_date_mode: Literal["TODAY", "PACKAGE_END"] = "TODAY"
+    client_balance_default_date_mode: Literal["TODAY", "PACKAGE_END", "FIXED_DATE"] = "TODAY"
+    client_balance_default_date: date | None = None
     bank_transfer_account_holder: str = Field(default="", max_length=255)
     bank_transfer_iban: str = Field(default="", max_length=80)
     bank_transfer_bic: str = Field(default="", max_length=40)
@@ -1199,12 +1201,43 @@ class AdminClientFamilyLinkOut(BaseModel):
     updated_at: datetime
 
 
+class AdminFamilyBillingAllocationOut(BaseModel):
+    id: UUID
+    child_client_id: UUID
+    payer_client_id: UUID
+    allocation_type: Literal["PERCENT", "FIXED", "REMAINDER"]
+    allocation_value: Decimal | None = None
+
+
+class AdminFamilyBillingPayerOut(BaseModel):
+    adult: AdminFamilyMemberOut
+    is_primary_billing_recipient: bool = False
+    allocation: AdminFamilyBillingAllocationOut | None = None
+
+
+class AdminFamilyBillingChildOut(BaseModel):
+    child: AdminFamilyMemberOut
+    payers: list[AdminFamilyBillingPayerOut] = Field(default_factory=list)
+
+
+class AdminFamilyBillingAllocationItemRequest(BaseModel):
+    payer_client_id: UUID
+    allocation_type: Literal["PERCENT", "FIXED", "REMAINDER"]
+    allocation_value: Decimal | None = Field(default=None, ge=Decimal("0"), le=Decimal("1000000"))
+
+
+class AdminFamilyBillingAllocationUpdateRequest(BaseModel):
+    allocations: list[AdminFamilyBillingAllocationItemRequest] = Field(default_factory=list, max_length=10)
+    apply_to_sibling_ids: list[UUID] = Field(default_factory=list, max_length=20)
+
+
 class AdminClientFamilyOut(BaseModel):
     client_id: UUID
     client_kind: ClientKind
     links_as_adult: list[AdminClientFamilyLinkOut] = Field(default_factory=list)
     links_as_child: list[AdminClientFamilyLinkOut] = Field(default_factory=list)
     billing_recipient_adult_id: UUID | None = None
+    billing_children: list[AdminFamilyBillingChildOut] = Field(default_factory=list)
 
 
 class AdminClientFamilyLinkCreateRequest(BaseModel):
@@ -1541,6 +1574,13 @@ class AdminRangeInvoiceReferenceOut(BaseModel):
     split_part_count: int = 1
 
 
+class AdminFamilyInvoiceSplitOut(BaseModel):
+    source_note_id: UUID
+    source_invoice_number: str
+    child_client_id: UUID
+    created_invoices: list[AdminRangeInvoiceReferenceOut] = Field(default_factory=list)
+
+
 class AdminLegacyInvoiceOut(BaseModel):
     id: UUID
     invoice_number: str
@@ -1592,6 +1632,8 @@ class AdminRangeInvoiceOut(BaseModel):
     bank_transfer_order_paid_at: datetime | None = None
     public_note: str | None = None
     private_note: str | None = None
+    recipient_client_name: str | None = None
+    family_billing_payer_client_id: UUID | None = None
     related_invoices: list[AdminRangeInvoiceReferenceOut] = Field(default_factory=list)
 
 
@@ -2305,6 +2347,7 @@ class AdminSessionCreateRequest(BaseModel):
     course_type_id: UUID
     location_id: UUID
     professor_id: UUID | None = None
+    professor_ids: list[UUID] = Field(default_factory=list, max_length=4)
     title: str = Field(min_length=1, max_length=255)
     description: str | None = None
     public_description: str | None = None
@@ -2340,6 +2383,7 @@ class AdminSessionUpdateRequest(BaseModel):
     course_type_id: UUID | None = None
     location_id: UUID | None = None
     professor_id: UUID | None = None
+    professor_ids: list[UUID] | None = Field(default=None, max_length=4)
     substitute_teacher_id: UUID | None = None
     substitute_note: str | None = Field(default=None, max_length=12000)
     title: str | None = Field(default=None, min_length=1, max_length=255)
@@ -2380,6 +2424,8 @@ class AdminSessionOut(BaseModel):
     course_type_id: UUID
     location_id: UUID
     professor_id: UUID | None
+    professor_ids: list[UUID] = Field(default_factory=list)
+    professor_display_names: list[str] = Field(default_factory=list)
     substitute_teacher_id: UUID | None
     substitute_set_at: datetime | None
     substitute_set_by: UUID | None
@@ -2391,6 +2437,8 @@ class AdminSessionOut(BaseModel):
     substitute_teacher_display_name: str | None
     effective_teacher_id: UUID | None
     effective_teacher_display_name: str
+    effective_teacher_ids: list[UUID] = Field(default_factory=list)
+    effective_teacher_display_names: list[str] = Field(default_factory=list)
     requires_professor: bool
     allows_student_bookings: bool
     supports_student_time_overrides: bool
@@ -2464,6 +2512,7 @@ class AdminSessionBookingCreateRequest(BaseModel):
     recurrence_end_date: date | None = None
     student_start_time_local: str | None = Field(default=None, max_length=5)
     student_end_time_local: str | None = Field(default=None, max_length=5)
+    notify_client: bool = False
 
 
 class AdminSessionBookingAttendanceUpdateRequest(BaseModel):
@@ -2493,6 +2542,7 @@ class AdminSessionBookingOperationOut(BaseModel):
     booked_count: int
     waitlisted_count: int
     skipped_count: int
+    notified_count: int = 0
     details: list[str] = Field(default_factory=list)
 
 
@@ -2767,12 +2817,17 @@ class AdminPlanningSimulationSlotOut(BaseModel):
     teacher_assignment_professor_id: UUID | None = None
     teacher_assignment_label: str | None = None
     teacher_assignment_status: Literal["PREVISIONAL", "CONFIRMED"] | None = None
+    teacher_assignment_ids: list[UUID] = Field(default_factory=list)
+    teacher_assignment_professor_ids: list[UUID | None] = Field(default_factory=list)
+    teacher_assignment_labels: list[str] = Field(default_factory=list)
+    teacher_assignment_statuses: list[Literal["PREVISIONAL", "CONFIRMED"]] = Field(default_factory=list)
     teacher_assignment_warnings: list[str] = Field(default_factory=list)
 
 
 class AdminPlanningSimulationTeacherAssignmentUpdateRequest(BaseModel):
     school_year_label: str = Field(min_length=4, max_length=20)
     slot_key: str = Field(min_length=1, max_length=600)
+    position: int = Field(default=1, ge=1, le=4)
     professor_id: UUID | None = None
     teacher_label: str | None = Field(default=None, max_length=180)
     status: Literal["PREVISIONAL", "CONFIRMED"] = "PREVISIONAL"
@@ -2782,6 +2837,7 @@ class AdminPlanningSimulationTeacherAssignmentOut(BaseModel):
     id: UUID | None = None
     school_year_label: str
     slot_key: str
+    position: int = 1
     professor_id: UUID | None = None
     teacher_label: str | None = None
     status: Literal["PREVISIONAL", "CONFIRMED"] | None = None

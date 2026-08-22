@@ -40,7 +40,7 @@ from app.models.client_record import (
     PaymentReceipt,
     StudentQuoteChange,
 )
-from app.models.family import ClientFamilyLink
+from app.models.family import ClientFamilyBillingAllocation, ClientFamilyLink
 from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, CreditType, DeliveryMode, Location, Professor, SessionStatus
 from app.models.ops import (
     AppSetting,
@@ -80,6 +80,11 @@ from app.schemas.admin import (
     AdminClientFamilyLinkOut,
     AdminClientFamilyLinkUpdateRequest,
     AdminClientFamilyOut,
+    AdminFamilyBillingAllocationOut,
+    AdminFamilyBillingChildOut,
+    AdminFamilyBillingPayerOut,
+    AdminFamilyBillingAllocationUpdateRequest,
+    AdminFamilyInvoiceSplitOut,
     AdminClientBookingOut,
     AdminFamilyMemberOut,
     AdminClientMessageEmailOut,
@@ -153,6 +158,7 @@ from app.api.routes.bookings import (
     payment_hold_expiration,
     promote_pending_payment_booking,
 )
+from app.api.routes.plans import _PurchasePricing, _has_prior_purchase_for_plan, _purchase_pricing
 from app.services.client_password_email import (
     generate_temporary_password,
 )
@@ -178,6 +184,12 @@ from app.services.communication_journal import COMMUNICATION_TYPE_OPERATIONAL, l
 from app.services.email_delivery import send_email
 from app.services.email_branding import render_branded_email
 from app.services.family_billing import resolve_billing_profile
+from app.services.family_billing_allocations import (
+    BillingAllocationInput,
+    allocate_billing_total,
+    allocate_signed_amount_by_targets,
+    validate_billing_allocations,
+)
 from app.services.i18n import normalize_language
 from app.services.local_time import resolve_timezone_name
 from app.services.invoice_documents import (
@@ -1059,6 +1071,34 @@ def _invoice_recipient_snapshot_for_client(db: Session, client: User) -> dict[st
     }
 
 
+def _invoice_family_payer_from_metadata(
+    db: Session,
+    *,
+    owner_client: User,
+    metadata: dict[str, object],
+) -> User:
+    payer_id = _parse_optional_uuid(metadata.get("family_billing_payer_user_id"))
+    child_id = _parse_optional_uuid(metadata.get("student_user_id"))
+    if payer_id is None or child_id is None:
+        return owner_client
+    linked = db.scalar(
+        select(ClientFamilyLink.id).where(
+            ClientFamilyLink.child_user_id == child_id,
+            ClientFamilyLink.adult_user_id == payer_id,
+        )
+    )
+    if linked is None:
+        return owner_client
+    payer = db.scalar(
+        select(User).where(
+            User.id == payer_id,
+            User.role == UserRole.CLIENT,
+            User.client_kind == ClientKind.ADULT,
+        )
+    )
+    return payer or owner_client
+
+
 def _invoice_recipient_name_from_metadata(metadata: dict[str, object], *, fallback: str) -> str:
     return _normalize_optional(str(metadata.get("client_name") or "")) or fallback
 
@@ -1493,6 +1533,27 @@ def _booking_payment_hold_expired(booking: Booking, *, now: datetime) -> bool:
     )
 
 
+def _generate_paid_booking_invoice_after_payment(
+    db: Session,
+    *,
+    booking: Booking,
+    session_obj: CourseSession,
+    course_type: CourseType,
+    location: Location,
+    owner: User,
+) -> tuple[ClientNoteEntry, dict[str, object], bool]:
+    return generate_final_invoice_for_booking(
+        db,
+        booking=booking,
+        session_obj=session_obj,
+        course_type=course_type,
+        location=location,
+        owner=owner,
+        author_user_id=None,
+        allow_paid_before_service=True,
+    )
+
+
 def _promote_waitlist_after_payment_hold_expiry(
     db: Session,
     *,
@@ -1856,7 +1917,12 @@ def _run_invoice_range_payment_notifications(
             )
     if not _normalize_optional(str(metadata.get("payment_confirmation_emails_sent_at") or "")):
         try:
-            client = db.scalar(select(User).where(User.id == client_id, User.role == UserRole.CLIENT))
+            owner_client = db.scalar(select(User).where(User.id == client_id, User.role == UserRole.CLIENT))
+            client = (
+                _invoice_family_payer_from_metadata(db, owner_client=owner_client, metadata=metadata)
+                if owner_client is not None
+                else None
+            )
             if client is not None and _send_invoice_range_payment_success_emails(
                 db,
                 client=client,
@@ -1873,7 +1939,12 @@ def _run_invoice_range_payment_notifications(
             )
     if not _normalize_optional(str(metadata.get("admin_payment_confirmation_emails_sent_at") or "")):
         try:
-            client = db.scalar(select(User).where(User.id == client_id, User.role == UserRole.CLIENT))
+            owner_client = db.scalar(select(User).where(User.id == client_id, User.role == UserRole.CLIENT))
+            client = (
+                _invoice_family_payer_from_metadata(db, owner_client=owner_client, metadata=metadata)
+                if owner_client is not None
+                else None
+            )
             if client is not None and _send_invoice_range_payment_admin_emails(
                 db,
                 client=client,
@@ -1995,18 +2066,18 @@ def _record_invoice_range_public_payment(
         if provider_reference and provider_reference in reference_text:
             existing_transaction = candidate
             break
-        if (candidate.category or "").strip().upper() == "INVOICE_RANGE_PUBLIC_PAYMENT":
-            existing_transaction = candidate
-            break
-        if transaction_category and (candidate.category or "").strip().upper() == transaction_category:
-            existing_transaction = candidate
-            break
+
+    # `reconciled_manual_payment_ids` can legitimately contain an earlier
+    # deposit.  A category match is therefore not an idempotency key: reusing
+    # that row would mark the final invoice as paid without recording the new
+    # PSP/bank-transfer settlement.  Only the provider reference identifies a
+    # retry of the same payment.
 
     if existing_transaction is None:
         signed_total = _quantize_money(Decimal("0.00") - amount_due)
         transaction = ClientManualTransaction(
             user_id=client_id,
-            student_user_id=client_id,
+            student_user_id=_parse_optional_uuid(metadata.get("student_user_id")) or client_id,
             actor_user_id=actor_user_id,
             transaction_type="PAYMENT",
             status="COMPLETED",
@@ -2050,6 +2121,13 @@ def _record_invoice_range_public_payment(
         label=public_note_reference_label,
         reference=provider_reference,
     )
+    _propagate_paid_deposit_to_issued_long_period_invoice(
+        db,
+        owner_client_id=note.user_id,
+        source_note=note,
+        source_metadata=metadata,
+        payment_transaction_id=transaction_id,
+    )
     if defer_postprocessing:
         metadata["payment_postprocessing_status"] = "PENDING"
         metadata["payment_postprocessing_requested_at"] = now.isoformat()
@@ -2080,8 +2158,9 @@ def reconcile_admin_client_range_invoice_public_payment_by_provider_reference(
     provider_reference: str,
     defer_postprocessing: bool = False,
 ) -> dict[str, object]:
-    _require_client(db, client_id)
+    owner_client = _require_client(db, client_id)
     note, metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=True)
+    payer_client = _invoice_family_payer_from_metadata(db, owner_client=owner_client, metadata=metadata)
     metadata = _invoice_range_metadata_with_display_totals(
         db,
         client_id=client_id,
@@ -2133,7 +2212,7 @@ def reconcile_admin_client_range_invoice_public_payment_by_provider_reference(
         seller_legal_entity_id = _parse_optional_uuid(metadata.get("seller_legal_entity_id"))
     transaction_id, paid_at = _record_invoice_range_public_payment(
         db,
-        client_id=client_id,
+        client_id=payer_client.id,
         note=note,
         metadata=metadata,
         provider_reference=lookup.provider_reference or provider_reference,
@@ -2474,14 +2553,15 @@ def _build_range_invoice_email_defaults(
     include_change_summary: bool = False,
     reference_invoice_note_id: UUID | None = None,
 ) -> tuple[list[str], str, str, str]:
-    billing_profile = resolve_billing_profile(db, client)
-    default_recipients = _normalize_email_recipients([billing_profile.email, client.email])
+    recipient_client = _invoice_family_payer_from_metadata(db, owner_client=client, metadata=metadata)
+    billing_profile = resolve_billing_profile(db, recipient_client)
+    default_recipients = _normalize_email_recipients([billing_profile.email, recipient_client.email])
     if not default_recipients:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Aucune adresse email destinataire")
 
     normalized_kind = "REMINDER" if kind == "REMINDER" else "INVOICE"
     template_code = "INVOICE" if normalized_kind == "INVOICE" else "INVOICE_REMINDER"
-    language = normalize_language(client.preferred_language)
+    language = normalize_language(recipient_client.preferred_language)
     try:
         template = resolve_predefined_template(db, code=template_code, language=language)
     except KeyError as exc:
@@ -2518,9 +2598,9 @@ def _build_range_invoice_email_defaults(
     fallback_first_name = "Customer" if language == "en" else "Client"
     recipient_name = recipient_display_name(
         civility=getattr(billing_profile, "civility", None) or getattr(billing_profile, "civilite", None),
-        first_name=billing_profile.first_name or client.first_name,
-        last_name=billing_profile.last_name or client.last_name,
-        email=billing_profile.email or client.email,
+        first_name=billing_profile.first_name or recipient_client.first_name,
+        last_name=billing_profile.last_name or recipient_client.last_name,
+        email=billing_profile.email or recipient_client.email,
         fallback=fallback_first_name,
     )
     change_summary = (
@@ -2535,10 +2615,10 @@ def _build_range_invoice_email_defaults(
         else ""
     )
     context = {
-        "first_name": (billing_profile.first_name or client.first_name or "").strip() or client.email or fallback_first_name,
-        "last_name": (billing_profile.last_name or client.last_name or "").strip(),
-        "full_name": _display_name(billing_profile.first_name, billing_profile.last_name, client.email),
-        "client_name": _display_name(billing_profile.first_name, billing_profile.last_name, client.email),
+        "first_name": (billing_profile.first_name or recipient_client.first_name or "").strip() or recipient_client.email or fallback_first_name,
+        "last_name": (billing_profile.last_name or recipient_client.last_name or "").strip(),
+        "full_name": _display_name(billing_profile.first_name, billing_profile.last_name, recipient_client.email),
+        "client_name": _display_name(billing_profile.first_name, billing_profile.last_name, recipient_client.email),
         "recipient_name": recipient_name,
         "invoice_number": str(metadata.get("invoice_number") or ""),
         "invoice_url": invoice_url,
@@ -3153,6 +3233,31 @@ def _normalize_invoice_range_metadata(payload: dict[str, object]) -> dict[str, o
             normalized["seller_legal_entity_id"] = str(UUID(raw_seller_legal_entity_id))
         except ValueError:
             pass
+    for uuid_field in (
+        "student_user_id",
+        "family_billing_payer_user_id",
+        "family_billing_source_note_id",
+    ):
+        raw_uuid = _normalize_optional(str(payload.get(uuid_field) or ""))
+        if not raw_uuid:
+            continue
+        try:
+            normalized[uuid_field] = str(UUID(raw_uuid))
+        except ValueError:
+            continue
+    for text_field in (
+        "family_billing_split_group_id",
+        "family_billing_source_invoice_number",
+        "family_billing_allocation_type",
+        "late_deposit_auto_reconciled_at",
+        "late_deposit_source_invoice_number",
+    ):
+        raw_text = _normalize_optional(str(payload.get(text_field) or ""))
+        if raw_text:
+            normalized[text_field] = raw_text
+    raw_family_allocation_value = _normalize_optional(str(payload.get("family_billing_allocation_value") or ""))
+    if raw_family_allocation_value:
+        normalized["family_billing_allocation_value"] = raw_family_allocation_value
     split_group_id = _normalize_optional(str(payload.get("split_group_id") or ""))
     if split_group_id:
         normalized["split_group_id"] = split_group_id
@@ -3515,6 +3620,8 @@ def _invoice_range_out(
         bank_transfer_order_paid_at=_parse_iso_datetime(metadata.get("bank_transfer_order_paid_at")),
         public_note=_normalize_optional(str(metadata.get("public_note") or "")),
         private_note=_normalize_optional(str(metadata.get("private_note") or "")),
+        recipient_client_name=_normalize_optional(str(metadata.get("client_name") or "")),
+        family_billing_payer_client_id=_parse_optional_uuid(metadata.get("family_billing_payer_user_id")),
         related_invoices=related_invoices or [],
     )
 
@@ -3549,18 +3656,37 @@ def _computed_invoice_range_display_totals(
     metadata: dict[str, object],
 ) -> tuple[dict[str, str], dict[str, str]]:
     totals = _invoice_range_decimal_map(metadata.get("totals_by_currency"))
-    total_to_pay = _invoice_range_decimal_map(metadata.get("total_to_pay_by_currency"))
-    applied_payments = _invoice_range_decimal_map(metadata.get("applied_payment_totals_by_currency"))
+    stored_total_to_pay = _invoice_range_decimal_map(metadata.get("total_to_pay_by_currency"))
+    stored_applied_payments = _invoice_range_decimal_map(metadata.get("applied_payment_totals_by_currency"))
+    applied_payments = dict(stored_applied_payments)
     raw_auto_include_previous_balance = metadata.get("auto_include_previous_balance")
     auto_include_previous_balance = (
         bool(raw_auto_include_previous_balance)
         if isinstance(raw_auto_include_previous_balance, bool)
         else True
     )
-    if totals and total_to_pay and auto_include_previous_balance:
-        return _invoice_range_money_payload(totals), _invoice_range_money_payload(total_to_pay)
+    is_family_billing_split = (
+        _normalize_optional(str(metadata.get("family_billing_split_group_id") or "")) is not None
+    )
+    if totals and stored_total_to_pay and is_family_billing_split:
+        # Family-split invoices deliberately contain only the allocated share of
+        # a payment.  Re-reading the full source transaction would apply the
+        # complete family payment to every payer invoice.
+        return _invoice_range_money_payload(totals), _invoice_range_money_payload(stored_total_to_pay)
+
+    reconciled_payment_ids = set(_invoice_range_reconciled_manual_payment_ids(metadata))
+    if totals and stored_total_to_pay and auto_include_previous_balance and not reconciled_payment_ids:
+        return _invoice_range_money_payload(totals), _invoice_range_money_payload(stored_total_to_pay)
 
     all_payments = _build_admin_client_payments(db, client_id=client_id)
+    if reconciled_payment_ids:
+        # The list of reconciled transaction ids is the source of truth.  The
+        # denormalized totals may be stale when a deposit is linked after the
+        # invoice was issued.
+        applied_payments = _invoice_range_reconciled_manual_payment_totals(
+            all_payments,
+            reconciled_payment_ids=reconciled_payment_ids,
+        )
     frozen_payment_keys, _, _ = _frozen_invoice_selection_for_note(
         db,
         note_id=note_id,
@@ -3578,7 +3704,7 @@ def _computed_invoice_range_display_totals(
         if (row := payments_by_key.get(key)) is not None
         if not _is_booking_payment_receipt_manual_row(row)
     ]
-    if frozen_rows:
+    if frozen_rows and not totals:
         totals = {}
         for row in frozen_rows:
             currency = _normalize_currency(row.currency, fallback="EUR")
@@ -3586,16 +3712,32 @@ def _computed_invoice_range_display_totals(
                 totals.get(currency, Decimal("0.00")) + Decimal(row.total_incl_vat)
             )
 
-    if totals and not auto_include_previous_balance:
-        total_to_pay = {}
-        for currency in sorted(set(totals.keys()) | set(applied_payments.keys())):
+    if totals:
+        opening_balance = _invoice_range_decimal_map(metadata.get("opening_balance_by_currency"))
+        if auto_include_previous_balance and not opening_balance and stored_total_to_pay:
+            # Older invoices did not always persist the opening-balance map.
+            # Preserve the implied historical balance while replacing only the
+            # stale applied-payment component.
+            for currency in sorted(
+                set(totals.keys()) | set(stored_total_to_pay.keys()) | set(stored_applied_payments.keys())
+            ):
+                opening_balance[currency] = _quantize_money(
+                    stored_total_to_pay.get(currency, Decimal("0.00"))
+                    - totals.get(currency, Decimal("0.00"))
+                    - stored_applied_payments.get(currency, Decimal("0.00"))
+                )
+        total_to_pay: dict[str, Decimal] = {}
+        for currency in sorted(set(totals.keys()) | set(opening_balance.keys()) | set(applied_payments.keys())):
+            carry_balance = opening_balance.get(currency, Decimal("0.00")) if auto_include_previous_balance else Decimal("0.00")
             total_to_pay[currency] = _quantize_money(
-                totals.get(currency, Decimal("0.00")) + applied_payments.get(currency, Decimal("0.00"))
+                totals.get(currency, Decimal("0.00"))
+                + carry_balance
+                + applied_payments.get(currency, Decimal("0.00"))
             )
         return _invoice_range_money_payload(totals), _invoice_range_money_payload(total_to_pay)
 
+    total_to_pay = dict(stored_total_to_pay)
     if not total_to_pay:
-        total_to_pay = dict(totals)
         for row in all_payments:
             key = _payment_key(source=row.source, payment_id=row.id)
             if key in frozen_key_set:
@@ -3637,6 +3779,211 @@ def _invoice_range_metadata_with_display_totals(
     if total_to_pay_by_currency:
         enriched["total_to_pay_by_currency"] = total_to_pay_by_currency
     return enriched
+
+
+def _synchronize_invoice_range_reconciled_payment_metadata(
+    db: Session,
+    *,
+    client_id: UUID,
+    note_id: UUID,
+    note_created_at: datetime,
+    metadata: dict[str, object],
+) -> dict[str, object]:
+    """Refresh denormalized payment totals after a payment is linked.
+
+    Family-billing split invoices keep their explicitly allocated payment
+    shares.  For ordinary invoices, reconciled transaction ids are authoritative.
+    """
+
+    if _normalize_optional(str(metadata.get("family_billing_split_group_id") or "")) is not None:
+        return dict(metadata)
+
+    enriched = _invoice_range_metadata_with_display_totals(
+        db,
+        client_id=client_id,
+        note_id=note_id,
+        note_created_at=note_created_at,
+        metadata=dict(metadata),
+    )
+    reconciled_payment_ids = set(_invoice_range_reconciled_manual_payment_ids(enriched))
+    all_payments = _build_admin_client_payments(db, client_id=client_id)
+    applied_totals = _invoice_range_reconciled_manual_payment_totals(
+        all_payments,
+        reconciled_payment_ids=reconciled_payment_ids,
+    )
+    applied_lines = _invoice_range_reconciled_manual_payment_lines(
+        all_payments,
+        reconciled_payment_ids=reconciled_payment_ids,
+    )
+    if applied_totals:
+        enriched["applied_payment_totals_by_currency"] = _invoice_range_money_payload(applied_totals)
+    else:
+        enriched.pop("applied_payment_totals_by_currency", None)
+    if applied_lines:
+        enriched["applied_payment_lines"] = _invoice_range_reconciled_manual_payment_lines_metadata(applied_lines)
+    else:
+        enriched.pop("applied_payment_lines", None)
+    return enriched
+
+
+def _invoice_range_student_ids_for_late_deposit_reconciliation(
+    metadata: dict[str, object],
+    *,
+    manual_transactions_by_id: dict[UUID, ClientManualTransaction],
+) -> set[UUID]:
+    student_ids: set[UUID] = set()
+    explicit_student_id = _parse_optional_uuid(metadata.get("student_user_id"))
+    if explicit_student_id is not None:
+        student_ids.add(explicit_student_id)
+    for payment_key in _normalize_invoice_range_payment_keys(metadata.get("included_payment_keys")):
+        transaction_id = _manual_transaction_id_from_payment_key(payment_key)
+        if transaction_id is None:
+            continue
+        transaction = manual_transactions_by_id.get(transaction_id)
+        if transaction is not None and transaction.student_user_id is not None:
+            student_ids.add(transaction.student_user_id)
+    return student_ids
+
+
+def _propagate_paid_deposit_to_issued_long_period_invoice(
+    db: Session,
+    *,
+    owner_client_id: UUID,
+    source_note: ClientNoteEntry,
+    source_metadata: dict[str, object],
+    payment_transaction_id: UUID,
+) -> UUID | None:
+    """Apply a newly paid deposit to an already-issued long-period invoice.
+
+    The operation is deliberately conservative and idempotent: it only acts on
+    a unique, non-split, issued invoice of at least six months for the same
+    student. Ambiguous matches are left untouched and logged for review.
+    """
+
+    if str(source_metadata.get("invoice_status") or "").strip().upper() != "PAID":
+        return None
+    if _normalize_optional(str(source_metadata.get("family_billing_split_group_id") or "")) is not None:
+        return None
+
+    manual_transaction_ids = {
+        transaction_id
+        for payment_key in _normalize_invoice_range_payment_keys(source_metadata.get("included_payment_keys"))
+        for transaction_id in [_manual_transaction_id_from_payment_key(payment_key)]
+        if transaction_id is not None
+    }
+    if not manual_transaction_ids:
+        return None
+    manual_transactions = db.scalars(
+        select(ClientManualTransaction).where(ClientManualTransaction.id.in_(manual_transaction_ids))
+    ).all()
+    manual_transactions_by_id = {row.id: row for row in manual_transactions}
+    if not _is_pre_registration_deposit_invoice_metadata(
+        source_metadata,
+        manual_transactions_by_id=manual_transactions_by_id,
+    ):
+        return None
+
+    source_student_ids = _invoice_range_student_ids_for_late_deposit_reconciliation(
+        source_metadata,
+        manual_transactions_by_id=manual_transactions_by_id,
+    )
+    payment_row = db.get(ClientManualTransaction, payment_transaction_id)
+    if payment_row is not None and payment_row.student_user_id is not None:
+        source_student_ids.add(payment_row.student_user_id)
+    if not source_student_ids:
+        return None
+
+    notes = db.scalars(
+        select(ClientNoteEntry)
+        .where(
+            ClientNoteEntry.user_id == owner_client_id,
+            ClientNoteEntry.id != source_note.id,
+            ClientNoteEntry.message.contains("INVOICE_RANGE::"),
+        )
+        .order_by(ClientNoteEntry.created_at.desc(), ClientNoteEntry.id.desc())
+        .with_for_update()
+    ).all()
+    candidates: list[tuple[ClientNoteEntry, dict[str, object]]] = []
+    for candidate_note in notes:
+        candidate_metadata = _parse_invoice_range_note_entry(candidate_note)
+        if candidate_metadata is None:
+            continue
+        if str(candidate_metadata.get("invoice_status") or "ISSUED").strip().upper() != "ISSUED":
+            continue
+        if _normalize_optional(str(candidate_metadata.get("family_billing_split_group_id") or "")) is not None:
+            continue
+        try:
+            start_date = _parse_invoice_range_metadata_date(candidate_metadata, "start_date")
+            end_date = _parse_invoice_range_metadata_date(candidate_metadata, "end_date")
+        except HTTPException:
+            continue
+        if (end_date - start_date).days < 180:
+            continue
+        candidate_student_ids = _invoice_range_student_ids_for_late_deposit_reconciliation(
+            candidate_metadata,
+            manual_transactions_by_id=manual_transactions_by_id,
+        )
+        if not source_student_ids.intersection(candidate_student_ids):
+            continue
+        candidates.append((candidate_note, candidate_metadata))
+
+    if len(candidates) != 1:
+        if candidates:
+            logger.warning(
+                "Late deposit reconciliation ambiguous owner=%s source_invoice=%s payment=%s candidates=%s",
+                owner_client_id,
+                source_metadata.get("invoice_number") or source_note.id,
+                payment_transaction_id,
+                [metadata.get("invoice_number") or note.id for note, metadata in candidates],
+            )
+        return None
+
+    target_note, target_metadata = candidates[0]
+    reconciled_ids = _invoice_range_reconciled_manual_payment_ids(target_metadata)
+    if payment_transaction_id in reconciled_ids:
+        return target_note.id
+    reconciled_ids.append(payment_transaction_id)
+    target_metadata["reconciled_manual_payment_ids"] = [str(value) for value in reconciled_ids]
+    target_metadata["late_deposit_auto_reconciled_at"] = _utcnow().isoformat()
+    target_metadata["late_deposit_source_invoice_number"] = str(
+        source_metadata.get("invoice_number") or source_note.id
+    )
+    target_metadata = _synchronize_invoice_range_reconciled_payment_metadata(
+        db,
+        client_id=owner_client_id,
+        note_id=target_note.id,
+        note_created_at=target_note.created_at,
+        metadata=target_metadata,
+    )
+    amount_due = sum(
+        _invoice_range_decimal_map(target_metadata.get("total_to_pay_by_currency")).values(),
+        Decimal("0.00"),
+    )
+    if amount_due <= Decimal("0.00"):
+        target_metadata["invoice_status"] = "PAID"
+        target_metadata["paid_at"] = (
+            payment_row.occurred_at.isoformat() if payment_row is not None else _utcnow().isoformat()
+        )
+        target_metadata["payment_transaction_id"] = str(payment_transaction_id)
+
+    pending_orders = db.scalars(
+        select(BankTransferOrder).where(
+            BankTransferOrder.invoice_note_id == target_note.id,
+            BankTransferOrder.status == BANK_TRANSFER_ORDER_STATUS_PENDING,
+        )
+    ).all()
+    for order in pending_orders:
+        if _quantize_money(Decimal(order.amount_incl_vat)) == _quantize_money(amount_due):
+            continue
+        now = _utcnow()
+        order.status = BANK_TRANSFER_ORDER_STATUS_EXPIRED
+        order.expired_at = now
+        order.updated_at = now
+        db.add(order)
+
+    target_note.message = _build_invoice_range_note_message(target_metadata)
+    db.add(target_note)
+    return target_note.id
 
 
 def _related_invoice_references_for_split_group(
@@ -4565,6 +4912,8 @@ def _invoice_status_from_payment_status(status_value: str) -> str:
         return "CANCELLED"
     if normalized in PAID_PAYMENT_STATUSES:
         return "PAID"
+    if _is_failed_payment_status(normalized):
+        return "CANCELLED"
     if normalized in PENDING_PAYMENT_STATUSES:
         return "PENDING"
     if normalized in CANCELLED_PAYMENT_STATUSES:
@@ -4636,6 +4985,8 @@ def _should_count_in_client_balance(row: AdminClientPaymentOut) -> bool:
         return False
     if status_value in CANCELLED_PAYMENT_STATUSES:
         return False
+    if _is_failed_payment_status(status_value):
+        return False
     if _is_booking_payment_receipt_manual_row(row):
         return False
     if (row.source or "").strip().upper() == "MANUAL":
@@ -4677,7 +5028,10 @@ def _forfait_booking_amounts_from_activity(
     duration_hours = Decimal(duration_seconds) / Decimal("3600")
 
     if forfait_subscription is None and session_obj.external_booking_price_ttc is not None:
-        total_incl_vat = _quantize_money(Decimal(session_obj.external_booking_price_ttc) * duration_hours)
+        # The price stored on a session is the price of that slot, not an
+        # hourly rate. Its duration must therefore not be applied a second
+        # time when a standalone booking is invoiced.
+        total_incl_vat = _quantize_money(Decimal(session_obj.external_booking_price_ttc))
     else:
         base_hourly_ttc = _resolve_activity_base_hourly_ttc(course_type)
         if base_hourly_ttc is None:
@@ -4715,6 +5069,12 @@ def _should_recompute_forfait_booking_amount(*, booking: Booking, plan: Plan | N
         not booking.pricing_snapshot_locked
         and (plan is None or plan.kind == PlanKind.FORFAIT)
     )
+
+
+def _is_non_billable_free_trial_booking(booking: Booking) -> bool:
+    return bool(booking.is_trial_course) and _quantize_money(
+        Decimal(booking.total_incl_vat_snapshot)
+    ) <= Decimal("0.00")
 
 
 def _forfait_adjustments_grouped_by_type(
@@ -5008,9 +5368,9 @@ def _subscription_payment_status(subscription: ClientPlanSubscription) -> str:
     subscription_status = (subscription.status.value if hasattr(subscription.status, "value") else str(subscription.status)).strip().upper()
     if subscription_status in CANCELLED_PAYMENT_STATUSES:
         return "CANCELLED"
-    if subscription_status == "PENDING":
-        return "PENDING"
-
+    # Keep the PSP result authoritative for payment presentation. Otherwise a
+    # failed checkout is incorrectly reported as pending until the local
+    # subscription lifecycle changes.
     last_payment_status = (subscription.last_payment_status or "").strip().upper()
     if last_payment_status:
         if last_payment_status in PAID_PAYMENT_STATUSES:
@@ -5023,6 +5383,8 @@ def _subscription_payment_status(subscription: ClientPlanSubscription) -> str:
             return "FAILED"
         if last_payment_status in PENDING_PAYMENT_STATUSES:
             return "PENDING"
+        return "PENDING"
+    if subscription_status == "PENDING":
         return "PENDING"
 
     billing_method = (subscription.billing_method_code or "").strip().upper()
@@ -5118,6 +5480,24 @@ def _estimate_subscription_pricing(
         vat_rate=vat_rate,
     )
     return estimated_price_excl_vat, vat_rate, estimated_vat_amount, estimated_total_incl_vat, currency_code
+
+
+def _admin_plan_purchase_pricing(
+    db: Session,
+    *,
+    client: User,
+    plan: Plan,
+    started_at: datetime,
+) -> _PurchasePricing:
+    billing_profile = resolve_billing_profile(db, client)
+    return _purchase_pricing(
+        db,
+        plan=plan,
+        country=(billing_profile.residence_country or "FR").upper(),
+        currency=(billing_profile.preferred_currency or "EUR").upper(),
+        on_date=started_at.date(),
+        has_prior_purchase=_has_prior_purchase_for_plan(db, user_id=client.id, plan_id=plan.id),
+    )
 
 
 def _client_out(
@@ -5229,6 +5609,80 @@ def _family_link_out(link: ClientFamilyLink, users_by_id: dict[UUID, User]) -> A
     )
 
 
+def _family_billing_children_out(db: Session, *, client: User) -> list[AdminFamilyBillingChildOut]:
+    if client.client_kind == ClientKind.CHILD:
+        child_ids = [client.id]
+    else:
+        child_ids = list(
+            dict.fromkeys(
+                db.scalars(
+                    select(ClientFamilyLink.child_user_id)
+                    .where(ClientFamilyLink.adult_user_id == client.id)
+                    .order_by(ClientFamilyLink.created_at.asc())
+                ).all()
+            )
+        )
+    if not child_ids:
+        return []
+
+    links = db.scalars(
+        select(ClientFamilyLink)
+        .where(ClientFamilyLink.child_user_id.in_(child_ids))
+        .order_by(ClientFamilyLink.child_user_id, ClientFamilyLink.is_billing_recipient.desc(), ClientFamilyLink.created_at)
+    ).all()
+    allocations = db.scalars(
+        select(ClientFamilyBillingAllocation)
+        .where(ClientFamilyBillingAllocation.child_user_id.in_(child_ids))
+        .order_by(ClientFamilyBillingAllocation.child_user_id, ClientFamilyBillingAllocation.created_at)
+    ).all()
+    user_ids = set(child_ids)
+    for link in links:
+        user_ids.add(link.adult_user_id)
+    users_by_id = {
+        user.id: user
+        for user in db.scalars(select(User).where(User.id.in_(user_ids), User.role == UserRole.CLIENT)).all()
+    }
+    allocation_by_pair = {(row.child_user_id, row.payer_user_id): row for row in allocations}
+    links_by_child: dict[UUID, list[ClientFamilyLink]] = {}
+    for link in links:
+        links_by_child.setdefault(link.child_user_id, []).append(link)
+
+    result: list[AdminFamilyBillingChildOut] = []
+    for child_id in child_ids:
+        child = users_by_id.get(child_id)
+        if child is None:
+            continue
+        payers: list[AdminFamilyBillingPayerOut] = []
+        for link in links_by_child.get(child_id, []):
+            adult = users_by_id.get(link.adult_user_id)
+            if adult is None:
+                continue
+            allocation = allocation_by_pair.get((child_id, adult.id))
+            payers.append(
+                AdminFamilyBillingPayerOut(
+                    adult=_family_member_out(adult),
+                    is_primary_billing_recipient=link.is_billing_recipient,
+                    allocation=(
+                        AdminFamilyBillingAllocationOut(
+                            id=allocation.id,
+                            child_client_id=allocation.child_user_id,
+                            payer_client_id=allocation.payer_user_id,
+                            allocation_type=allocation.allocation_type,
+                            allocation_value=(
+                                Decimal(allocation.allocation_value)
+                                if allocation.allocation_value is not None
+                                else None
+                            ),
+                        )
+                        if allocation is not None
+                        else None
+                    ),
+                )
+            )
+        result.append(AdminFamilyBillingChildOut(child=_family_member_out(child), payers=payers))
+    return result
+
+
 def _is_email_in_use(db: Session, *, email: str, exclude_user_id: UUID | None = None) -> bool:
     stmt = select(User.id).where(User.email == email)
     if exclude_user_id is not None:
@@ -5316,6 +5770,7 @@ def _family_payload(db: Session, client: User) -> AdminClientFamilyOut:
         links_as_adult=[_family_link_out(link, users_by_id) for link in links_as_adult],
         links_as_child=[_family_link_out(link, users_by_id) for link in links_as_child],
         billing_recipient_adult_id=billing_recipient_adult_id,
+        billing_children=_family_billing_children_out(db, client=client),
     )
 
 
@@ -7369,6 +7824,109 @@ def patch_admin_client_family_link(
     return _family_link_out(link, {user.id: user for user in users})
 
 
+@router.put("/family/billing-allocations/{child_id}", response_model=AdminClientFamilyOut)
+def update_admin_family_billing_allocations(
+    child_id: UUID,
+    payload: AdminFamilyBillingAllocationUpdateRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminClientFamilyOut:
+    child = _require_client(db, child_id)
+    if child.client_kind != ClientKind.CHILD:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="La répartition concerne un enfant")
+
+    target_child_ids = list(dict.fromkeys([child_id, *payload.apply_to_sibling_ids]))
+    target_children = db.scalars(
+        select(User).where(
+            User.id.in_(target_child_ids),
+            User.role == UserRole.CLIENT,
+            User.client_kind == ClientKind.CHILD,
+        )
+    ).all()
+    if {row.id for row in target_children} != set(target_child_ids):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Enfant ou frère/sœur invalide")
+
+    normalized_allocations: list[BillingAllocationInput] = []
+    if payload.allocations:
+        try:
+            normalized_allocations = validate_billing_allocations(
+                [
+                    BillingAllocationInput(
+                        payer_user_id=row.payer_client_id,
+                        allocation_type=row.allocation_type,
+                        allocation_value=row.allocation_value,
+                    )
+                    for row in payload.allocations
+                ]
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+    payer_ids = {row.payer_user_id for row in normalized_allocations}
+    if payer_ids:
+        linked_pairs = {
+            (row[0], row[1])
+            for row in db.execute(
+                select(ClientFamilyLink.child_user_id, ClientFamilyLink.adult_user_id).where(
+                    ClientFamilyLink.child_user_id.in_(target_child_ids),
+                    ClientFamilyLink.adult_user_id.in_(payer_ids),
+                )
+            ).all()
+        }
+        missing_pairs = {
+            (target_child_id, payer_id)
+            for target_child_id in target_child_ids
+            for payer_id in payer_ids
+            if (target_child_id, payer_id) not in linked_pairs
+        }
+        if missing_pairs:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Tous les payeurs doivent être rattachés à chaque enfant sélectionné",
+            )
+
+    now = _utcnow()
+    db.execute(
+        delete(ClientFamilyBillingAllocation).where(
+            ClientFamilyBillingAllocation.child_user_id.in_(target_child_ids)
+        )
+    )
+    for target_child_id in target_child_ids:
+        for allocation in normalized_allocations:
+            db.add(
+                ClientFamilyBillingAllocation(
+                    child_user_id=target_child_id,
+                    payer_user_id=allocation.payer_user_id,
+                    allocation_type=allocation.allocation_type,
+                    allocation_value=allocation.allocation_value,
+                    created_by_user_id=actor.id,
+                    updated_at=now,
+                )
+            )
+        summary = (
+            ", ".join(
+                f"{allocation.payer_user_id}:"
+                + (
+                    "solde"
+                    if allocation.allocation_type == "REMAINDER"
+                    else f"{allocation.allocation_value} {'%' if allocation.allocation_type == 'PERCENT' else 'EUR'}"
+                )
+                for allocation in normalized_allocations
+            )
+            if normalized_allocations
+            else "désactivée"
+        )
+        _create_client_note(
+            db,
+            client_id=target_child_id,
+            author_user_id=actor.id,
+            entry_type="AUTO",
+            message=f"Répartition de facturation mise à jour : {summary}.",
+        )
+    db.commit()
+    return _family_payload(db, child)
+
+
 @router.delete("/family/links/{link_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_admin_client_family_link(
     link_id: UUID,
@@ -7398,6 +7956,11 @@ def delete_admin_client_family_link(
         )
 
     adult = _require_client(db, link.adult_user_id)
+    db.execute(
+        delete(ClientFamilyBillingAllocation).where(
+            ClientFamilyBillingAllocation.child_user_id == link.child_user_id,
+        )
+    )
     db.delete(link)
     db.flush()
     refresh_responsable_status(db, adult)
@@ -8178,8 +8741,15 @@ def send_admin_client_subscription_payment_email(
         preferred_currency=billing_profile.preferred_currency or "EUR",
         on_date=sub.started_at,
     )
-    currency_code = (plan.currency_code or billing_profile.preferred_currency or "EUR").upper()
+    currency_code = (
+        sub.initial_currency_code
+        or plan.currency_code
+        or billing_profile.preferred_currency
+        or "EUR"
+    ).upper()
     amount_due = Decimal(payload.discounted_total_incl_vat) if payload.discounted_total_incl_vat is not None else None
+    if amount_due is None and sub.initial_total_incl_vat is not None:
+        amount_due = Decimal(sub.initial_total_incl_vat)
     if amount_due is None and pricing is not None:
         amount_due = pricing[3]
         currency_code = pricing[4]
@@ -8583,7 +9153,11 @@ def send_admin_client_message_email(
     body_format = "HTML" if str(payload.body_format or "TEXT").strip().upper() == "HTML" else "TEXT"
     source = _normalize_optional(payload.source) or "ADMIN_CLIENT_DIRECT_MESSAGE"
     sender = resolve_sender_profile(db, sender_kind="STUDIO")
-    actor_label = _display_name(actor.first_name, actor.last_name, actor.email)
+    actor_label = _display_name(
+        getattr(actor, "first_name", None),
+        getattr(actor, "last_name", None),
+        getattr(actor, "email", None),
+    )
 
     billing_profile = resolve_billing_profile(db, client)
     default_recipients = _normalize_email_recipients([client.email, billing_profile.email])
@@ -8620,7 +9194,7 @@ def send_admin_client_message_email(
                 from_name=sender.from_name,
                 reply_to=sender.reply_to,
                 subject_prefix=sender.subject_prefix,
-                sender_user_id=actor.id,
+                sender_user_id=getattr(actor, "id", None),
                 sender_label=actor_label,
                 sender_category=CommunicationSenderCategory.OTHER_USER,
                 recipient_user_id=recipient_user_id,
@@ -9018,13 +9592,17 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
         total_incl_vat = booking.total_incl_vat_snapshot
         currency = booking.currency_snapshot
         cancelled_statuses = {BookingStatus.CANCELLED, BookingStatus.EXCUSED_ABSENCE}
+        is_free_trial = _is_non_billable_free_trial_booking(booking)
         if booking.status in cancelled_statuses:
             if is_locked_booking:
                 should_add_credit_note = True
             else:
                 # Reservation annulee non facturee: ne pas afficher de ligne de transaction.
                 continue
-        if not is_locked_booking:
+        if is_free_trial and not is_locked_booking:
+            is_billable = False
+            status_value = "NOT_BILLABLE"
+        elif not is_locked_booking:
             if plan is None or (plan is not None and plan.kind == PlanKind.FORFAIT):
                 is_billable = (
                     session_obj.status != SessionStatus.CANCELLED
@@ -9875,10 +10453,25 @@ def create_admin_client_manual_transaction(
             if payment_id not in existing_ids:
                 existing_ids.append(payment_id)
             metadata["reconciled_manual_payment_ids"] = existing_ids
+            metadata = _synchronize_invoice_range_reconciled_payment_metadata(
+                db,
+                client_id=client.id,
+                note_id=note.id,
+                note_created_at=note.created_at,
+                metadata=metadata,
+            )
             if marked_reconciled_invoices_paid:
                 metadata["invoice_status"] = "PAID"
             note.message = _build_invoice_range_note_message(metadata)
             db.add(note)
+            if marked_reconciled_invoices_paid:
+                _propagate_paid_deposit_to_issued_long_period_invoice(
+                    db,
+                    owner_client_id=client.id,
+                    source_note=note,
+                    source_metadata=metadata,
+                    payment_transaction_id=row.id,
+                )
             evaluate_referrals_for_invoice(db, client_id=client.id, note=note, metadata=metadata)
 
     receipt_recipients: list[str] = []
@@ -11393,6 +11986,13 @@ def create_admin_client_range_invoice(
                 billing_entity=billing_entity,
             ),
         }
+        entity_student_ids = {
+            row.student_user_id
+            for row in entity_payments
+            if row.student_user_id is not None
+        }
+        if len(entity_student_ids) == 1:
+            metadata["student_user_id"] = str(next(iter(entity_student_ids)))
         if split_part_count == 1 and auto_reconciled_payment_ids:
             metadata["reconciled_manual_payment_ids"] = [str(value) for value in auto_reconciled_payment_ids]
         if split_part_count == 1 and display_opening_balance_by_currency:
@@ -11459,6 +12059,400 @@ def create_admin_client_range_invoice(
         note_id=first_note.id,
         metadata=first_metadata,
         related_invoices=related_invoices,
+    )
+
+
+def _invoice_student_id_for_family_split(
+    db: Session,
+    *,
+    metadata: dict[str, object],
+    lines: list[ClientInvoiceLine],
+) -> UUID:
+    metadata_student_id = _parse_optional_uuid(metadata.get("student_user_id"))
+    if metadata_student_id is not None:
+        student = db.scalar(select(User).where(User.id == metadata_student_id, User.client_kind == ClientKind.CHILD))
+        if student is not None:
+            return student.id
+
+    candidate_ids: set[UUID] = set()
+    booking_ids = [
+        line.source_payment_id
+        for line in lines
+        if (line.source or "").strip().upper() in {"BOOKING", "BOOKING_CREDIT"}
+    ]
+    if booking_ids:
+        candidate_ids.update(
+            value
+            for value in db.scalars(select(Booking.user_id).where(Booking.id.in_(booking_ids))).all()
+            if value is not None
+        )
+    subscription_ids = [
+        line.source_payment_id
+        for line in lines
+        if (line.source or "").strip().upper() == "PLAN_PURCHASE"
+    ]
+    if subscription_ids:
+        candidate_ids.update(
+            value
+            for value in db.scalars(
+                select(ClientPlanSubscription.user_id).where(ClientPlanSubscription.id.in_(subscription_ids))
+            ).all()
+            if value is not None
+        )
+    manual_ids = [
+        line.source_payment_id
+        for line in lines
+        if (line.source or "").strip().upper() == "MANUAL"
+    ]
+    if manual_ids:
+        candidate_ids.update(
+            value
+            for value in db.scalars(
+                select(ClientManualTransaction.student_user_id).where(ClientManualTransaction.id.in_(manual_ids))
+            ).all()
+            if value is not None
+        )
+
+    child_ids = set(
+        db.scalars(
+            select(User.id).where(User.id.in_(candidate_ids), User.client_kind == ClientKind.CHILD)
+        ).all()
+    ) if candidate_ids else set()
+    if len(child_ids) != 1:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="La facture doit concerner un seul enfant pour être répartie entre ses payeurs.",
+        )
+    return next(iter(child_ids))
+
+
+def _append_private_invoice_note(current: object, addition: str) -> str:
+    base = _normalize_optional(str(current or ""))
+    return f"{base}\n{addition}" if base else addition
+
+
+@router.post(
+    "/{client_id}/invoices/range/{note_id}/family-split",
+    response_model=AdminFamilyInvoiceSplitOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def split_admin_client_range_invoice_by_family(
+    client_id: UUID,
+    note_id: UUID,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminFamilyInvoiceSplitOut:
+    _require_client(db, client_id)
+    source_note, source_metadata = _load_range_invoice_note(
+        db,
+        client_id=client_id,
+        note_id=note_id,
+        for_update=True,
+    )
+    if str(source_metadata.get("invoice_status") or "ISSUED").strip().upper() != "ISSUED":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Seule une facture émise peut être répartie.")
+    if _normalize_optional(str(source_metadata.get("payment_provider_reference") or "")):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Une tentative de paiement est déjà rattachée à cette facture.",
+        )
+    bank_order = _latest_bank_transfer_order_for_invoice(db, client_id=client_id, note_id=note_id, for_update=True)
+    if bank_order is not None and bank_order.status == BANK_TRANSFER_ORDER_STATUS_PENDING:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Annulez d’abord l’ordre de virement en cours avant de répartir la facture.",
+        )
+
+    source_lines = _invoice_lines_for_note(db, note_id=note_id)
+    if not source_lines:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Cette ancienne facture ne contient pas de lignes figées et ne peut pas être répartie automatiquement.",
+        )
+    child_id = _invoice_student_id_for_family_split(db, metadata=source_metadata, lines=source_lines)
+    allocation_rows = db.scalars(
+        select(ClientFamilyBillingAllocation)
+        .where(ClientFamilyBillingAllocation.child_user_id == child_id)
+        .order_by(ClientFamilyBillingAllocation.created_at.asc(), ClientFamilyBillingAllocation.id.asc())
+    ).all()
+    try:
+        allocations = validate_billing_allocations(
+            [
+                BillingAllocationInput(
+                    payer_user_id=row.payer_user_id,
+                    allocation_type=row.allocation_type,
+                    allocation_value=Decimal(row.allocation_value) if row.allocation_value is not None else None,
+                )
+                for row in allocation_rows
+            ]
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+    payer_ids = [row.payer_user_id for row in allocations]
+    linked_payer_ids = set(
+        db.scalars(
+            select(ClientFamilyLink.adult_user_id).where(
+                ClientFamilyLink.child_user_id == child_id,
+                ClientFamilyLink.adult_user_id.in_(payer_ids),
+            )
+        ).all()
+    )
+    if linked_payer_ids != set(payer_ids):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="La répartition contient un payeur qui n’est plus rattaché à l’enfant.",
+        )
+    payers_by_id = {
+        row.id: row
+        for row in db.scalars(
+            select(User).where(User.id.in_(payer_ids), User.role == UserRole.CLIENT, User.client_kind == ClientKind.ADULT)
+        ).all()
+    }
+    if set(payers_by_id) != set(payer_ids):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Un payeur configuré est invalide.")
+
+    lines_by_currency: dict[str, list[ClientInvoiceLine]] = {}
+    gross_by_currency: dict[str, Decimal] = {}
+    for line in source_lines:
+        currency = _normalize_currency(line.currency, fallback="EUR")
+        lines_by_currency.setdefault(currency, []).append(line)
+        gross_by_currency[currency] = _quantize_money(
+            gross_by_currency.get(currency, Decimal("0.00")) + Decimal(line.total_incl_vat)
+        )
+    if any(total <= Decimal("0.00") for total in gross_by_currency.values()):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Une facture dont le total est nul ou créditeur ne peut pas être répartie automatiquement.",
+        )
+
+    targets_by_currency: dict[str, dict[UUID, Decimal]] = {}
+    try:
+        for currency, gross_total in gross_by_currency.items():
+            targets_by_currency[currency] = allocate_billing_total(gross_total, allocations)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    if any(
+        amount <= Decimal("0.00")
+        for targets in targets_by_currency.values()
+        for amount in targets.values()
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Chaque payeur doit recevoir une part strictement positive de la facture.",
+        )
+
+    payer_lines: dict[UUID, list[dict[str, object]]] = {payer_id: [] for payer_id in payer_ids}
+    payer_line_totals: dict[UUID, dict[str, Decimal]] = {payer_id: {} for payer_id in payer_ids}
+    for currency, currency_lines in lines_by_currency.items():
+        targets = targets_by_currency[currency]
+        for line in currency_lines:
+            total_shares = allocate_signed_amount_by_targets(Decimal(line.total_incl_vat), targets)
+            excl_shares = allocate_signed_amount_by_targets(Decimal(line.amount_excl_vat), targets)
+            for payer_id in payer_ids:
+                total_share = total_shares[payer_id]
+                excl_share = excl_shares[payer_id]
+                payer_lines[payer_id].append(
+                    {
+                        "source": (line.source or "").strip().upper(),
+                        "source_payment_id": line.source_payment_id,
+                        "occurred_at": line.occurred_at,
+                        "label": line.label,
+                        "amount_excl_vat": excl_share,
+                        "vat_rate": Decimal(line.vat_rate).quantize(Decimal("0.001")),
+                        "vat_amount": _quantize_money(total_share - excl_share),
+                        "total_incl_vat": total_share,
+                        "currency": currency,
+                        "billing_entity": line.billing_entity,
+                        "seller_legal_entity_id": line.seller_legal_entity_id,
+                    }
+                )
+                payer_line_totals[payer_id][currency] = _quantize_money(
+                    payer_line_totals[payer_id].get(currency, Decimal("0.00")) + total_share
+                )
+
+        for payer_id in payer_ids:
+            adjustment = _quantize_money(targets[payer_id] - payer_line_totals[payer_id].get(currency, Decimal("0.00")))
+            if adjustment == Decimal("0.00"):
+                continue
+            payer_lines[payer_id].append(
+                {
+                    "source": "FAMILY_BILLING_ADJUSTMENT",
+                    "source_payment_id": uuid4(),
+                    "occurred_at": source_note.created_at,
+                    "label": "Ajustement de répartition familiale",
+                    "amount_excl_vat": adjustment,
+                    "vat_rate": Decimal("0.000"),
+                    "vat_amount": Decimal("0.00"),
+                    "total_incl_vat": adjustment,
+                    "currency": currency,
+                    "billing_entity": source_metadata.get("billing_entity") or "ENTITE_NON_DEFINIE",
+                    "seller_legal_entity_id": _parse_optional_uuid(source_metadata.get("seller_legal_entity_id")),
+                }
+            )
+            payer_line_totals[payer_id][currency] = targets[payer_id]
+
+    original_applied = _invoice_range_decimal_map(source_metadata.get("applied_payment_totals_by_currency"))
+    original_due = _invoice_range_decimal_map(source_metadata.get("total_to_pay_by_currency"))
+    original_opening: dict[str, Decimal] = {}
+    for currency, gross_total in gross_by_currency.items():
+        original_opening[currency] = _quantize_money(
+            original_due.get(currency, gross_total)
+            - gross_total
+            - original_applied.get(currency, Decimal("0.00"))
+        )
+
+    payer_applied: dict[UUID, dict[str, Decimal]] = {payer_id: {} for payer_id in payer_ids}
+    payer_reconciled_ids: dict[UUID, list[UUID]] = {payer_id: [] for payer_id in payer_ids}
+    payer_applied_lines: dict[UUID, list[dict[str, str]]] = {payer_id: [] for payer_id in payer_ids}
+    reconciled_ids = _invoice_range_reconciled_manual_payment_ids(source_metadata)
+    reconciled_rows = db.scalars(
+        select(ClientManualTransaction).where(ClientManualTransaction.id.in_(reconciled_ids))
+    ).all() if reconciled_ids else []
+
+    # A family split applies to the amount still due. Deposits and other
+    # payments already recorded on the source invoice are therefore shared
+    # using the same allocation, regardless of which parent originally paid.
+    for currency, original_amount in original_applied.items():
+        if original_amount == Decimal("0.00"):
+            shares = {payer_id: Decimal("0.00") for payer_id in payer_ids}
+        else:
+            targets = targets_by_currency.get(currency)
+            if targets is None:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Impossible de répartir les paiements dans la devise {currency}.",
+                )
+            shares = allocate_signed_amount_by_targets(original_amount, targets)
+        for payer_id, share in shares.items():
+            payer_applied[payer_id][currency] = share
+
+    for transaction in reconciled_rows:
+        currency = _normalize_currency(transaction.currency, fallback="EUR")
+        targets = targets_by_currency.get(currency)
+        if targets is None:
+            continue
+        transaction_shares = allocate_signed_amount_by_targets(Decimal(transaction.total_incl_vat), targets)
+        payment_method_code = _manual_payment_method_code(transaction.reference)
+        for payer_id, share in transaction_shares.items():
+            payer_reconciled_ids[payer_id].append(transaction.id)
+            payer_applied_lines[payer_id].append(
+                {
+                    "date": transaction.occurred_at.strftime("%d/%m/%Y"),
+                    "method": _payment_method_label_client(payment_method_code) if payment_method_code else "Paiement manuel",
+                    "reference": _manual_custom_reference(transaction.reference) or transaction.label or "-",
+                    "amount": f"{abs(share):.2f}",
+                    "currency": currency,
+                }
+            )
+
+    split_group_id = str(uuid4())
+    created: list[tuple[ClientNoteEntry, dict[str, object]]] = []
+    allocation_by_payer = {row.payer_user_id: row for row in allocations}
+    for index, payer_id in enumerate(payer_ids, start=1):
+        payer = payers_by_id[payer_id]
+        payer_snapshot = _invoice_recipient_snapshot_for_client(db, payer)
+        opening_share: dict[str, Decimal] = {}
+        for currency, opening_total in original_opening.items():
+            opening_share[currency] = allocate_signed_amount_by_targets(
+                opening_total,
+                targets_by_currency[currency],
+            )[payer_id] if opening_total != Decimal("0.00") else Decimal("0.00")
+        total_to_pay: dict[str, Decimal] = {}
+        for currency, targets in targets_by_currency.items():
+            total_to_pay[currency] = _quantize_money(
+                targets[payer_id]
+                + opening_share.get(currency, Decimal("0.00"))
+                + payer_applied[payer_id].get(currency, Decimal("0.00"))
+            )
+        if any(amount < Decimal("0.00") for amount in total_to_pay.values()):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Les paiements déjà reçus dépassent la part attribuée à {payer_snapshot['client_name']}.",
+            )
+
+        invoice_number = _allocate_invoice_number_for_seller_entity(
+            db,
+            seller_legal_entity_id=_parse_optional_uuid(source_metadata.get("seller_legal_entity_id")),
+            issued_at=_invoice_issued_at_for_date(issued_date=_parse_invoice_range_metadata_date(source_metadata, "issued_date")),
+        )
+        new_metadata = dict(source_metadata)
+        for field in list(new_metadata):
+            if field.startswith("payment_") or field.startswith("bank_transfer_"):
+                new_metadata.pop(field, None)
+        for field in ("emailed_at", "reminded_at", "paid_at", "applied_payment_lines"):
+            new_metadata.pop(field, None)
+        allocation = allocation_by_payer[payer_id]
+        new_metadata.update(
+            {
+                "invoice_number": invoice_number,
+                "invoice_status": "ISSUED",
+                "split_group_id": split_group_id,
+                "split_part_index": index,
+                "split_part_count": len(payer_ids),
+                "student_user_id": str(child_id),
+                "family_billing_split_group_id": split_group_id,
+                "family_billing_source_note_id": str(source_note.id),
+                "family_billing_source_invoice_number": str(source_metadata.get("invoice_number") or ""),
+                "family_billing_payer_user_id": str(payer_id),
+                "family_billing_allocation_type": allocation.allocation_type,
+                "family_billing_allocation_value": (
+                    f"{allocation.allocation_value:.2f}" if allocation.allocation_value is not None else ""
+                ),
+                "totals_by_currency": _invoice_range_money_payload(
+                    {currency: targets[payer_id] for currency, targets in targets_by_currency.items()}
+                ),
+                "opening_balance_by_currency": _invoice_range_money_payload(opening_share),
+                "applied_payment_totals_by_currency": _invoice_range_money_payload(payer_applied[payer_id]),
+                "total_to_pay_by_currency": _invoice_range_money_payload(total_to_pay),
+                "reconciled_manual_payment_ids": [str(value) for value in payer_reconciled_ids[payer_id]],
+                "applied_payment_lines": payer_applied_lines[payer_id],
+                "client_name": payer_snapshot["client_name"],
+                "client_billing_address": payer_snapshot["client_billing_address"],
+                "private_note": _append_private_invoice_note(
+                    source_metadata.get("private_note"),
+                    f"Répartition familiale de {source_metadata.get('invoice_number')} pour {payer_snapshot['client_name']}.",
+                ),
+            }
+        )
+        new_note = _create_client_note(
+            db,
+            client_id=source_note.user_id,
+            author_user_id=actor.id,
+            entry_type="MANUAL",
+            message=_build_invoice_range_note_message(new_metadata),
+        )
+        db.flush()
+        db.add_all(
+            [
+                ClientInvoiceLine(
+                    note_id=new_note.id,
+                    user_id=source_note.user_id,
+                    **line_values,
+                )
+                for line_values in payer_lines[payer_id]
+            ]
+        )
+        created.append((new_note, new_metadata))
+
+    source_metadata["invoice_status"] = "CANCELLED"
+    source_metadata["private_note"] = _append_private_invoice_note(
+        source_metadata.get("private_note"),
+        "Facture annulée et remplacée par une répartition entre payeurs. Aucun message envoyé automatiquement.",
+    )
+    source_note.message = _build_invoice_range_note_message(source_metadata)
+    db.add(source_note)
+    db.commit()
+
+    references = [
+        _invoice_range_reference_out(note_id=note.id, metadata=metadata)
+        for note, metadata in created
+    ]
+    return AdminFamilyInvoiceSplitOut(
+        source_note_id=source_note.id,
+        source_invoice_number=str(source_metadata.get("invoice_number") or ""),
+        child_client_id=child_id,
+        created_invoices=references,
     )
 
 
@@ -11727,8 +12721,8 @@ def send_admin_client_range_invoice_email(
     actor: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> AdminRangeInvoiceEmailOut:
     client = _require_client(db, client_id)
-    billing_profile = resolve_billing_profile(db, client)
     note, metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=True)
+    recipient_client = _invoice_family_payer_from_metadata(db, owner_client=client, metadata=metadata)
     frozen_payment_keys, resolved_billing_entity, resolved_seller_legal_entity_id = _frozen_invoice_selection_for_note(
         db,
         note_id=note.id,
@@ -11753,8 +12747,9 @@ def send_admin_client_range_invoice_email(
     body_format = payload.body_format if payload.body is not None else default_body_format
     sms_recipient: str | None = None
     sms_body: str | None = None
-    if payload.send_sms:
-        sms_recipient = _normalize_phone_recipient(payload.sms_phone) or _preferred_sms_phone(client, billing_profile)
+    if bool(getattr(payload, "send_sms", False)):
+        billing_profile = resolve_billing_profile(db, recipient_client)
+        sms_recipient = _normalize_phone_recipient(payload.sms_phone) or _preferred_sms_phone(recipient_client, billing_profile)
         if not sms_recipient:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Aucun numero SMS destinataire")
         sms_metadata = _invoice_range_metadata_with_display_totals(
@@ -11766,7 +12761,7 @@ def send_admin_client_range_invoice_email(
         )
         default_sms_body = _build_range_invoice_sms_body(
             db,
-            client=client,
+            client=recipient_client,
             billing_profile=billing_profile,
             metadata=sms_metadata,
             invoice_url=_invoice_range_download_url(client_id=client.id, note_id=note.id, metadata=sms_metadata, inline=True),
@@ -11841,7 +12836,7 @@ def send_admin_client_range_invoice_email(
         note=None,
         invoice_status=_normalize_optional(str(metadata.get("invoice_status") or "")),
         language=normalize_language(
-            str(metadata.get("language") or billing_profile.preferred_language or client.preferred_language)
+            str(metadata.get("language") or getattr(recipient_client, "preferred_language", None) or "fr")
         ),
         client_name_snapshot=_normalize_optional(str(metadata.get("client_name") or "")),
         client_billing_address_snapshot=_normalize_optional(str(metadata.get("client_billing_address") or "")),
@@ -11856,15 +12851,21 @@ def send_admin_client_range_invoice_email(
     attachment_file_name = f"{str(metadata.get('invoice_number') or 'facture')}.pdf".replace('"', "")
 
     sender = resolve_sender_profile(db, sender_kind="STUDIO")
-    actor_label = _display_name(actor.first_name, actor.last_name, actor.email)
-    client_recipient_emails = {
-        email.casefold()
-        for email in _normalize_email_recipients([client.email, billing_profile.email])
-    }
+    actor_label = _display_name(
+        getattr(actor, "first_name", None),
+        getattr(actor, "last_name", None),
+        getattr(actor, "email", None),
+    )
+    recipient_client_email = _normalize_optional(getattr(recipient_client, "email", None))
+    client_recipient_emails = (
+        {email.casefold() for email in _normalize_email_recipients([recipient_client_email])}
+        if recipient_client_email
+        else set()
+    )
     message_ids: list[str] = []
     sms_message_id: str | None = None
     for recipient in recipients:
-        recipient_user_id = client.id if recipient.casefold() in client_recipient_emails else None
+        recipient_user_id = recipient_client.id if recipient.casefold() in client_recipient_emails else None
         message_ids.append(
             send_email(
                 to_email=recipient,
@@ -11877,7 +12878,7 @@ def send_admin_client_range_invoice_email(
                 reply_to=sender.reply_to,
                 subject_prefix=sender.subject_prefix,
                 attachments=[(attachment_file_name, pdf_content, "application/pdf")],
-                sender_user_id=actor.id,
+                sender_user_id=getattr(actor, "id", None),
                 sender_label=actor_label,
                 sender_category=CommunicationSenderCategory.OTHER_USER,
                 recipient_user_id=recipient_user_id,
@@ -12166,8 +13167,9 @@ def preview_admin_client_range_invoice_email(
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> AdminRangeInvoiceEmailPreviewOut:
     client = _require_client(db, client_id)
-    billing_profile = resolve_billing_profile(db, client)
     note, metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=False)
+    recipient_client = _invoice_family_payer_from_metadata(db, owner_client=client, metadata=metadata)
+    billing_profile = resolve_billing_profile(db, recipient_client)
     normalized_kind = "REMINDER" if kind.strip().upper() == "REMINDER" else "INVOICE"
     recipients, subject, body, body_format = _build_range_invoice_email_defaults(
         db,
@@ -12187,7 +13189,7 @@ def preview_admin_client_range_invoice_email(
     )
     sms_body = _build_range_invoice_sms_body(
         db,
-        client=client,
+        client=recipient_client,
         billing_profile=billing_profile,
         metadata=sms_metadata,
         invoice_url=_invoice_range_download_url(client_id=client.id, note_id=note_id, metadata=sms_metadata, inline=True),
@@ -12272,6 +13274,11 @@ def download_admin_client_range_invoice(
     start_at = datetime.combine(start_date, datetime.min.time(), tzinfo=timezone.utc)
     end_at_exclusive = datetime.combine(end_date + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc)
     all_payments = _build_admin_client_payments(db, client_id=client_id)
+    frozen_invoice_lines = (
+        _invoice_lines_for_note(db, note_id=normalized_note_id)
+        if normalized_note_id is not None and not persist_note
+        else []
+    )
     reconciled_payment_id_set: set[UUID] = set()
     for raw_value in reconciled_manual_payment_ids:
         candidate = _normalize_optional(str(raw_value))
@@ -12286,7 +13293,26 @@ def download_admin_client_range_invoice(
         for row in all_payments
     }
     normalized_frozen_keys = _normalize_invoice_range_payment_keys(frozen_payment_keys)
-    if normalized_frozen_keys:
+    if frozen_invoice_lines:
+        payments = [
+            AdminClientPaymentOut(
+                id=line.source_payment_id,
+                source=(line.source or "").strip().upper(),
+                occurred_at=line.occurred_at,
+                label=line.label,
+                status="ISSUED",
+                amount_excl_vat=_quantize_money(Decimal(line.amount_excl_vat)),
+                vat_rate=Decimal(line.vat_rate),
+                vat_amount=_quantize_money(Decimal(line.vat_amount)),
+                total_incl_vat=_quantize_money(Decimal(line.total_incl_vat)),
+                currency=_normalize_currency(line.currency, fallback="EUR"),
+                reference=None,
+                seller_legal_entity_id=line.seller_legal_entity_id,
+                billing_entity=line.billing_entity,
+            )
+            for line in frozen_invoice_lines
+        ]
+    elif normalized_frozen_keys:
         payments = [row for key in normalized_frozen_keys if (row := payments_by_key.get(key)) is not None]
     else:
         payments = [row for row in all_payments if start_at <= row.occurred_at < end_at_exclusive]
@@ -12374,6 +13400,73 @@ def download_admin_client_range_invoice(
     display_opening_balance_by_currency = (
         opening_balance_by_currency if auto_include_previous_balance else {}
     )
+    if frozen_invoice_lines and normalized_note_id is not None:
+        _, frozen_metadata = _load_range_invoice_note(
+            db,
+            client_id=client_id,
+            note_id=normalized_note_id,
+            for_update=False,
+        )
+        frozen_opening = _invoice_range_decimal_map(frozen_metadata.get("opening_balance_by_currency"))
+        frozen_applied = _invoice_range_decimal_map(frozen_metadata.get("applied_payment_totals_by_currency"))
+        frozen_total_to_pay = _invoice_range_decimal_map(frozen_metadata.get("total_to_pay_by_currency"))
+        is_family_billing_split = (
+            _normalize_optional(str(frozen_metadata.get("family_billing_split_group_id") or "")) is not None
+        )
+        if frozen_opening or "opening_balance_by_currency" in frozen_metadata:
+            opening_balance_by_currency = frozen_opening
+            display_opening_balance_by_currency = frozen_opening
+        if is_family_billing_split:
+            if frozen_applied or "applied_payment_totals_by_currency" in frozen_metadata:
+                applied_payment_totals_by_currency = frozen_applied
+            if frozen_total_to_pay:
+                total_to_pay_by_currency = frozen_total_to_pay
+            frozen_applied_lines = frozen_metadata.get("applied_payment_lines")
+            if isinstance(frozen_applied_lines, list):
+                applied_payment_lines = [
+                    InvoiceAppliedPaymentLine(
+                        date_label=str(row.get("date") or "-"),
+                        method_label=str(row.get("method") or "Paiement"),
+                        reference_label=str(row.get("reference") or "-"),
+                        amount=_quantize_money(Decimal(str(row.get("amount") or "0"))),
+                        currency=_normalize_currency(str(row.get("currency") or "EUR"), fallback="EUR"),
+                    )
+                    for row in frozen_applied_lines
+                    if isinstance(row, dict)
+                ]
+        else:
+            if auto_include_previous_balance and not frozen_opening and frozen_total_to_pay:
+                for currency in sorted(
+                    set(totals_by_currency.keys()) | set(frozen_total_to_pay.keys()) | set(frozen_applied.keys())
+                ):
+                    period_total = _quantize_money(
+                        Decimal(totals_by_currency.get(currency, {}).get("total_incl_vat", Decimal("0.00")))
+                    )
+                    opening_balance_by_currency[currency] = _quantize_money(
+                        frozen_total_to_pay.get(currency, Decimal("0.00"))
+                        - period_total
+                        - frozen_applied.get(currency, Decimal("0.00"))
+                    )
+                display_opening_balance_by_currency = opening_balance_by_currency
+            total_to_pay_by_currency = {}
+            for currency in sorted(
+                set(totals_by_currency.keys())
+                | set(opening_balance_by_currency.keys())
+                | set(applied_payment_totals_by_currency.keys())
+            ):
+                period_total = _quantize_money(
+                    Decimal(totals_by_currency.get(currency, {}).get("total_incl_vat", Decimal("0.00")))
+                )
+                carry_balance = (
+                    opening_balance_by_currency.get(currency, Decimal("0.00"))
+                    if auto_include_previous_balance
+                    else Decimal("0.00")
+                )
+                total_to_pay_by_currency[currency] = _quantize_money(
+                    period_total
+                    + carry_balance
+                    + applied_payment_totals_by_currency.get(currency, Decimal("0.00"))
+                )
 
     manual_quote_line_id_by_payment_id = {
         row.id: quote_line_id
@@ -13106,6 +14199,7 @@ def start_admin_client_range_invoice_public_card_payment(
 ) -> RedirectResponse:
     client = _require_client(db, client_id)
     note, metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=True)
+    payer_client = _invoice_family_payer_from_metadata(db, owner_client=client, metadata=metadata)
     _assert_invoice_range_public_payment_token(
         token=token,
         client_id=client_id,
@@ -13157,13 +14251,14 @@ def start_admin_client_range_invoice_public_card_payment(
         CheckoutCreateRequest(
             amount=amount_due,
             currency=currency_code,
-            description=f"Facture {invoice_number} ({client.email})",
-            customer_email=client.email,
+            description=f"Facture {invoice_number} ({payer_client.email})",
+            customer_email=payer_client.email,
             success_return_url=success_return_url,
             cancel_return_url=cancel_return_url,
             webhook_url=webhook_url,
             metadata={
                 "client_id": str(client_id),
+                "payer_client_id": str(payer_client.id),
                 "note_id": str(note_id),
                 "invoice_number": invoice_number,
             },
@@ -13199,6 +14294,7 @@ def start_admin_client_range_invoice_public_bank_transfer(
 ) -> HTMLResponse:
     client = _require_client(db, client_id)
     note, metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=True)
+    payer_client = _invoice_family_payer_from_metadata(db, owner_client=client, metadata=metadata)
     _assert_invoice_range_public_payment_token(
         token=token,
         client_id=client_id,
@@ -13238,7 +14334,7 @@ def start_admin_client_range_invoice_public_bank_transfer(
         order = BankTransferOrder(
             order_reference=_generate_bank_transfer_order_reference(db, now=now),
             status=BANK_TRANSFER_ORDER_STATUS_PENDING,
-            customer_id=client_id,
+            customer_id=payer_client.id,
             invoice_note_id=note_id,
             amount_incl_vat=amount_due,
             currency=currency_code,
@@ -13262,7 +14358,7 @@ def start_admin_client_range_invoice_public_bank_transfer(
         try:
             message_id = _send_bank_transfer_order_email(
                 db,
-                client=client,
+                client=payer_client,
                 order=order,
                 invoice_number=_normalize_optional(str(metadata.get("invoice_number") or "")) or str(note_id),
                 account_holder=bank_details["account_holder"],
@@ -13310,8 +14406,9 @@ def handle_admin_client_range_invoice_public_payment_webhook(
     if secret != configured_secret:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid webhook secret")
 
-    _require_client(db, client_id)
+    owner_client = _require_client(db, client_id)
     note, metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=True)
+    payer_client = _invoice_family_payer_from_metadata(db, owner_client=owner_client, metadata=metadata)
     _assert_invoice_range_public_payment_token(
         token=token,
         client_id=client_id,
@@ -13361,7 +14458,7 @@ def handle_admin_client_range_invoice_public_payment_webhook(
             seller_legal_entity_id = _parse_optional_uuid(metadata.get("seller_legal_entity_id"))
         transaction_id, paid_at = _record_invoice_range_public_payment(
             db,
-            client_id=client_id,
+            client_id=payer_client.id,
             note=note,
             metadata=metadata,
             provider_reference=lookup.provider_reference,
@@ -13393,8 +14490,9 @@ def return_admin_client_range_invoice_public_payment(
     state: str = Query(default="success"),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
-    _require_client(db, client_id)
+    owner_client = _require_client(db, client_id)
     note, metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=True)
+    payer_client = _invoice_family_payer_from_metadata(db, owner_client=owner_client, metadata=metadata)
     _assert_invoice_range_public_payment_token(
         token=token,
         client_id=client_id,
@@ -13468,7 +14566,7 @@ def return_admin_client_range_invoice_public_payment(
         seller_legal_entity_id = _parse_optional_uuid(metadata.get("seller_legal_entity_id"))
     transaction_id, _ = _record_invoice_range_public_payment(
         db,
-        client_id=client_id,
+        client_id=payer_client.id,
         note=note,
         metadata=metadata,
         provider_reference=lookup.provider_reference,
@@ -13690,6 +14788,31 @@ def handle_admin_client_payment_receipt_public_payment_webhook(
             metadata["booking_confirmation_blocked"] = "PROMOTION_FAILED"
     else:
         metadata["payment_received_after_hold_expired"] = True
+    invoice_number: str | None = None
+    if not hold_expired and booking.status == BookingStatus.BOOKED:
+        try:
+            invoice_note, invoice_metadata, invoice_created = _generate_paid_booking_invoice_after_payment(
+                db,
+                booking=booking,
+                session_obj=session_obj,
+                course_type=course_type,
+                location=location,
+                owner=owner,
+            )
+            invoice_number = str(invoice_metadata.get("invoice_number") or "").strip() or None
+            metadata["final_invoice_note_id"] = str(invoice_note.id)
+            if invoice_number:
+                metadata["final_invoice_number"] = invoice_number
+            if invoice_created:
+                send_final_invoice_email(
+                    db,
+                    customer=owner,
+                    note_id=invoice_note.id,
+                    metadata=invoice_metadata,
+                )
+        except Exception as exc:
+            logger.exception("Unable to generate paid booking invoice for receipt=%s", receipt.id)
+            metadata["final_invoice_generation_error"] = type(exc).__name__
     if receipt.email_sent_at is None:
         try:
             if (booking_promoted or booking.status == BookingStatus.BOOKED) and _send_invoice_range_booking_confirmation_emails(
@@ -13724,6 +14847,7 @@ def handle_admin_client_payment_receipt_public_payment_webhook(
         "receipt_number": receipt.receipt_number,
         "transaction_id": str(transaction.id),
         "booking_confirmed": booking.status == BookingStatus.BOOKED,
+        "invoice_number": invoice_number,
     }
 
 
@@ -13839,6 +14963,31 @@ def return_admin_client_payment_receipt_public_payment(
             metadata["booking_confirmation_blocked"] = "PROMOTION_FAILED"
     else:
         metadata["payment_received_after_hold_expired"] = True
+    invoice_number: str | None = None
+    if not hold_expired and booking.status == BookingStatus.BOOKED:
+        try:
+            invoice_note, invoice_metadata, invoice_created = _generate_paid_booking_invoice_after_payment(
+                db,
+                booking=booking,
+                session_obj=session_obj,
+                course_type=course_type,
+                location=location,
+                owner=owner,
+            )
+            invoice_number = str(invoice_metadata.get("invoice_number") or "").strip() or None
+            metadata["final_invoice_note_id"] = str(invoice_note.id)
+            if invoice_number:
+                metadata["final_invoice_number"] = invoice_number
+            if invoice_created:
+                send_final_invoice_email(
+                    db,
+                    customer=owner,
+                    note_id=invoice_note.id,
+                    metadata=invoice_metadata,
+                )
+        except Exception as exc:
+            logger.exception("Unable to generate paid booking invoice for receipt=%s", receipt.id)
+            metadata["final_invoice_generation_error"] = type(exc).__name__
     if receipt.email_sent_at is None:
         try:
             if booking_promoted or booking.status == BookingStatus.BOOKED:
@@ -13870,8 +15019,9 @@ def return_admin_client_payment_receipt_public_payment(
     return _public_payment_result_html(
         title="Paiement confirme" if booking_confirmed else "Paiement recu",
         subtitle=(
-            "Votre paiement a bien ete enregistre. Un justificatif de paiement vous a ete envoye. "
-            "La facture finale sera emise a la realisation de la prestation."
+            "Votre paiement a bien ete enregistre. Votre facture payee a ete generee et vous a ete envoyee."
+            if invoice_number
+            else "Votre paiement a bien ete enregistre. Un justificatif de paiement vous a ete envoye."
             if booking_confirmed
             else "Votre paiement a bien ete enregistre, mais la reservation n'a pas pu etre confirmee automatiquement. "
             "L'administration va verifier la situation avec vous."
@@ -14084,8 +15234,6 @@ def admin_purchase_plan_for_client(
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> ClientSubscriptionOut:
     client = _require_client(db, client_id)
-    if not client.is_active:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Client is inactive")
 
     plan = db.scalar(select(Plan).where(Plan.id == plan_id, Plan.active.is_(True)))
     if plan is None:
@@ -14155,26 +15303,50 @@ def admin_purchase_plan_for_client(
     initial_vat_amount: Decimal | None = None
     initial_total_incl_vat: Decimal | None = None
     initial_currency_code: str | None = None
+    initial_price_breakdown: list[dict[str, object]] = []
+    first_purchase_charges_applied = False
     if plan.kind != PlanKind.FORFAIT:
         billing_profile = resolve_billing_profile(db, client)
-        initial_pricing = _estimate_subscription_pricing(
+        purchase_pricing = _admin_plan_purchase_pricing(
             db,
+            client=client,
             plan=plan,
-            residence_country=billing_profile.residence_country or "FR",
-            preferred_currency=billing_profile.preferred_currency or "EUR",
-            on_date=subscription_started_at,
+            started_at=subscription_started_at,
         )
-        if initial_pricing is not None:
-            initial_amount_excl_vat, initial_vat_rate, initial_vat_amount, initial_total_incl_vat, initial_currency_code = initial_pricing
-            if payload.discounted_total_incl_vat is not None:
-                initial_total_incl_vat = _quantize_money(Decimal(payload.discounted_total_incl_vat))
-                divisor = Decimal("1") + (Decimal(initial_vat_rate) / Decimal("100"))
-                initial_amount_excl_vat = (
-                    initial_total_incl_vat
-                    if divisor <= Decimal("0")
-                    else _quantize_money(initial_total_incl_vat / divisor)
-                )
-                initial_vat_amount = _quantize_money(initial_total_incl_vat - initial_amount_excl_vat)
+        initial_amount_excl_vat = purchase_pricing.amount_excl_vat
+        initial_vat_amount = purchase_pricing.vat_amount
+        initial_total_incl_vat = purchase_pricing.total_incl_vat
+        initial_currency_code = purchase_pricing.currency
+        initial_price_breakdown = purchase_pricing.breakdown
+        first_purchase_charges_applied = purchase_pricing.first_purchase_required
+        if payload.discounted_total_incl_vat is not None:
+            initial_total_incl_vat = _quantize_money(Decimal(payload.discounted_total_incl_vat))
+            initial_pricing = _estimate_subscription_pricing(
+                db,
+                plan=plan,
+                residence_country=billing_profile.residence_country or "FR",
+                preferred_currency=billing_profile.preferred_currency or "EUR",
+                on_date=subscription_started_at,
+            )
+            initial_vat_rate = initial_pricing[1] if initial_pricing is not None else Decimal("0")
+            divisor = Decimal("1") + (Decimal(initial_vat_rate) / Decimal("100"))
+            initial_amount_excl_vat = (
+                initial_total_incl_vat
+                if divisor <= Decimal("0")
+                else _quantize_money(initial_total_incl_vat / divisor)
+            )
+            initial_vat_amount = _quantize_money(initial_total_incl_vat - initial_amount_excl_vat)
+            initial_price_breakdown = [
+                {
+                    "code": "ADMIN_TOTAL_OVERRIDE",
+                    "label": plan.name,
+                    "amount_excl_vat": str(initial_amount_excl_vat),
+                    "vat_rate": str(initial_vat_rate),
+                    "vat_amount": str(initial_vat_amount),
+                    "amount_ttc": str(initial_total_incl_vat),
+                }
+            ]
+            first_purchase_charges_applied = False
 
     subscription = ClientPlanSubscription(
         user_id=client.id,
@@ -14193,6 +15365,8 @@ def admin_purchase_plan_for_client(
         initial_vat_amount=initial_vat_amount,
         initial_total_incl_vat=initial_total_incl_vat,
         initial_currency_code=initial_currency_code,
+        initial_price_breakdown_json=initial_price_breakdown,
+        first_purchase_charges_applied=first_purchase_charges_applied,
         forfait_loyalty_discount_per_hour_ttc=Decimal("0.00"),
         forfait_family_discount_per_hour_ttc=Decimal("0.00"),
         forfait_short_commitment_supplement_per_hour_ttc=Decimal("0.00"),
@@ -14206,15 +15380,13 @@ def admin_purchase_plan_for_client(
     checkout_url: str | None = None
     if should_start_pending and method_code is not None:
         billing_profile = resolve_billing_profile(db, client)
-        pricing = _estimate_subscription_pricing(
-            db,
-            plan=plan,
-            residence_country=billing_profile.residence_country or "FR",
-            preferred_currency=billing_profile.preferred_currency or "EUR",
-            on_date=subscription.started_at,
-        )
-        amount_due = pricing[3] if pricing is not None else Decimal("0.00")
-        currency_code = pricing[4] if pricing is not None else (plan.currency_code or billing_profile.preferred_currency or "EUR").upper()
+        amount_due = Decimal(subscription.initial_total_incl_vat or 0).quantize(Decimal("0.01"))
+        currency_code = (
+            subscription.initial_currency_code
+            or plan.currency_code
+            or billing_profile.preferred_currency
+            or "EUR"
+        ).upper()
         website = _get_setting_value(db, "config_account_website", "")
         checkout_url = _create_checkout_for_subscription(
             db,

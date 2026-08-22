@@ -24,6 +24,8 @@ from app.services.notifications.domain.constants import (
     NOTIFICATION_STATUS_QUEUED,
     NOTIFICATION_STATUS_SENT,
     NOTIFICATION_STATUS_SKIPPED,
+    NOTIFICATION_TYPE_AUTO_CANCEL_PARTICIPANT,
+    NOTIFICATION_TYPE_CLIENT_BOOKING_CANCELLATION,
     NOTIFICATION_TYPE_REMINDER_EMAIL,
     NOTIFICATION_TYPE_REMINDER_SMS,
 )
@@ -39,6 +41,13 @@ class DispatchResult:
     skipped: int
     failed: int
     reason: str | None = None
+
+
+LESSON_EMAIL_NOTIFICATION_TYPES = {
+    NOTIFICATION_TYPE_REMINDER_EMAIL,
+    NOTIFICATION_TYPE_CLIENT_BOOKING_CANCELLATION,
+    NOTIFICATION_TYPE_AUTO_CANCEL_PARTICIPANT,
+}
 
 
 def _load_user_for_notification(db: Session, *, notification: Notification) -> User | None:
@@ -84,13 +93,19 @@ def dispatch_notification(
             return DispatchResult(status=notification.status, sent=0, skipped=1, failed=0, reason=notification.failure_reason)
 
         if user is not None:
-            if notification.notification_type == NOTIFICATION_TYPE_REMINDER_EMAIL and not user.lesson_reminder_email_opt_in:
+            if (
+                notification.notification_type in LESSON_EMAIL_NOTIFICATION_TYPES
+                and not user.lesson_reminder_email_opt_in
+            ):
                 notification.status = NOTIFICATION_STATUS_SKIPPED
                 notification.failure_reason = "skipped because email opt-out"
                 notification.skipped_at = now
                 db.add(notification)
                 return DispatchResult(status=notification.status, sent=0, skipped=1, failed=0, reason=notification.failure_reason)
-            if notification.notification_type != NOTIFICATION_TYPE_REMINDER_EMAIL and not user.email_opt_in:
+            if (
+                notification.notification_type not in LESSON_EMAIL_NOTIFICATION_TYPES
+                and not user.email_opt_in
+            ):
                 notification.status = NOTIFICATION_STATUS_SKIPPED
                 notification.failure_reason = "skipped because email opt-out"
                 notification.skipped_at = now

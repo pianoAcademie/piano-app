@@ -314,6 +314,68 @@ class PaymentReceiptsFlowTests(unittest.TestCase):
         self.assertEqual(invoice_lines[0].occurred_at, self.session_obj.start_at_utc)
         self.assertEqual(completed_receipts[0].final_invoice_note_id, note.id)
 
+    def test_fully_paid_future_booking_generates_paid_invoice_when_explicitly_allowed(self) -> None:
+        future_session = SimpleNamespace(**vars(self.session_obj))
+        future_session.status = SessionStatus.SCHEDULED
+        future_booking = SimpleNamespace(**vars(self.booking))
+        future_booking.status = BookingStatus.BOOKED
+        completed_receipts = [SimpleNamespace(final_invoice_note_id=None, final_invoice_generated_at=None, updated_at=None)]
+        fake_db = _FakeSession(rows=completed_receipts)
+        reconciled_id = uuid4()
+
+        with patch("app.services.payment_receipts._invoice_note_for_booking", return_value=None), patch(
+            "app.services.payment_receipts.build_booking_receipt_snapshot",
+            return_value=self.snapshot,
+        ), patch(
+            "app.services.payment_receipts.reserve_next_invoice_number",
+            return_value="PA26-0189",
+        ), patch(
+            "app.services.payment_receipts.completed_payment_receipt_totals",
+            return_value=(Decimal("30.00"), "EUR", [reconciled_id]),
+        ):
+            note, metadata, created = generate_final_invoice_for_booking(
+                fake_db,
+                booking=future_booking,
+                session_obj=future_session,
+                course_type=SimpleNamespace(),
+                location=SimpleNamespace(),
+                owner=SimpleNamespace(),
+                author_user_id=None,
+                issued_at=self.issued_at,
+                allow_paid_before_service=True,
+            )
+
+        self.assertTrue(created)
+        self.assertEqual(metadata["invoice_status"], "PAID")
+        self.assertEqual(metadata["generation_mode"], "PAYMENT_CONFIRMED")
+        self.assertIsNone(metadata["service_realized_date"])
+        self.assertEqual(metadata["total_to_pay_by_currency"], {"EUR": "0.00"})
+        self.assertEqual(completed_receipts[0].final_invoice_note_id, note.id)
+
+    def test_future_booking_invoice_requires_full_payment(self) -> None:
+        future_session = SimpleNamespace(**vars(self.session_obj))
+        future_session.status = SessionStatus.SCHEDULED
+        future_booking = SimpleNamespace(**vars(self.booking))
+        future_booking.status = BookingStatus.BOOKED
+        fake_db = _FakeSession()
+
+        with patch("app.services.payment_receipts._invoice_note_for_booking", return_value=None), patch(
+            "app.services.payment_receipts.completed_payment_receipt_totals",
+            return_value=(Decimal("10.00"), "EUR", [uuid4()]),
+        ):
+            with self.assertRaisesRegex(ValueError, "fully paid"):
+                generate_final_invoice_for_booking(
+                    fake_db,
+                    booking=future_booking,
+                    session_obj=future_session,
+                    course_type=SimpleNamespace(),
+                    location=SimpleNamespace(),
+                    owner=SimpleNamespace(),
+                    author_user_id=None,
+                    issued_at=self.issued_at,
+                    allow_paid_before_service=True,
+                )
+
     def test_receipt_numbering_is_independent_from_invoice_numbering(self) -> None:
         receipt_number = _format_receipt_number(
             "PAY-%YYYY%-%NNNN%",

@@ -16,8 +16,9 @@ from app.api.routes.clients import (
     get_public_session_trial_offers,
 )
 from app.models.catalog import DeliveryMode, SessionAudienceScope
-from app.models.plan import Plan, PlanKind
+from app.models.plan import Plan, PlanKind, SubscriptionStatus
 from app.schemas.user import ClientSessionFormulaOptionOut
+from app.services.trial_courses import TRIAL_CREDIT_STATUSES
 
 
 def _formula_option(
@@ -55,6 +56,10 @@ class ClientTrialFormulaEligibilityTests(unittest.TestCase):
     def test_detects_only_explicit_trial_formula(self) -> None:
         self.assertTrue(_is_piano_trial_formula_option(self.trial))
         self.assertFalse(_is_piano_trial_formula_option(self.pack))
+
+    def test_unpaid_pending_purchase_is_not_an_available_trial_credit(self) -> None:
+        self.assertNotIn(SubscriptionStatus.PENDING, TRIAL_CREDIT_STATUSES)
+        self.assertIn(SubscriptionStatus.ACTIVE, TRIAL_CREDIT_STATUSES)
 
     @patch("app.api.routes.clients.has_prior_course_attendance_for_course_type", return_value=False)
     @patch("app.api.routes.clients.has_available_trial_credit_for_course_type", return_value=False)
@@ -98,7 +103,7 @@ class ClientTrialFormulaEligibilityTests(unittest.TestCase):
             execute=lambda _query: SimpleNamespace(first=lambda: (session, course_type))
         )
 
-        result = get_public_session_trial_offers(session.id, db)
+        result = get_public_session_trial_offers(session.id, db=db)
 
         self.assertEqual(result, [self.trial])
 
