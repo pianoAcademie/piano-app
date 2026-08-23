@@ -24,7 +24,12 @@ ALLOWED_KEYS = {
 DEPLOYMENT_PRESENCE_ATTEMPTS = 6
 DEPLOYMENT_PRESENCE_RETRY_SECONDS = 20
 DEPLOYMENT_PRESENCE_WINDOW_SECONDS = 90
-SYSTEM_ADMIN_EMAIL = "admin@piano-academie.com"
+DEPLOYMENT_IGNORED_EMAILS = (
+    "admin@piano-academie.com",
+    "miyoung.lee@piano-academie.com",
+    "estela.oliviero@piano-academie.com",
+    "nomys2015@gmail.com",
+)
 
 _ACTIVE_USER_QUERY = f"""
 from datetime import datetime, timedelta, timezone
@@ -41,7 +46,7 @@ try:
         .where(
             UserPresence.last_seen_at >= cutoff,
             User.is_active.is_(True),
-            func.lower(User.email) != {SYSTEM_ADMIN_EMAIL!r},
+            func.lower(User.email).not_in({DEPLOYMENT_IGNORED_EMAILS!r}),
         )
     )
     print(int(count or 0))
