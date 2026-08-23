@@ -488,21 +488,21 @@ function intakeKeyFacts(
     {
       title: language === "fr" ? "1er cours" : "First course",
       value: normalizedScalarValue(payload, "requested_course_mode") || mainCourseRecommendation?.activity_name || "-",
-      detail: `${language === "fr" ? "Lieu" : "Location"}: ${normalizedScalarValue(payload, "requested_location") || detail.detected_location || "-"} · ${language === "fr" ? "Creneau" : "Slot"}: ${recommendationSummary(mainCourseRecommendation) || mainCourseSlot}`,
+      detail: `${language === "fr" ? "Lieu" : "Location"}: ${normalizedScalarValue(payload, "requested_location") || detail.detected_location || "-"} · ${language === "fr" ? "Creneau demande" : "Requested slot"}: ${mainCourseSlot !== "-" ? mainCourseSlot : recommendationSummary(mainCourseRecommendation) || "-"}`,
       tone: mainCourseSlot !== "-" || mainCourseRecommendation ? "ok" : "warn",
     },
     {
       title: language === "fr" ? "2e cours" : "Second course",
       value: secondCourseRequested ? boolLabel(true, language) : boolLabel(false, language),
       detail: secondCourseRequested
-        ? `${secondCourseMode} · ${recommendationSummary(secondCourseRecommendation) || secondCourseSlot}`
+        ? `${secondCourseMode} · ${secondCourseSlot !== "-" ? secondCourseSlot : recommendationSummary(secondCourseRecommendation) || "-"}`
         : undefined,
       tone: secondCourseRequested ? "ok" : "off",
     },
     {
       title: language === "fr" ? "Solfege presentiel" : "Onsite solfege",
       value: boolLabel(onsiteSolfege, language),
-      detail: onsiteSolfege ? `${language === "fr" ? "Niveau" : "Level"}: ${solfegeLevel || "-"} · ${recommendationSummary(solfegeRecommendation) || solfegeSlot}` : undefined,
+      detail: onsiteSolfege ? `${language === "fr" ? "Niveau" : "Level"}: ${solfegeLevel || "-"} · ${solfegeSlot !== "-" ? solfegeSlot : recommendationSummary(solfegeRecommendation) || "-"}` : undefined,
       tone: onsiteSolfege ? "ok" : "off",
     },
     {
