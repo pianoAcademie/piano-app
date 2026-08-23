@@ -24,7 +24,6 @@ const copy = {
     title: "Installer Piano Academie Professeur",
     description: "Accédez à votre planning, aux présences, aux messages et à vos relevés depuis une icône sur votre téléphone.",
     install: "Installer l’application",
-    instructions: "Voir comment l’installer",
     installed: "Application installée",
     installedHelp: "Ouvrez-la depuis l’icône Piano Academie sur votre écran d’accueil.",
     ios: "Sur iPhone ou iPad : touchez Partager dans Safari, puis « Sur l’écran d’accueil » et enfin « Ajouter ».",
@@ -37,7 +36,6 @@ const copy = {
     title: "Install Piano Academie Teacher",
     description: "Open your schedule, attendance, messages and statements from an icon on your phone.",
     install: "Install the app",
-    instructions: "Show installation steps",
     installed: "App installed",
     installedHelp: "Open it from the Piano Academie icon on your Home Screen.",
     ios: "On iPhone or iPad: tap Share in Safari, then “Add to Home Screen”, and finally “Add”.",
@@ -157,10 +155,10 @@ export default function AppInstallCard({ language }: AppInstallCardProps): JSX.E
           <button
             className="primary teacher-mobile-app-button"
             type="button"
-            onClick={installState === "available" ? install : () => setShowInstructions((value) => !value)}
+            onClick={install}
             disabled={installState === "checking"}
           >
-            {installState === "available" ? text.install : text.instructions}
+            {text.install}
           </button>
         )}
 

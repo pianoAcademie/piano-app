@@ -792,8 +792,12 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
         trailing={
           <div className="row gap-sm">
             {canAccessAdminPortal ? (
-              <Link className="mode-link teacher-header-link" href="/admin">
-                {language === "en" ? "Administration" : "Administration"}
+              <Link
+                className="mode-link teacher-header-link teacher-admin-switch-link"
+                href="/admin"
+                aria-label={language === "en" ? "Switch to administration" : "Passer en mode administration"}
+              >
+                {language === "en" ? "Admin mode" : "Mode admin"}
               </Link>
             ) : null}
             <Link className="mode-link teacher-header-link" href="/prof/statements">
@@ -803,6 +807,11 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
         }
         menu={
           <div className="teacher-header-menu-items">
+            {canAccessAdminPortal ? (
+              <Link className="teacher-header-menu-link teacher-header-menu-link-primary" href="/admin">
+                {language === "en" ? "Switch to administration" : "Passer en mode administration"}
+              </Link>
+            ) : null}
             <Link className="teacher-header-menu-link" href={buildProfHref({ tab: "catalog", agendaView, agendaDate })}>
               {uiText(language, "teacher.products")}
             </Link>

@@ -12216,6 +12216,12 @@ button.danger:focus-visible {
   background: #ffffff;
 }
 
+.teacher-header-menu-link-primary {
+  border-color: #d6b16a;
+  color: #ffffff;
+  background: #172237;
+}
+
 .teacher-header-menu-btn {
   width: 100%;
   min-height: 38px;
@@ -13243,6 +13249,13 @@ button.danger:focus-visible {
 
   .teacher-header-link {
     display: none;
+  }
+
+  .teacher-admin-switch-link {
+    display: inline-flex;
+    min-height: 34px;
+    padding: 0 9px;
+    white-space: nowrap;
   }
 
   .teacher-list-row {
