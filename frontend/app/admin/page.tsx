@@ -35,6 +35,7 @@ import MonthDayCard from "../../components/planning/month-day-card";
 import SessionCreateMainFields from "../../components/planning/session-create-main-fields";
 import SessionCreateSubmitButton from "../../components/planning/session-create-submit-button";
 import GroupNoteComposer from "../../components/planning/group-note-composer";
+import MobileDefaultAgendaView from "../../components/planning/mobile-default-agenda-view";
 import { localeForUiLanguage, normalizeUiLanguage, resolveAuthOkMessage, type UiLanguage, uiText } from "../../lib/ui-i18n";
 import { resolveUiFlashMessage, withUiLanguage } from "../../lib/ui-messages";
 import type {
@@ -1720,6 +1721,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
 
   return (
     <section className="admin-page-grid">
+      <MobileDefaultAgendaView />
       {okMessage ? <section className="flash-ok">{okMessage}</section> : null}
       {errorMessage ? <section className="flash-err">{errorMessage}</section> : null}
       {errors.length > 0 ? <section className="flash-err">{planningText.backendError} {errors.join(" | ")}</section> : null}
