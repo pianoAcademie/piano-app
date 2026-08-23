@@ -143,3 +143,9 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+    # Temporary maintenance bridge: the local GitHub token cannot add a new
+    # workflow, so the existing dry-run/apply production workflow also runs
+    # this idempotent historical-session importer. Remove after the import.
+    from import_prod_pre_sportigo_teacher_sessions_august_2026 import main as import_historical_sessions
+
+    import_historical_sessions()

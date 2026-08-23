@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, Location, Professor, SessionStatus
 from app.models.ops import LegalEntity
+from app.models.payout import ProfessorSessionPayout
 from app.models.user import User
 from app.services.i18n import normalize_language
 from app.services.payouts import resolve_hourly_rate_for_session
@@ -136,6 +137,13 @@ def compute_teacher_monthly_statements(
         return []
 
     session_ids = [session_obj.id for session_obj, _, _, _ in session_rows]
+    payout_rows = db.scalars(
+        select(ProfessorSessionPayout).where(
+            ProfessorSessionPayout.session_id.in_(session_ids),
+            ProfessorSessionPayout.professor_id == professor.id,
+        )
+    ).all()
+    payout_by_session = {row.session_id: row for row in payout_rows}
     pending_count_expr = func.sum(case((Booking.status == BookingStatus.BOOKED, 1), else_=0))
     total_count_expr = func.count(Booking.id)
     booking_stats_rows = db.execute(
@@ -221,15 +229,20 @@ def compute_teacher_monthly_statements(
                 )
 
             duration_hours = session_duration_hours(session_obj)
-            resolved_rate = resolve_hourly_rate_for_session(
-                db,
-                session_obj=session_obj,
-                on_date=local_start.date(),
-                professor_id_override=professor.id,
-                default_grid_lines=None,
-            )
-            unit_rate_ht = _quantize(Decimal(resolved_rate.hourly_rate if resolved_rate is not None else 0))
-            amount_ht = _quantize(duration_hours * unit_rate_ht)
+            payout_snapshot = payout_by_session.get(session_obj.id)
+            if payout_snapshot is not None:
+                unit_rate_ht = _quantize(Decimal(payout_snapshot.hourly_rate_snapshot))
+                amount_ht = _quantize(Decimal(payout_snapshot.amount_snapshot))
+            else:
+                resolved_rate = resolve_hourly_rate_for_session(
+                    db,
+                    session_obj=session_obj,
+                    on_date=local_start.date(),
+                    professor_id_override=professor.id,
+                    default_grid_lines=None,
+                )
+                unit_rate_ht = _quantize(Decimal(resolved_rate.hourly_rate if resolved_rate is not None else 0))
+                amount_ht = _quantize(duration_hours * unit_rate_ht)
             if vat_applicable:
                 amount_ttc = _quantize(amount_ht * (Decimal("1.00") + (vat_rate / Decimal("100.00"))))
             else:
