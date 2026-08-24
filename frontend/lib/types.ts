@@ -603,6 +603,11 @@ export type AdminCheckDepositPaymentOut = {
   invoice_number: string | null;
   invoice_note_id: string | null;
   tracking_note: string | null;
+  receipt_location_id: string | null;
+  receipt_location_code: string | null;
+  receipt_location_name: string | null;
+  custody_status: string | null;
+  custody_updated_at: string | null;
 };
 
 export type AdminCheckDepositBulkUpdateOut = {
@@ -610,6 +615,11 @@ export type AdminCheckDepositBulkUpdateOut = {
   updated_count: number;
   updated_transaction_ids: string[];
   unmatched_rows: string[];
+};
+
+export type AdminCheckCustodyBulkUpdateOut = {
+  updated_count: number;
+  updated_transaction_ids: string[];
 };
 
 export type AdminReferralRewardOut = {

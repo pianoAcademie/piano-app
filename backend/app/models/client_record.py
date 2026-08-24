@@ -191,6 +191,13 @@ class ClientManualTransaction(Base):
         ForeignKey("legal_entities.id", ondelete="RESTRICT"),
         nullable=True,
     )
+    check_receipt_location_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("locations.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    check_custody_status: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    check_custody_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

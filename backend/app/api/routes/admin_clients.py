@@ -104,6 +104,8 @@ from app.schemas.admin import (
     AdminCheckDepositBulkUpdateOut,
     AdminCheckDepositBulkUpdateRequest,
     AdminCheckDepositPaymentOut,
+    AdminCheckCustodyBulkUpdateOut,
+    AdminCheckCustodyBulkUpdateRequest,
     AdminReferralBulkRecomputeOut,
     AdminReferralRewardOut,
     AdminReferralRewardManualCreateRequest,
@@ -275,6 +277,17 @@ SPORTIGO_OPENING_BALANCE_SOURCE_CODE = "SPORTIGO_2026_OPENING_BALANCE"
 
 PAID_PAYMENT_STATUSES = {"PAID", "SUCCEEDED", "COMPLETED"}
 CHECK_TRACKING_STATUSES = {"CHECK_RECEIVED", "CHECK_DEPOSITED", "CHECK_REFUSED", "PAID"}
+CHECK_CUSTODY_SITE_RECEIVED = "RECEIVED_ON_SITE"
+CHECK_CUSTODY_IN_TRANSIT = "IN_TRANSIT_TO_ADMINISTRATION"
+CHECK_CUSTODY_WITH_ADMINISTRATION = "WITH_ADMINISTRATION"
+CHECK_CUSTODY_READY_AT_SITE = "READY_FOR_DEPOSIT_AT_SITE"
+CHECK_CUSTODY_DEPOSITED = "DEPOSITED_AT_BANK"
+CHECK_CUSTODY_CASHED = "CASHED"
+CHECK_CUSTODY_REFUSED = "REFUSED"
+CHECK_CUSTODY_READY_STATUSES = {
+    CHECK_CUSTODY_WITH_ADMINISTRATION,
+    CHECK_CUSTODY_READY_AT_SITE,
+}
 PENDING_PAYMENT_STATUSES = {
     "PENDING",
     "PENDING_PAYMENT",
@@ -10319,8 +10332,37 @@ def create_admin_client_manual_transaction(
     currency = _normalize_currency(payload.currency, fallback=client.preferred_currency or "EUR")
     occurred_at = payload.occurred_at or _utcnow()
     status_value = MANUAL_TRANSACTION_STATUS_BY_TYPE.get(transaction_type, "COMPLETED")
+    check_receipt_location_id = None
+    check_custody_status = None
+    check_custody_updated_at = None
     if transaction_type == "PAYMENT" and payment_method_code == "CHECK":
         status_value = "CHECK_RECEIVED"
+        check_custody_updated_at = _utcnow()
+        if payload.check_receipt_location_id is not None:
+            receipt_location = db.scalar(
+                select(Location).where(Location.id == payload.check_receipt_location_id).limit(1)
+            )
+            if receipt_location is None:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Lieu de reception du cheque introuvable",
+                )
+            location_code = str(receipt_location.code or "").strip().upper()
+            if location_code not in {"RICHELIEU", "BAR_LE_DUC"}:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Le lieu de reception doit etre Rue de Richelieu ou Bar-le-Duc",
+                )
+            check_receipt_location_id = receipt_location.id
+            check_custody_status = (
+                CHECK_CUSTODY_READY_AT_SITE
+                if location_code == "BAR_LE_DUC"
+                else CHECK_CUSTODY_SITE_RECEIVED
+            )
+        else:
+            # Existing API clients are kept safe: a check without a supplied
+            # site is considered already handed to administration.
+            check_custody_status = CHECK_CUSTODY_WITH_ADMINISTRATION
         check_deposit_label = _normalize_optional(payload.check_deposit_label)
         if check_deposit_label:
             received_label = occurred_at.astimezone(_invoice_render_timezone()).strftime("%d/%m/%Y")
@@ -10434,6 +10476,9 @@ def create_admin_client_manual_transaction(
         currency=currency,
         reference=reference,
         legal_entity_id=resolved_legal_entity_id,
+        check_receipt_location_id=check_receipt_location_id,
+        check_custody_status=check_custody_status,
+        check_custody_updated_at=check_custody_updated_at,
     )
     db.add(row)
     db.flush()
@@ -10631,7 +10676,7 @@ def _check_deposit_statuses(raw_statuses: str | None) -> set[str]:
         for token in re.split(r"[,;\s]+", raw_statuses or "")
         if token.strip()
     }
-    allowed = {"CHECK_RECEIVED", "CHECK_DEPOSITED", "PAID"}
+    allowed = {"CHECK_RECEIVED", "CHECK_DEPOSITED", "CHECK_REFUSED", "PAID"}
     filtered = statuses & allowed
     return filtered or {"CHECK_RECEIVED"}
 
@@ -11106,6 +11151,11 @@ def _check_deposit_payment_out(
     active_lock = _active_invoice_lock_by_payment_key(db, client_id=client.id).get(_payment_key(source="MANUAL", payment_id=row.id))
     if active_lock is not None:
         _, invoice_number, invoice_note_id, _, _ = active_lock
+    receipt_location = None
+    if row.check_receipt_location_id is not None:
+        receipt_location = db.scalar(
+            select(Location).where(Location.id == row.check_receipt_location_id).limit(1)
+        )
     return AdminCheckDepositPaymentOut(
         transaction_id=row.id,
         client_id=client.id,
@@ -11119,6 +11169,11 @@ def _check_deposit_payment_out(
         invoice_number=invoice_number,
         invoice_note_id=invoice_note_id,
         tracking_note=_check_tracking_note(row.description),
+        receipt_location_id=receipt_location.id if receipt_location is not None else None,
+        receipt_location_code=receipt_location.code if receipt_location is not None else None,
+        receipt_location_name=receipt_location.name if receipt_location is not None else None,
+        custody_status=row.check_custody_status or CHECK_CUSTODY_WITH_ADMINISTRATION,
+        custody_updated_at=row.check_custody_updated_at,
     )
 
 
@@ -11159,9 +11214,20 @@ def _check_deposit_transaction_ids_for_location(
     if location is None:
         return set()
 
+    explicitly_scoped_ids = {
+        row.id
+        for row in rows
+        if getattr(row, "check_receipt_location_id", None) == location_id
+    }
+    rows_without_receipt_location = [
+        row for row in rows if getattr(row, "check_receipt_location_id", None) is None
+    ]
+    if not rows_without_receipt_location:
+        return explicitly_scoped_ids
+
     candidate_user_ids_by_transaction: dict[UUID, set[UUID]] = {}
     payer_ids_without_student: set[UUID] = set()
-    for row in rows:
+    for row in rows_without_receipt_location:
         if row.student_user_id is not None:
             candidate_user_ids_by_transaction[row.id] = {row.student_user_id}
         else:
@@ -11177,7 +11243,7 @@ def _check_deposit_transaction_ids_for_location(
         child_ids_by_adult: dict[UUID, set[UUID]] = {}
         for adult_id, child_id in family_rows:
             child_ids_by_adult.setdefault(adult_id, set()).add(child_id)
-        for row in rows:
+        for row in rows_without_receipt_location:
             if row.student_user_id is None:
                 candidate_user_ids_by_transaction[row.id].update(child_ids_by_adult.get(row.user_id, set()))
 
@@ -11213,7 +11279,7 @@ def _check_deposit_transaction_ids_for_location(
         ).all()
     )
 
-    return {
+    return explicitly_scoped_ids | {
         transaction_id
         for transaction_id, user_ids in candidate_user_ids_by_transaction.items()
         if user_ids & user_ids_at_location
@@ -11292,6 +11358,79 @@ def _check_candidate_name_tokens_by_transaction(
     return out
 
 
+@router.post("/check-deposits/bulk-custody", response_model=AdminCheckCustodyBulkUpdateOut)
+def bulk_update_admin_check_custody(
+    payload: AdminCheckCustodyBulkUpdateRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_admin_or_permissions("can_manage_check_deposits")),
+) -> AdminCheckCustodyBulkUpdateOut:
+    target = payload.target_custody_status.strip().upper()
+    source_by_target = {
+        CHECK_CUSTODY_IN_TRANSIT: {CHECK_CUSTODY_SITE_RECEIVED},
+        CHECK_CUSTODY_WITH_ADMINISTRATION: {CHECK_CUSTODY_IN_TRANSIT},
+    }
+    source_statuses = source_by_target.get(target)
+    if source_statuses is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Transition physique invalide")
+    selected_ids = set(payload.transaction_ids)
+    if not selected_ids:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Aucun cheque selectionne")
+
+    rows = db.scalars(
+        select(ClientManualTransaction)
+        .where(
+            ClientManualTransaction.id.in_(list(selected_ids)),
+            ClientManualTransaction.transaction_type == "PAYMENT",
+            ClientManualTransaction.status == "CHECK_RECEIVED",
+            ClientManualTransaction.reference.ilike("MODE:CHECK%"),
+            ClientManualTransaction.check_custody_status.in_(sorted(source_statuses)),
+        )
+        .with_for_update()
+    ).all()
+    allowed_transaction_ids = _check_deposit_transaction_ids_for_location(
+        db,
+        rows=rows,
+        location_id=_check_deposit_scope_location_id(db, actor=actor),
+    )
+    now = _utcnow()
+    updated_ids: list[UUID] = []
+    clients_touched: dict[UUID, int] = {}
+    for row in rows:
+        if row.id not in allowed_transaction_ids:
+            continue
+        row.check_custody_status = target
+        row.check_custody_updated_at = now
+        row.actor_user_id = actor.id
+        row.updated_at = now
+        db.add(row)
+        updated_ids.append(row.id)
+        clients_touched[row.user_id] = clients_touched.get(row.user_id, 0) + 1
+
+    if len(updated_ids) != len(selected_ids):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Un ou plusieurs cheques ne sont plus dans l'etape physique attendue",
+        )
+    action_label = (
+        "Cheques expedies vers l'administration"
+        if target == CHECK_CUSTODY_IN_TRANSIT
+        else "Cheques recus par l'administration"
+    )
+    for client_id, count in clients_touched.items():
+        _create_client_note(
+            db,
+            client_id=client_id,
+            author_user_id=actor.id,
+            entry_type="AUTO",
+            message=f"{action_label}: {count} cheque(s).",
+        )
+    db.commit()
+    return AdminCheckCustodyBulkUpdateOut(
+        updated_count=len(updated_ids),
+        updated_transaction_ids=sorted(updated_ids, key=str),
+    )
+
+
 @router.post("/check-deposits/bulk-status", response_model=AdminCheckDepositBulkUpdateOut)
 def bulk_update_admin_check_deposit_status(
     payload: AdminCheckDepositBulkUpdateRequest,
@@ -11331,6 +11470,13 @@ def bulk_update_admin_check_deposit_status(
         location_id=_check_deposit_scope_location_id(db, actor=actor),
     )
     rows = [row for row in rows if row.id in allowed_transaction_ids]
+    if target_status == "CHECK_DEPOSITED":
+        rows = [
+            row
+            for row in rows
+            if (row.check_custody_status or CHECK_CUSTODY_WITH_ADMINISTRATION)
+            in CHECK_CUSTODY_READY_STATUSES
+        ]
     rows_by_id = {row.id: row for row in rows}
     rows_by_reference_amount: dict[tuple[str, Decimal], list[ClientManualTransaction]] = {}
     rows_by_amount: dict[Decimal, list[ClientManualTransaction]] = {}
@@ -11403,6 +11549,13 @@ def bulk_update_admin_check_deposit_status(
         if row is None:
             continue
         row.status = target_status
+        if target_status == "CHECK_DEPOSITED":
+            row.check_custody_status = CHECK_CUSTODY_DEPOSITED
+        elif target_status == "PAID":
+            row.check_custody_status = CHECK_CUSTODY_CASHED
+        else:
+            row.check_custody_status = CHECK_CUSTODY_REFUSED
+        row.check_custody_updated_at = now
         row.description = _append_check_tracking_note(row.description, operation_note)
         if import_note := import_notes_by_transaction_id.get(row.id):
             row.description = _append_check_tracking_note(row.description, import_note)
@@ -11617,8 +11770,27 @@ def update_admin_client_manual_transaction_status(
     if payment_method_code == "CHECK" and next_status not in CHECK_TRACKING_STATUSES and next_status != "CANCELLED":
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Statut de cheque invalide")
 
+    if payment_method_code == "CHECK" and next_status == "CHECK_DEPOSITED":
+        custody_status = (row.check_custody_status or CHECK_CUSTODY_WITH_ADMINISTRATION).strip().upper()
+        if custody_status not in CHECK_CUSTODY_READY_STATUSES:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Le cheque doit d'abord etre recu par l'administration ou pret pour remise a Bar-le-Duc",
+            )
+
     previous_status = (row.status or "").strip().upper()
     row.status = next_status
+    if payment_method_code == "CHECK":
+        custody_status_by_financial_status = {
+            "CHECK_DEPOSITED": CHECK_CUSTODY_DEPOSITED,
+            "PAID": CHECK_CUSTODY_CASHED,
+            "CHECK_REFUSED": CHECK_CUSTODY_REFUSED,
+        }
+        if next_status == "CHECK_RECEIVED" and not row.check_custody_status:
+            row.check_custody_status = CHECK_CUSTODY_WITH_ADMINISTRATION
+        elif next_status in custody_status_by_financial_status:
+            row.check_custody_status = custody_status_by_financial_status[next_status]
+        row.check_custody_updated_at = _utcnow()
     row.actor_user_id = actor.id
     row.updated_at = _utcnow()
     db.add(row)

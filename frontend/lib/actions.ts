@@ -52,6 +52,7 @@ import type {
   AdminRangeInvoiceEmailOut,
   AdminRangeInvoiceOut,
   AdminCheckDepositBulkUpdateOut,
+  AdminCheckCustodyBulkUpdateOut,
   AdminClientPaymentOut,
   AdminStudentQuoteChangeOut,
   AdminCreditTypeOut,
@@ -6578,6 +6579,8 @@ export async function createAdminClientManualTransactionAction(formData: FormDat
           )
         : null
     );
+  const checkReceiptLocationIdRaw = String(formData.get("check_receipt_location_id") ?? "").trim();
+  const checkReceiptLocationId = checkReceiptLocationIdRaw ? parseUuid(checkReceiptLocationIdRaw) : null;
   if (!["PAYMENT", "REFUND", "CHARGE", "DISCOUNT"].includes(transactionType)) {
     redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=paiements`, "error", t("admin.client_action.invalid_transaction_type")));
   }
@@ -6595,6 +6598,9 @@ export async function createAdminClientManualTransactionAction(formData: FormDat
   }
   if (occurredAtRaw && !occurredAt) {
     redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=paiements`, "error", t("admin.client_action.invalid_date")));
+  }
+  if (paymentMethodCode === "CHECK" && (!checkReceiptLocationIdRaw || !checkReceiptLocationId)) {
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=paiements`, "error", "Le lieu de reception du cheque est obligatoire."));
   }
 
   const result = await backendRequest<{ id: string }>(
@@ -6618,6 +6624,7 @@ export async function createAdminClientManualTransactionAction(formData: FormDat
         mark_reconciled_invoices_paid: markReconciledInvoicesPaid,
         send_receipt_email: sendReceiptEmail,
         check_deposit_label: checkDepositLabel,
+        check_receipt_location_id: checkReceiptLocationId,
       }),
     },
     token,
@@ -6802,6 +6809,44 @@ export async function bulkUpdateAdminCheckDepositStatusAction(formData: FormData
       })})`
     : "";
   redirect(appendQueryMessage(returnTo, "ok", adminReferralActionText(language, "check_rows_updated", { count: result.data.updated_count, warning })));
+}
+
+export async function bulkUpdateAdminCheckCustodyAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+  await ensureAdminAndGetLanguage(token);
+  const requestedReturnTo = String(formData.get("return_to") ?? "").trim();
+  const returnTo = requestedReturnTo.startsWith("/admin/check-deposits") ? requestedReturnTo : "/admin/check-deposits";
+  const targetCustodyStatus = String(formData.get("target_custody_status") ?? "").trim().toUpperCase();
+  if (!["IN_TRANSIT_TO_ADMINISTRATION", "WITH_ADMINISTRATION"].includes(targetCustodyStatus)) {
+    redirect(appendQueryMessage(returnTo, "error", "Transition physique invalide."));
+  }
+  const transactionIds = formData
+    .getAll("transaction_ids")
+    .map((value) => parseUuid(String(value ?? "")))
+    .filter((value): value is string => Boolean(value));
+  if (transactionIds.length === 0) {
+    redirect(appendQueryMessage(returnTo, "error", "Selectionnez au moins un cheque."));
+  }
+  const result = await backendRequest<AdminCheckCustodyBulkUpdateOut>(
+    "/api/v1/admin/clients/check-deposits/bulk-custody",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        transaction_ids: transactionIds,
+        target_custody_status: targetCustodyStatus,
+      }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/admin/check-deposits");
+  revalidatePath("/admin/clients");
+  redirect(appendQueryMessage(returnTo, "ok", `${result.data.updated_count} cheque(s) mis a jour.`));
 }
 
 export async function validateAdminReferralRewardAction(formData: FormData): Promise<void> {

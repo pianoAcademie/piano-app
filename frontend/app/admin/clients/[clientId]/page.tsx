@@ -90,6 +90,7 @@ import type {
   AdminProductCategoriesOut,
   PlanOut,
   MakeupStudentSummaryOut,
+  LocationOut,
   UserOut,
 } from "../../../../lib/types";
 import { localeForUiLanguage, normalizeUiLanguage, translateBackendMessage, type UiLanguage, uiText } from "../../../../lib/ui-i18n";
@@ -1936,6 +1937,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     catalogProductsResult,
     paymentMethodsResult,
     legalEntitiesResult,
+    locationsResult,
     familyResult,
     allClientsResult,
     groupsResult,
@@ -1960,6 +1962,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     backendRequest<AdminCatalogProductOut[]>("/api/v1/admin/config/catalog/products?include_inactive=false", {}, token),
     backendRequest<AdminPaymentMethodsOut>("/api/v1/admin/config/payment-methods", {}, token),
     backendRequest<AdminLegalEntityOut[]>("/api/v1/admin/legal-entities?include_inactive=false", {}, token),
+    backendRequest<LocationOut[]>("/api/v1/locations", {}, token),
     backendRequest<AdminClientFamilyOut>(`/api/v1/admin/clients/${params.clientId}/family`, {}, token),
     backendRequest<AdminClientOut[]>("/api/v1/admin/clients?limit=1000", {}, token),
     backendRequest<AdminClientGroupOut[]>("/api/v1/admin/clients/groups?include_inactive=false", {}, token),
@@ -2156,6 +2159,15 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     : (() => {
         errors.push(`legal_entities: ${legalEntitiesResult.message}`);
         return [] as AdminLegalEntityOut[];
+      })();
+  const checkReceiptLocations = locationsResult.ok
+    ? locationsResult.data
+        .filter((row) => row.active && ["RICHELIEU", "BAR_LE_DUC"].includes(String(row.code || "").trim().toUpperCase()))
+        .sort((a, b) => a.name.localeCompare(b.name, sortLocale))
+        .map((row) => ({ id: row.id, code: row.code, name: row.name }))
+    : (() => {
+        errors.push(`locations: ${locationsResult.message}`);
+        return [] as Array<{ id: string; code: string; name: string }>;
       })();
 
   const family = familyResult.ok
@@ -6772,6 +6784,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   showReceiptEmailOption
                   clientDisplayName={fullName || visibleEmail || client.email}
                   language={language}
+                  checkReceiptLocations={checkReceiptLocations}
                 />
               ) : (
                 <ManualTransactionLegalEntityFields legalEntities={manualTransactionLegalEntities} language={language} />

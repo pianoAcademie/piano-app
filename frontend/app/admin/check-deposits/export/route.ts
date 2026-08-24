@@ -27,6 +27,8 @@ function rowsToCsv(rows: AdminCheckDepositPaymentOut[]): string {
     "amount",
     "currency",
     "status",
+    "lieu_reception",
+    "situation_physique",
     "suivi",
     "nom_sur_cheque",
   ];
@@ -40,6 +42,8 @@ function rowsToCsv(rows: AdminCheckDepositPaymentOut[]): string {
     row.amount_incl_vat,
     row.currency,
     row.status,
+    row.receipt_location_name ?? row.receipt_location_code ?? "",
+    row.custody_status ?? "",
     row.tracking_note ?? "",
     "",
   ]);

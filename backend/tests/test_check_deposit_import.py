@@ -8,7 +8,11 @@ import unittest
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.api.routes.admin_clients import _append_check_tracking_note, _check_import_match_note
-from app.schemas.admin import AdminCheckDepositBulkUpdateRequest, AdminCheckDepositImportRowIn
+from app.schemas.admin import (
+    AdminCheckCustodyBulkUpdateRequest,
+    AdminCheckDepositBulkUpdateRequest,
+    AdminCheckDepositImportRowIn,
+)
 
 
 class CheckDepositImportTests(unittest.TestCase):
@@ -38,6 +42,17 @@ class CheckDepositImportTests(unittest.TestCase):
         payload = AdminCheckDepositBulkUpdateRequest(target_status="CHECK_REFUSED")
 
         self.assertEqual(payload.target_status, "CHECK_REFUSED")
+
+    def test_bulk_custody_accepts_supported_transitions(self) -> None:
+        in_transit = AdminCheckCustodyBulkUpdateRequest(
+            target_custody_status="IN_TRANSIT_TO_ADMINISTRATION"
+        )
+        with_administration = AdminCheckCustodyBulkUpdateRequest(
+            target_custody_status="WITH_ADMINISTRATION"
+        )
+
+        self.assertEqual(in_transit.target_custody_status, "IN_TRANSIT_TO_ADMINISTRATION")
+        self.assertEqual(with_administration.target_custody_status, "WITH_ADMINISTRATION")
 
 
 if __name__ == "__main__":

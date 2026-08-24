@@ -1836,6 +1836,7 @@ class AdminClientManualTransactionCreateRequest(BaseModel):
     mark_reconciled_invoices_paid: bool = False
     send_receipt_email: bool = False
     check_deposit_label: str | None = Field(default=None, max_length=80)
+    check_receipt_location_id: UUID | None = None
 
 
 class AdminClientManualTransactionUpdateRequest(BaseModel):
@@ -1869,6 +1870,11 @@ class AdminCheckDepositPaymentOut(BaseModel):
     invoice_number: str | None = None
     invoice_note_id: UUID | None = None
     tracking_note: str | None = None
+    receipt_location_id: UUID | None = None
+    receipt_location_code: str | None = None
+    receipt_location_name: str | None = None
+    custody_status: str | None = None
+    custody_updated_at: datetime | None = None
 
 
 class AdminCheckDepositImportRowIn(BaseModel):
@@ -1893,6 +1899,19 @@ class AdminCheckDepositBulkUpdateOut(BaseModel):
     updated_count: int
     updated_transaction_ids: list[UUID] = Field(default_factory=list)
     unmatched_rows: list[str] = Field(default_factory=list)
+
+
+class AdminCheckCustodyBulkUpdateRequest(BaseModel):
+    transaction_ids: list[UUID] = Field(default_factory=list)
+    target_custody_status: Literal[
+        "IN_TRANSIT_TO_ADMINISTRATION",
+        "WITH_ADMINISTRATION",
+    ]
+
+
+class AdminCheckCustodyBulkUpdateOut(BaseModel):
+    updated_count: int
+    updated_transaction_ids: list[UUID] = Field(default_factory=list)
 
 
 class AdminReferralRewardOut(BaseModel):

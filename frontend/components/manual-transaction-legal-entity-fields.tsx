@@ -24,6 +24,12 @@ type ReconcilableInvoiceOption = {
   sellerLegalEntityName: string | null;
 };
 
+type CheckReceiptLocationOption = {
+  id: string;
+  code: string;
+  name: string;
+};
+
 type EmailPreview = {
   subject: string;
   body: string;
@@ -40,6 +46,7 @@ type ManualTransactionLegalEntityFieldsProps = {
   showReceiptEmailOption?: boolean;
   clientDisplayName?: string;
   language?: "fr" | "en";
+  checkReceiptLocations?: CheckReceiptLocationOption[];
 };
 
 export default function ManualTransactionLegalEntityFields({
@@ -53,6 +60,7 @@ export default function ManualTransactionLegalEntityFields({
   showReceiptEmailOption = false,
   clientDisplayName,
   language,
+  checkReceiptLocations = [],
 }: ManualTransactionLegalEntityFieldsProps): JSX.Element {
   const searchParams = useSearchParams();
   const resolvedLanguage = language ?? (searchParams?.get("lang") === "en" ? "en" : "fr");
@@ -76,6 +84,10 @@ export default function ManualTransactionLegalEntityFields({
         checkDepositMonthPlaceholder: "Month",
         checkDepositYearPlaceholder: "Year",
         checkDepositHelp: "When filled, the payment label and comment are prepared automatically.",
+        checkReceiptLocation: "Check receipt location *",
+        checkReceiptLocationPlaceholder: "Choose the receipt location...",
+        checkReceiptLocationHelp:
+          "Bar-le-Duc checks are immediately ready for local bank deposit. Rue de Richelieu checks must first be sent to administration.",
         receiptEmailGeneric: "Send a receipt email to the client",
         receiptEmailCheck: "Notify the client that the check has been received",
         emailPreviewTitle: "Email preview",
@@ -105,6 +117,10 @@ export default function ManualTransactionLegalEntityFields({
         checkDepositMonthPlaceholder: "Mois",
         checkDepositYearPlaceholder: "Annee",
         checkDepositHelp: "Si renseigne, le libelle et le commentaire du paiement sont prepares automatiquement.",
+        checkReceiptLocation: "Lieu de reception du cheque *",
+        checkReceiptLocationPlaceholder: "Choisir le lieu de reception...",
+        checkReceiptLocationHelp:
+          "A Bar-le-Duc, le cheque est directement pret pour la remise locale. A Richelieu, il devra d'abord etre transmis a l'administration.",
         receiptEmailGeneric: "Envoyer un recu par courriel au client",
         receiptEmailCheck: "Notifier le client que le cheque a bien ete recu",
         emailPreviewTitle: "Apercu du mail",
@@ -398,6 +414,18 @@ export default function ManualTransactionLegalEntityFields({
 
       {isCheckPayment ? (
         <>
+          {checkReceiptLocations.length > 0 ? (
+            <label className="span-2">
+              {text.checkReceiptLocation}
+              <select name="check_receipt_location_id" defaultValue="" required>
+                <option value="" disabled>{text.checkReceiptLocationPlaceholder}</option>
+                {checkReceiptLocations.map((location) => (
+                  <option key={location.id} value={location.id}>{location.name}</option>
+                ))}
+              </select>
+              <small className="muted">{text.checkReceiptLocationHelp}</small>
+            </label>
+          ) : null}
           <div className="span-2 grid">
             <input type="hidden" name="check_deposit_label" value={checkDepositLabel} />
             <label>

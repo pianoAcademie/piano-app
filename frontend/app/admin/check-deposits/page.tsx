@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
-import { bulkUpdateAdminCheckDepositStatusAction } from "../../../lib/actions";
+import { bulkUpdateAdminCheckCustodyAction, bulkUpdateAdminCheckDepositStatusAction } from "../../../lib/actions";
 import { hasAdminPermission } from "../../../lib/admin-access";
 import { getAdminToken } from "../../../lib/auth-cookies";
 import { backendRequest } from "../../../lib/backend";
@@ -20,6 +20,15 @@ const CHECK_DEPOSIT_TEXT: Record<UiLanguage, Record<string, string>> = {
     invoice: "Facture",
     amount: "Montant",
     status: "Statut",
+    receipt_location: "Reception",
+    custody: "Situation physique",
+    custody_site_received: "Recu sur site",
+    custody_in_transit: "En route vers l'administration",
+    custody_with_admin: "Avec l'administration",
+    custody_ready_site: "Pret pour remise locale",
+    custody_deposited: "Remis en banque",
+    custody_cashed: "Encaisse",
+    custody_refused: "Refuse",
     status_received: "Recus",
     status_deposited: "Deposes",
     status_cashed: "Encaisses",
@@ -46,8 +55,14 @@ const CHECK_DEPOSIT_TEXT: Record<UiLanguage, Record<string, string>> = {
     batch_reference_placeholder: "Depot banque, bordereau, remise...",
     operation_date: "Date operation",
     import_submit: "Importer et mettre a jour",
-    received_title: "Cheques recus a deposer",
-    received_summary: "{count} cheque(s) en attente de depot. Total: {total}.",
+    site_received_title: "Cheques recus a Richelieu - a transmettre",
+    site_received_summary: "{count} cheque(s) encore sur le site de reception. Total: {total}.",
+    mark_in_transit: "Marquer la selection comme envoyee a l'administration",
+    transit_title: "Cheques en cours d'acheminement",
+    transit_summary: "{count} cheque(s) annonces comme expedies. Total: {total}.",
+    mark_with_admin: "Confirmer la reception par l'administration",
+    received_title: "Cheques prets a deposer",
+    received_summary: "{count} cheque(s) avec l'administration ou pret(s) a Bar-le-Duc. Total: {total}.",
     deposit_reference: "Reference depot",
     deposit_reference_placeholder: "Depot banque, bordereau...",
     deposit_date: "Date depot",
@@ -71,6 +86,15 @@ const CHECK_DEPOSIT_TEXT: Record<UiLanguage, Record<string, string>> = {
     invoice: "Invoice",
     amount: "Amount",
     status: "Status",
+    receipt_location: "Received at",
+    custody: "Physical location",
+    custody_site_received: "Received on site",
+    custody_in_transit: "In transit to administration",
+    custody_with_admin: "With administration",
+    custody_ready_site: "Ready for local deposit",
+    custody_deposited: "Deposited at bank",
+    custody_cashed: "Cashed",
+    custody_refused: "Refused",
     status_received: "Received",
     status_deposited: "Deposited",
     status_cashed: "Cashed",
@@ -97,8 +121,14 @@ const CHECK_DEPOSIT_TEXT: Record<UiLanguage, Record<string, string>> = {
     batch_reference_placeholder: "Bank deposit, slip, remittance...",
     operation_date: "Operation date",
     import_submit: "Import and update",
-    received_title: "Received checks to deposit",
-    received_summary: "{count} check(s) awaiting deposit. Total: {total}.",
+    site_received_title: "Checks received at Richelieu - to forward",
+    site_received_summary: "{count} check(s) still at the receipt site. Total: {total}.",
+    mark_in_transit: "Mark selection as sent to administration",
+    transit_title: "Checks in transit",
+    transit_summary: "{count} check(s) declared as sent. Total: {total}.",
+    mark_with_admin: "Confirm receipt by administration",
+    received_title: "Checks ready for deposit",
+    received_summary: "{count} check(s) with administration or ready at Bar-le-Duc. Total: {total}.",
     deposit_reference: "Deposit reference",
     deposit_reference_placeholder: "Bank deposit, slip...",
     deposit_date: "Deposit date",
@@ -179,6 +209,20 @@ function statusClass(status: string): string {
   return "status-warn";
 }
 
+function custodyLabel(status: string | null, language: UiLanguage): string {
+  const normalized = String(status || "WITH_ADMINISTRATION").trim().toUpperCase();
+  const keyByStatus: Record<string, string> = {
+    RECEIVED_ON_SITE: "custody_site_received",
+    IN_TRANSIT_TO_ADMINISTRATION: "custody_in_transit",
+    WITH_ADMINISTRATION: "custody_with_admin",
+    READY_FOR_DEPOSIT_AT_SITE: "custody_ready_site",
+    DEPOSITED_AT_BANK: "custody_deposited",
+    CASHED: "custody_cashed",
+    REFUSED: "custody_refused",
+  };
+  return tt(language, keyByStatus[normalized] || "custody_with_admin");
+}
+
 function normalizeSearch(value: string): string {
   return value
     .normalize("NFD")
@@ -202,6 +246,8 @@ function checkMatchesQuery(row: AdminCheckDepositPaymentOut, query: string): boo
     row.amount_incl_vat,
     row.status,
     row.tracking_note ?? "",
+    row.receipt_location_name ?? "",
+    row.custody_status ?? "",
   ].join(" "));
   return haystack.includes(query);
 }
@@ -230,6 +276,8 @@ function CheckRowsTable({
             <th>{tt(language, "invoice")}</th>
             <th>{tt(language, "amount")}</th>
             <th>{tt(language, "status")}</th>
+            <th>{tt(language, "receipt_location")}</th>
+            <th>{tt(language, "custody")}</th>
           </tr>
         </thead>
         <tbody>
@@ -253,6 +301,10 @@ function CheckRowsTable({
               <td data-mobile-label={tt(language, "status")}>
                 <span className={`status-pill ${statusClass(row.status)}`}>{statusLabel(row.status, language)}</span>
                 {row.tracking_note ? <small className="muted">{row.tracking_note}</small> : null}
+              </td>
+              <td data-mobile-label={tt(language, "receipt_location")}>{row.receipt_location_name || (language === "fr" ? "Historique" : "Legacy")}</td>
+              <td data-mobile-label={tt(language, "custody")}>
+                <span className="status-pill status-info">{custodyLabel(row.custody_status, language)}</span>
               </td>
             </tr>
           ))}
@@ -289,6 +341,11 @@ export default async function AdminCheckDepositsPage({ searchParams }: { searchP
   const allChecks = checksResult.ok ? checksResult.data : [];
   const checks = allChecks.filter((row) => checkMatchesQuery(row, searchQuery));
   const received = checks.filter((row) => row.status.trim().toUpperCase() === "CHECK_RECEIVED");
+  const receivedAtSite = received.filter((row) => String(row.custody_status || "").toUpperCase() === "RECEIVED_ON_SITE");
+  const inTransit = received.filter((row) => String(row.custody_status || "").toUpperCase() === "IN_TRANSIT_TO_ADMINISTRATION");
+  const readyForDeposit = received.filter((row) =>
+    ["", "WITH_ADMINISTRATION", "READY_FOR_DEPOSIT_AT_SITE"].includes(String(row.custody_status || "").toUpperCase()),
+  );
   const deposited = checks.filter((row) => row.status.trim().toUpperCase() === "CHECK_DEPOSITED");
   const refused = checks.filter((row) => row.status.trim().toUpperCase() === "CHECK_REFUSED");
   const okMessage = readParam(searchParams, "ok");
@@ -357,10 +414,40 @@ export default async function AdminCheckDepositsPage({ searchParams }: { searchP
       </section>
 
       <section className="card span-2">
+        <h3>{tt(language, "site_received_title")}</h3>
+        <p className="muted">{tt(language, "site_received_summary", { count: receivedAtSite.length, total: formatRowsTotal(receivedAtSite, language) })}</p>
+        <form action={bulkUpdateAdminCheckCustodyAction} className="top-gap-sm">
+          <input type="hidden" name="return_to" value={returnTo} />
+          <input type="hidden" name="target_custody_status" value="IN_TRANSIT_TO_ADMINISTRATION" />
+          <CheckRowsTable rows={receivedAtSite} language={language} />
+          {receivedAtSite.length > 0 ? (
+            <div className="row top-gap-sm">
+              <button type="submit">{tt(language, "mark_in_transit")}</button>
+            </div>
+          ) : null}
+        </form>
+      </section>
+
+      <section className="card span-2">
+        <h3>{tt(language, "transit_title")}</h3>
+        <p className="muted">{tt(language, "transit_summary", { count: inTransit.length, total: formatRowsTotal(inTransit, language) })}</p>
+        <form action={bulkUpdateAdminCheckCustodyAction} className="top-gap-sm">
+          <input type="hidden" name="return_to" value={returnTo} />
+          <input type="hidden" name="target_custody_status" value="WITH_ADMINISTRATION" />
+          <CheckRowsTable rows={inTransit} language={language} />
+          {inTransit.length > 0 ? (
+            <div className="row top-gap-sm">
+              <button type="submit">{tt(language, "mark_with_admin")}</button>
+            </div>
+          ) : null}
+        </form>
+      </section>
+
+      <section className="card span-2">
         <div className="row spread wrap gap-sm">
           <div>
             <h3>{tt(language, "received_title")}</h3>
-            <p className="muted">{tt(language, "received_summary", { count: received.length, total: formatRowsTotal(received, language) })}</p>
+            <p className="muted">{tt(language, "received_summary", { count: readyForDeposit.length, total: formatRowsTotal(readyForDeposit, language) })}</p>
           </div>
         </div>
         <form action={bulkUpdateAdminCheckDepositStatusAction} className="top-gap-sm">
@@ -376,8 +463,8 @@ export default async function AdminCheckDepositsPage({ searchParams }: { searchP
               <input type="date" name="effective_date" defaultValue={todayDateValue()} />
             </label>
           </div>
-          <CheckRowsTable rows={received} language={language} />
-          {received.length > 0 ? (
+          <CheckRowsTable rows={readyForDeposit} language={language} />
+          {readyForDeposit.length > 0 ? (
             <div className="row top-gap-sm">
               <button type="submit">{tt(language, "mark_deposited")}</button>
             </div>
