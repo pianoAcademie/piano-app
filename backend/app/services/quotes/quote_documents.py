@@ -1722,6 +1722,27 @@ def _planning_block_has_custom_period(block: dict[str, Any]) -> bool:
     return bool(block.get("custom_period")) or bool(block.get("forced_planning")) or source in {"custom_period", "forced_planning"}
 
 
+def _planning_block_is_live(block: dict[str, Any]) -> bool:
+    """Return whether a block mirrors a real recurring planning slot.
+
+    Typeform quotes created before the source marker was introduced already carry
+    enough stable identifiers to recognize them. Keeping this compatibility path
+    lets an existing quote refresh the complete school-year series instead of
+    staying frozen on the occurrences that happened to be materialized at draft
+    creation time.
+    """
+
+    if str(block.get("source") or "").strip().lower() == "live_planning":
+        return True
+    if _planning_block_has_custom_period(block) or bool(block.get("selection_pending")):
+        return False
+    return bool(
+        str(block.get("recommendation_key") or "").strip()
+        and str(block.get("series_key") or "").strip()
+        and str(block.get("school_year_label") or block.get("calendar_school_year") or "").strip()
+    )
+
+
 def _planning_block_custom_period_source(block: dict[str, Any]) -> str:
     if not _planning_block_has_custom_period(block):
         return ""
@@ -1887,7 +1908,7 @@ def _sessions_from_planning_block(db: Session, block: dict[str, Any]) -> list[di
     )
     school_year_bounds = _school_year_bounds_from_label(str(block.get("school_year_label") or block.get("calendar_school_year") or ""))
     teaching_end_date = _school_year_teaching_end_from_block(block)
-    is_live_planning_block = str(block.get("source") or "").strip() == "live_planning"
+    is_live_planning_block = _planning_block_is_live(block)
     if teaching_end_date is not None:
         if _planning_block_should_extend_to_location_teaching_end(block, effective_end_date, teaching_end_date):
             effective_end_date = teaching_end_date
@@ -2582,7 +2603,7 @@ def _calendar_snapshot_with_planning_sessions(db: Session | None, calendar_snaps
         if refreshed_block_sessions:
             refreshed_dates = {str(item.get("date") or "").strip() for item in refreshed_block_sessions}
             replacement_dates = set(refreshed_dates)
-            if str(block.get("source") or "").strip() == "live_planning" or _is_solfege_planning_block(block):
+            if _planning_block_is_live(block) or _is_solfege_planning_block(block):
                 replacement_dates.update(
                     str(item.get("date") or "").strip()
                     for item in _expected_sessions_from_planning_block(block)

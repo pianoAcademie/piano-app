@@ -6306,6 +6306,7 @@ def _calendar_snapshot_from_analysis(
             series_key = str(session_obj.recurrence_group_id or session_obj.id)
             blocks.append(
                 {
+                    "source": "live_planning",
                     "activity_id": str(activity.id),
                     "recommendation_key": _session_recommendation_key(recommendation),
                     "activity_label": activity.name,

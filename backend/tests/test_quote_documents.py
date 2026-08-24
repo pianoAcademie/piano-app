@@ -1698,7 +1698,7 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
         self.assertNotIn("2026-09-18", dates)
         self.assertEqual(hydrated["sessions_count"], 3)
 
-    def test_live_planning_block_extends_expected_sessions_after_sparse_live_tail(self) -> None:
+    def test_legacy_typeform_planning_block_extends_expected_sessions_after_sparse_live_tail(self) -> None:
         activity_id = uuid4()
         location_id = uuid4()
         recurrence_id = uuid4()
@@ -1799,8 +1799,8 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
         snapshot = {
             "blocks": [
                 {
-                    "source": "live_planning",
                     "activity_id": str(activity_id),
+                    "recommendation_key": f"activity:{activity_id}",
                     "activity_label": "Eveil musical",
                     "location_id": str(location_id),
                     "location_label": "Rue de Richelieu",
