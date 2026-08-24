@@ -69,6 +69,7 @@ import SendClientAccessLink from "../../../../components/send-client-access-link
 import InvoiceLineSelection from "../../../../components/invoice-line-selection";
 import FamilyBillingSplitEditor from "../../../../components/family-billing-split-editor";
 import ConfirmSubmitButton from "../../../../components/confirm-submit-button";
+import AutomaticInvoicePreview from "../../../../components/automatic-invoice-preview";
 import type {
   AdminClientBookingOut,
   AdminClientFamilyOut,
@@ -244,37 +245,7 @@ function addMonths(value: Date, months: number): Date {
   return next;
 }
 
-function addYears(value: Date, years: number): Date {
-  return addMonths(value, years * 12);
-}
-
 type InvoiceFrequency = "MONTHLY" | "BIMONTHLY" | "QUARTERLY" | "YEARLY";
-
-function addFrequency(value: Date, frequency: InvoiceFrequency): Date {
-  if (frequency === "BIMONTHLY") {
-    return addMonths(value, 2);
-  }
-  if (frequency === "QUARTERLY") {
-    return addMonths(value, 3);
-  }
-  if (frequency === "YEARLY") {
-    return addYears(value, 1);
-  }
-  return addMonths(value, 1);
-}
-
-function subtractFrequency(value: Date, frequency: InvoiceFrequency): Date {
-  if (frequency === "BIMONTHLY") {
-    return addMonths(value, -2);
-  }
-  if (frequency === "QUARTERLY") {
-    return addMonths(value, -3);
-  }
-  if (frequency === "YEARLY") {
-    return addYears(value, -1);
-  }
-  return addMonths(value, -1);
-}
 
 function formatDateForInput(value: string | null | undefined, fallback: string): string {
   if (!value) {
@@ -3208,52 +3179,6 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     : tabHref(client.id, "factures");
   const invoiceAutoLegalEntityIdInputValue =
     legalEntities.some((entity) => entity.id === invoiceAutoLegalEntityId) ? invoiceAutoLegalEntityId : legalEntities[0]?.id ?? "";
-  const invoiceAutoNextRunInputValue = (() => {
-    const cycleStartDate = new Date(`${invoiceAutoCycleStartDateInputValue}T00:00:00.000Z`);
-    const todayDate = new Date(`${todayInputValue}T00:00:00.000Z`);
-    if (Number.isNaN(cycleStartDate.getTime())) {
-      return invoiceAutoCycleStartDateInputValue;
-    }
-    let nextRun = cycleStartDate;
-    let guard = 0;
-    while (nextRun.getTime() < todayDate.getTime() && guard < 240) {
-      nextRun = addFrequency(nextRun, invoiceAutoFrequency);
-      guard += 1;
-    }
-    return formatDateInput(nextRun);
-  })();
-  const invoiceAutoPreviewPeriodInputValues = (() => {
-    const nextRunDate = new Date(`${invoiceAutoNextRunInputValue}T00:00:00.000Z`);
-    if (Number.isNaN(nextRunDate.getTime())) {
-      return {
-        startDate: invoiceAutoCycleStartDateInputValue,
-        endDate: invoiceAutoCycleStartDateInputValue,
-      };
-    }
-    if (invoiceAutoBillingTiming === "PREVIOUS_LESSONS") {
-      const startDate = subtractFrequency(nextRunDate, invoiceAutoFrequency);
-      const endDate = nextRunDate;
-      return {
-        startDate: formatDateInput(startDate),
-        endDate: formatDateInput(endDate),
-      };
-    }
-    const endDate = addFrequency(nextRunDate, invoiceAutoFrequency);
-    return {
-      startDate: formatDateInput(nextRunDate),
-      endDate: formatDateInput(endDate),
-    };
-  })();
-  const invoiceAutoPreviewDueDateInputValue = (() => {
-    const issueDate = new Date(`${invoiceAutoNextRunInputValue}T00:00:00.000Z`);
-    if (Number.isNaN(issueDate.getTime())) {
-      return invoiceAutoNextRunInputValue;
-    }
-    if (invoiceAutoDueDateRuleType === "X_DAYS_AFTER_ISSUE") {
-      return formatDateInput(addDays(issueDate, invoiceAutoDueDateDaysOffset));
-    }
-    return formatDateInput(issueDate);
-  })();
   const invoiceWizardModeHref = (mode: "MANUAL" | "AUTO"): string => {
     const params: Record<string, string> = {
       payment_modal: "invoice_range",
@@ -7142,11 +7067,6 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   <input type="hidden" name="group_adjustments_by_type" value={invoiceGroupAdjustmentsByType ? "true" : "false"} />
                   <input type="hidden" name="include_discount_adjustments" value={invoiceIncludeDiscountAdjustments ? "true" : "false"} />
                   <input type="hidden" name="include_supplement_adjustments" value={invoiceIncludeSupplementAdjustments ? "true" : "false"} />
-                  <input type="hidden" name="issued_date" value={invoiceAutoNextRunInputValue} />
-                  <input type="hidden" name="start_date" value={invoiceAutoPreviewPeriodInputValues.startDate} />
-                  <input type="hidden" name="end_date" value={invoiceAutoPreviewPeriodInputValues.endDate} />
-                  <input type="hidden" name="due_date" value={invoiceAutoPreviewDueDateInputValue} />
-                  <input type="hidden" name="no_due_date" value="false" />
                   <input type="hidden" name="public_note" value={invoicePublicNote} />
                   <input type="hidden" name="private_note" value={invoicePrivateNote} />
 
@@ -7262,31 +7182,15 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                     </div>
                   </article>
 
-                  <article className="card modal-card invoice-wizard-card span-2">
-                    <h4>{t("admin.client_detail.invoice_preview_section")}</h4>
-                    <div className="grid cols-2">
-                      <p>{t("admin.client_detail.invoice_preview_next_run", { date: formatDateInputLabel(invoiceAutoNextRunInputValue, language) })}</p>
-                      <p>
-                        {t("admin.client_detail.invoice_preview_period", {
-                          start: formatDateInputLabel(invoiceAutoPreviewPeriodInputValues.startDate, language),
-                          end: formatDateInputLabel(invoiceAutoPreviewPeriodInputValues.endDate, language),
-                        })}
-                      </p>
-                      <p>
-                        {t("admin.client_detail.invoice_preview_due", {
-                          date: formatDateInputLabel(invoiceAutoPreviewDueDateInputValue, language),
-                        })}
-                      </p>
-                      <p>
-                        {t("admin.client_detail.invoice_preview_mode", {
-                          mode:
-                            invoiceAutoBillingTiming === "PREVIOUS_LESSONS"
-                              ? t("admin.client_detail.invoice_billing_previous")
-                              : t("admin.client_detail.invoice_billing_upcoming"),
-                        })}
-                      </p>
-                    </div>
-                  </article>
+                  <AutomaticInvoicePreview
+                    language={language}
+                    today={todayInputValue}
+                    initialCycleStart={invoiceAutoCycleStartDateInputValue}
+                    initialFrequency={invoiceAutoFrequency}
+                    initialBillingTiming={invoiceAutoBillingTiming}
+                    initialDueDateRule={invoiceAutoDueDateRuleType}
+                    initialDueDateDaysOffset={invoiceAutoDueDateDaysOffset}
+                  />
                 </form>
               ) : null}
 

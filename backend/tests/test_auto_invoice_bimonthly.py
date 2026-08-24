@@ -1,4 +1,5 @@
 from datetime import date
+from pathlib import Path
 
 from app.api.routes.admin_clients import (
     _compute_auto_invoice_next_run_date,
@@ -54,3 +55,16 @@ def test_bimonthly_next_run_advances_by_two_months() -> None:
         frequency="BIMONTHLY",
         today=date(2027, 2, 15),
     ) == date(2027, 3, 1)
+
+
+def test_bimonthly_frequency_is_allowed_by_database_migration() -> None:
+    migration_path = (
+        Path(__file__).resolve().parents[1]
+        / "alembic"
+        / "versions"
+        / "20260824_0207_allow_bimonthly_auto_invoice_rules.py"
+    )
+
+    source = migration_path.read_text(encoding="utf-8")
+
+    assert "frequency IN ('MONTHLY','BIMONTHLY','QUARTERLY','YEARLY')" in source
