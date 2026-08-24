@@ -1534,7 +1534,7 @@ class AdminRangeInvoiceCreateRequest(BaseModel):
 
 class AdminClientAutoInvoiceRuleUpsertRequest(BaseModel):
     cycle_start_date: date
-    frequency: Literal["MONTHLY", "QUARTERLY", "YEARLY"] = "MONTHLY"
+    frequency: Literal["MONTHLY", "BIMONTHLY", "QUARTERLY", "YEARLY"] = "MONTHLY"
     billing_timing: Literal["UPCOMING_LESSONS", "PREVIOUS_LESSONS"] = "UPCOMING_LESSONS"
     due_date_rule_type: Literal["SAME_DAY_ISSUE", "X_DAYS_AFTER_ISSUE"] = "SAME_DAY_ISSUE"
     due_date_days_offset: int | None = Field(default=None, ge=0, le=365)
@@ -1549,7 +1549,7 @@ class AdminClientAutoInvoiceRuleOut(BaseModel):
     client_id: UUID
     legal_entity_id: UUID
     cycle_start_date: date
-    frequency: Literal["MONTHLY", "QUARTERLY", "YEARLY"]
+    frequency: Literal["MONTHLY", "BIMONTHLY", "QUARTERLY", "YEARLY"]
     billing_timing: Literal["UPCOMING_LESSONS", "PREVIOUS_LESSONS"]
     due_date_rule_type: Literal["SAME_DAY_ISSUE", "X_DAYS_AFTER_ISSUE"]
     due_date_days_offset: int | None = None

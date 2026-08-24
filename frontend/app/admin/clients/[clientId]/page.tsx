@@ -247,7 +247,12 @@ function addYears(value: Date, years: number): Date {
   return addMonths(value, years * 12);
 }
 
-function addFrequency(value: Date, frequency: "MONTHLY" | "QUARTERLY" | "YEARLY"): Date {
+type InvoiceFrequency = "MONTHLY" | "BIMONTHLY" | "QUARTERLY" | "YEARLY";
+
+function addFrequency(value: Date, frequency: InvoiceFrequency): Date {
+  if (frequency === "BIMONTHLY") {
+    return addMonths(value, 2);
+  }
   if (frequency === "QUARTERLY") {
     return addMonths(value, 3);
   }
@@ -257,7 +262,10 @@ function addFrequency(value: Date, frequency: "MONTHLY" | "QUARTERLY" | "YEARLY"
   return addMonths(value, 1);
 }
 
-function subtractFrequency(value: Date, frequency: "MONTHLY" | "QUARTERLY" | "YEARLY"): Date {
+function subtractFrequency(value: Date, frequency: InvoiceFrequency): Date {
+  if (frequency === "BIMONTHLY") {
+    return addMonths(value, -2);
+  }
   if (frequency === "QUARTERLY") {
     return addMonths(value, -3);
   }
@@ -2017,8 +2025,12 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const invoiceAutoCycleStartDateInputValue = isDateInput(invoiceAutoCycleStartRaw)
     ? invoiceAutoCycleStartRaw
     : nextMonthCycleStartInputValue;
-  const invoiceAutoFrequency: "MONTHLY" | "QUARTERLY" | "YEARLY" =
-    invoiceAutoFrequencyRaw === "QUARTERLY" || invoiceAutoFrequencyRaw === "YEARLY" ? invoiceAutoFrequencyRaw : "MONTHLY";
+  const invoiceAutoFrequency: InvoiceFrequency =
+    invoiceAutoFrequencyRaw === "BIMONTHLY" ||
+    invoiceAutoFrequencyRaw === "QUARTERLY" ||
+    invoiceAutoFrequencyRaw === "YEARLY"
+      ? invoiceAutoFrequencyRaw
+      : "MONTHLY";
   const invoiceAutoBillingTiming: "UPCOMING_LESSONS" | "PREVIOUS_LESSONS" =
     invoiceAutoBillingTimingRaw === "PREVIOUS_LESSONS" ? "PREVIOUS_LESSONS" : "UPCOMING_LESSONS";
   const invoiceAutoDueDateRuleType: "SAME_DAY_ISSUE" | "X_DAYS_AFTER_ISSUE" =
@@ -7098,6 +7110,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                         {t("admin.client_detail.invoice_frequency_required")}
                         <select name="auto_frequency" defaultValue={invoiceAutoFrequency}>
                           <option value="MONTHLY">{t("admin.client_detail.invoice_frequency_monthly")}</option>
+                          <option value="BIMONTHLY">{t("admin.client_detail.invoice_frequency_bimonthly")}</option>
                           <option value="QUARTERLY">{t("admin.client_detail.invoice_frequency_quarterly")}</option>
                           <option value="YEARLY">{t("admin.client_detail.invoice_frequency_yearly")}</option>
                         </select>

@@ -28,6 +28,8 @@ class AutoInvoiceBillingJobResult:
 
 def _months_for_frequency(frequency: str) -> int:
     normalized = (frequency or "").strip().upper()
+    if normalized == "BIMONTHLY":
+        return 2
     if normalized == "QUARTERLY":
         return 3
     if normalized == "YEARLY":

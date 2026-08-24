@@ -805,7 +805,7 @@ export type AdminClientAutoInvoiceRuleOut = {
   client_id: string;
   legal_entity_id: string;
   cycle_start_date: string;
-  frequency: "MONTHLY" | "QUARTERLY" | "YEARLY";
+  frequency: "MONTHLY" | "BIMONTHLY" | "QUARTERLY" | "YEARLY";
   billing_timing: "UPCOMING_LESSONS" | "PREVIOUS_LESSONS";
   due_date_rule_type: "SAME_DAY_ISSUE" | "X_DAYS_AFTER_ISSUE";
   due_date_days_offset: number | null;

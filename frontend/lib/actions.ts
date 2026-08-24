@@ -5943,7 +5943,10 @@ export async function createAdminClientRangeInvoiceAction(formData: FormData): P
 
   const autoCycleStartDate = optionalField(formData, "auto_cycle_start_date");
   const autoFrequencyRaw = String(formData.get("auto_frequency") ?? "MONTHLY").trim().toUpperCase();
-  const autoFrequency = autoFrequencyRaw === "QUARTERLY" || autoFrequencyRaw === "YEARLY" ? autoFrequencyRaw : "MONTHLY";
+  const autoFrequency =
+    autoFrequencyRaw === "BIMONTHLY" || autoFrequencyRaw === "QUARTERLY" || autoFrequencyRaw === "YEARLY"
+      ? autoFrequencyRaw
+      : "MONTHLY";
   const autoBillingTimingRaw = String(formData.get("auto_billing_timing") ?? "UPCOMING_LESSONS").trim().toUpperCase();
   const autoBillingTiming = autoBillingTimingRaw === "PREVIOUS_LESSONS" ? "PREVIOUS_LESSONS" : "UPCOMING_LESSONS";
   const autoDueDateRuleTypeRaw = String(formData.get("auto_due_date_rule_type") ?? "SAME_DAY_ISSUE").trim().toUpperCase();
@@ -6124,7 +6127,8 @@ export async function createAdminClientRangeInvoiceAction(formData: FormData): P
         auto_cycle_start_date: autoCycleStartDate,
         auto_period_scope: autoBillingTiming === "PREVIOUS_LESSONS" ? "PAST" : "FUTURE",
         auto_frequency: "MONTHLY",
-        auto_repeat_every: autoFrequency === "YEARLY" ? 12 : autoFrequency === "QUARTERLY" ? 3 : 1,
+        auto_repeat_every:
+          autoFrequency === "YEARLY" ? 12 : autoFrequency === "QUARTERLY" ? 3 : autoFrequency === "BIMONTHLY" ? 2 : 1,
         auto_layout_style: "NORMAL",
         auto_include_previous_balance: true,
         auto_send_email: false,

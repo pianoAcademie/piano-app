@@ -350,7 +350,7 @@ INVOICE_RANGE_LAYOUT_ALIASES = {
     "GROUPED": "COMPILED",
 }
 INVOICE_RANGE_GENERATION_MODES = {"MANUAL", "AUTO"}
-AUTO_INVOICE_FREQUENCIES = {"MONTHLY", "QUARTERLY", "YEARLY"}
+AUTO_INVOICE_FREQUENCIES = {"MONTHLY", "BIMONTHLY", "QUARTERLY", "YEARLY"}
 AUTO_INVOICE_BILLING_TIMINGS = {"UPCOMING_LESSONS", "PREVIOUS_LESSONS"}
 AUTO_INVOICE_DUE_RULE_TYPES = {"SAME_DAY_ISSUE", "X_DAYS_AFTER_ISSUE"}
 AUTO_INVOICE_RULE_STATUSES = {"ACTIVE", "PAUSED", "ARCHIVED"}
@@ -595,6 +595,8 @@ def _subtract_months_utc(value: datetime, months: int) -> datetime:
 
 def _months_for_auto_invoice_frequency(frequency: str) -> int:
     normalized = (frequency or "").strip().upper()
+    if normalized == "BIMONTHLY":
+        return 2
     if normalized == "QUARTERLY":
         return 3
     if normalized == "YEARLY":
