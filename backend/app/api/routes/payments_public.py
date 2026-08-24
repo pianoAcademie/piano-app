@@ -98,6 +98,31 @@ def _metadata_uuid(metadata: dict[str, str], key: str) -> UUID | None:
         return None
 
 
+def _stripe_reference_belongs_to_subscription(
+    *,
+    subscription_id: UUID,
+    current_reference: str,
+    incoming_reference: str,
+    metadata: dict[str, str],
+) -> bool:
+    """Accept a newer Stripe object for the same subscription checkout.
+
+    Stripe may emit both Checkout Session (``cs_``) and PaymentIntent (``pi_``)
+    events. A customer can also open two checkout sessions in quick succession,
+    so the reference stored on the subscription is not necessarily the object
+    that ultimately gets paid. The signed Stripe payload metadata is the stable
+    link in that situation.
+    """
+
+    if not current_reference or current_reference == incoming_reference:
+        return True
+    if detect_provider_from_reference(current_reference) != PaymentProvider.STRIPE:
+        return False
+    if detect_provider_from_reference(incoming_reference) != PaymentProvider.STRIPE:
+        return False
+    return _metadata_uuid(metadata, "subscription_id") == subscription_id
+
+
 def _verify_stripe_webhook_signature(
     raw_body: bytes,
     signature_header: str,
@@ -252,7 +277,21 @@ async def payment_webhook(
             else (sub.payment_provider_subscription_ref or "").strip()
         )
         if current_reference and payment_reference and payment_reference != current_reference:
-            return {"ok": True, "processed": False, "reason": "reference_mismatch"}
+            if not (
+                preloaded_lookup is not None
+                and _stripe_reference_belongs_to_subscription(
+                    subscription_id=sub.id,
+                    current_reference=current_reference,
+                    incoming_reference=payment_reference,
+                    metadata=preloaded_lookup.metadata,
+                )
+            ):
+                return {"ok": True, "processed": False, "reason": "reference_mismatch"}
+            # Keep the successfully reconciled Stripe object as the canonical
+            # reference. This also makes the client-side confirmation endpoint
+            # idempotent after a competing checkout session was opened.
+            sub.payment_provider_subscription_ref = payment_reference
+            current_reference = payment_reference
         if not current_reference and payment_reference and cycle is None:
             sub.payment_provider_subscription_ref = payment_reference
 

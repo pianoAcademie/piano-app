@@ -6,12 +6,17 @@ import hmac
 from decimal import Decimal
 from types import SimpleNamespace
 from urllib.parse import parse_qs
+from uuid import uuid4
 
 from app.services import payment_checkout, psp_gateway
 from app.services.payment_checkout import CheckoutCreateRequest
 from app.services.payment_provider import PaymentProvider, detect_provider_from_reference
 from app.services.psp_gateway import RecurringChargeRequest, StripeGateway
-from app.api.routes.payments_public import _extract_reference, _verify_stripe_webhook_signature
+from app.api.routes.payments_public import (
+    _extract_reference,
+    _stripe_reference_belongs_to_subscription,
+    _verify_stripe_webhook_signature,
+)
 
 
 class _Response:
@@ -308,4 +313,24 @@ def test_stripe_webhook_signature_is_verified_with_tolerance() -> None:
         f"t={timestamp},v1={signature}",
         secret,
         now_timestamp=timestamp + 301,
+    ) is False
+
+
+def test_stripe_webhook_accepts_paid_intent_from_competing_checkout_for_same_subscription() -> None:
+    subscription_id = uuid4()
+
+    assert _stripe_reference_belongs_to_subscription(
+        subscription_id=subscription_id,
+        current_reference="cs_test_unpaid_checkout",
+        incoming_reference="pi_test_paid_intent",
+        metadata={"subscription_id": str(subscription_id)},
+    ) is True
+
+
+def test_stripe_webhook_rejects_reference_from_another_subscription() -> None:
+    assert _stripe_reference_belongs_to_subscription(
+        subscription_id=uuid4(),
+        current_reference="cs_test_unpaid_checkout",
+        incoming_reference="pi_test_paid_intent",
+        metadata={"subscription_id": str(uuid4())},
     ) is False
