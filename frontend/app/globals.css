@@ -4518,6 +4518,90 @@ button.danger:focus-visible {
   line-height: 1.5;
 }
 
+.check-receipt-email-preview {
+  width: min(620px, 100%);
+  margin-top: 10px;
+  overflow: hidden;
+  border: 1px solid #e3e7ee;
+  border-radius: 16px;
+  background: #fff;
+  color: #172033;
+}
+
+.check-receipt-email-preview-header {
+  display: grid;
+  gap: 5px;
+  padding: 24px 26px;
+  background: #172033;
+  color: #fff;
+}
+
+.check-receipt-email-preview-header span,
+.check-receipt-email-preview-header small {
+  color: #e4b85d;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 1.2px;
+}
+
+.check-receipt-email-preview-header strong {
+  font-size: clamp(23px, 4vw, 28px);
+  line-height: 1.25;
+}
+
+.check-receipt-email-preview-content {
+  display: grid;
+  gap: 16px;
+  padding: 24px 26px 26px;
+}
+
+.check-receipt-email-preview-content p,
+.check-receipt-email-preview-content dl,
+.check-receipt-email-preview-content dd {
+  margin: 0;
+}
+
+.check-receipt-email-preview-greeting {
+  font-size: 17px;
+}
+
+.check-receipt-email-preview-content dl {
+  overflow: hidden;
+  border: 1px solid #e3e7ee;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.check-receipt-email-preview-content dl > div {
+  display: grid;
+  grid-template-columns: minmax(120px, 40%) 1fr;
+  gap: 12px;
+  padding: 9px 18px;
+}
+
+.check-receipt-email-preview-content dt {
+  color: #667085;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.check-receipt-email-preview-content dd {
+  font-weight: 700;
+}
+
+.check-receipt-email-preview-notice {
+  padding: 16px 18px;
+  border: 1px solid #edd7b3;
+  border-radius: 12px;
+  background: #fff7e6;
+  color: #5f4a2d;
+}
+
+.check-receipt-email-preview-footer {
+  color: #7b8494;
+  text-align: center;
+}
+
 @media (max-width: 900px) {
   .planning-summary-grid {
     grid-template-columns: 1fr;

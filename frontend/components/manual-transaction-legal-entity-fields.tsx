@@ -32,7 +32,13 @@ type CheckReceiptLocationOption = {
 
 type EmailPreview = {
   subject: string;
-  body: string;
+  greeting: string;
+  intro: string;
+  rows: Array<{ label: string; value: string }>;
+  notice: string;
+  eyebrow: string;
+  title: string;
+  footer: string;
 };
 
 type ManualTransactionLegalEntityFieldsProps = {
@@ -102,35 +108,35 @@ export default function ManualTransactionLegalEntityFields({
     : {
         paymentMethodRequired: "Mode de paiement *",
         paymentMethodOptional: "Mode de paiement (optionnel)",
-        select: "Selectionner...",
-        unspecified: "(Non precise)",
+        select: "Sélectionner...",
+        unspecified: "(Non précisé)",
         reconciliation: "Rapprochement facture (optionnel)",
         selection: "Choix",
         invoiceDate: "Date de facture",
         amount: "Montant",
-        invoiceNumber: "Numero de facture",
-        legalEntity: "Entite legale",
-        noInvoice: "Aucune facture emise en attente de paiement a rapprocher.",
-        markPaid: "Marquer manuellement les factures selectionnees comme payees (si montant regle suffisant)",
-        checkHint: "Les cheques sont d'abord enregistres comme recus. Passez-les en encaisses depuis la liste des paiements apres depot en banque.",
-        checkDepositMonth: "Mois de depot prevu (optionnel)",
+        invoiceNumber: "Numéro de facture",
+        legalEntity: "Entité légale",
+        noInvoice: "Aucune facture émise en attente de paiement à rapprocher.",
+        markPaid: "Marquer manuellement les factures sélectionnées comme payées (si le montant réglé est suffisant)",
+        checkHint: "Les chèques sont d'abord enregistrés comme reçus. Passez-les en encaissés depuis la liste des paiements après le dépôt en banque.",
+        checkDepositMonth: "Mois de dépôt prévu (optionnel)",
         checkDepositMonthPlaceholder: "Mois",
-        checkDepositYearPlaceholder: "Annee",
-        checkDepositHelp: "Si renseigne, le libelle et le commentaire du paiement sont prepares automatiquement.",
-        checkReceiptLocation: "Lieu de reception du cheque *",
-        checkReceiptLocationPlaceholder: "Choisir le lieu de reception...",
+        checkDepositYearPlaceholder: "Année",
+        checkDepositHelp: "Si renseigné, le libellé et le commentaire du paiement sont préparés automatiquement.",
+        checkReceiptLocation: "Lieu de réception du chèque *",
+        checkReceiptLocationPlaceholder: "Choisir le lieu de réception...",
         checkReceiptLocationHelp:
-          "A Bar-le-Duc, le cheque est directement pret pour la remise locale. A Richelieu, il devra d'abord etre transmis a l'administration.",
-        receiptEmailGeneric: "Envoyer un recu par courriel au client",
-        receiptEmailCheck: "Notifier le client que le cheque a bien ete recu",
-        emailPreviewTitle: "Apercu du mail",
+          "À Bar-le-Duc, le chèque est directement prêt pour la remise locale. À Richelieu, il devra d'abord être transmis à l'administration.",
+        receiptEmailGeneric: "Envoyer un reçu par courriel au client",
+        receiptEmailCheck: "Notifier le client que le chèque a bien été reçu",
+        emailPreviewTitle: "Aperçu du courriel",
         emailPreviewSubject: "Objet",
         emailPreviewBody: "Message",
         reconciliationHint:
-          "Si le montant du paiement est inferieur au total des factures, elles restent a payer. S il couvre le total, vous pouvez les valider comme payees.",
-        legalEntityRequired: "Entite legale *",
-        separatePaymentPerEntity: "Creer un paiement par entite legale",
-        selectedInvoiceEntityUndetermined: "Impossible de determiner l'entite juridique d'une facture selectionnee",
+          "Si le montant du paiement est inférieur au total des factures, elles restent à payer. S'il couvre le total, vous pouvez les valider comme payées.",
+        legalEntityRequired: "Entité légale *",
+        separatePaymentPerEntity: "Créer un paiement par entité légale",
+        selectedInvoiceEntityUndetermined: "Impossible de déterminer l'entité juridique d'une facture sélectionnée",
       };
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [paymentMethodCode, setPaymentMethodCode] = useState<string>(initialPaymentMethodCode);
@@ -252,7 +258,7 @@ export default function ManualTransactionLegalEntityFields({
     const receivedLabel = formatInputDateLabel(occurredAtField?.value || "", resolvedLanguage);
     const autoText = isEnglish
       ? `Check received on ${receivedLabel} - to deposit in ${checkDepositLabel}`
-      : `Cheque recu le ${receivedLabel} - a deposer en ${checkDepositLabel}`;
+      : `Chèque reçu le ${receivedLabel} - à déposer en ${checkDepositLabel}`;
 
     if (
       descriptionField &&
@@ -289,37 +295,35 @@ export default function ManualTransactionLegalEntityFields({
       const amount = form.querySelector<HTMLInputElement>("input[name='amount_incl_vat']")?.value || "";
       const currency = form.querySelector<HTMLInputElement>("input[name='currency']")?.value || "EUR";
       const occurredAt = form.querySelector<HTMLInputElement>("input[name='occurred_at']")?.value || "";
-      const description = form.querySelector<HTMLTextAreaElement>("textarea[name='description']")?.value.trim() || "";
       const depositLabel = form.querySelector<HTMLInputElement>("input[name='check_deposit_label']")?.value.trim() || "";
       const amountLabel = formatAmountLabel(amount, currency, resolvedLanguage);
       const receivedLabel = formatInputDateLabel(occurredAt, resolvedLanguage);
-      const subject = isEnglish ? `Check received - ${previewClientName}` : `Reception de votre cheque - ${previewClientName}`;
-      const bodyLines = isEnglish
-        ? [
-            `Hello ${previewClientName},`,
-            "",
-            `We confirm that we have received your check for ${amountLabel}.`,
-            `Date received: ${receivedLabel}.`,
-            "",
-            depositLabel
-              ? `This message only confirms receipt of the check. It will be cashed when deposited at the bank as planned during ${depositLabel}.`
-              : "This message only confirms receipt of the check. It will be cashed when it is deposited at the bank.",
-          ]
-        : [
-            `Bonjour ${previewClientName},`,
-            "",
-            `Nous confirmons la bonne reception de votre cheque de ${amountLabel}.`,
-            `Date de reception: ${receivedLabel}.`,
-            "",
-            depositLabel
-              ? `Ce message confirme uniquement la reception du cheque. L'encaissement interviendra lors du depot en banque prevu durant ${depositLabel}.`
-              : "Ce message confirme uniquement la reception du cheque. L'encaissement interviendra lors du depot en banque.",
-          ];
-      if (description) {
-        bodyLines.push("", isEnglish ? `Tracking note: ${description}` : `Information de suivi: ${description}`);
-      }
-      bodyLines.push("", isEnglish ? "Best regards," : "Cordialement,");
-      setCheckEmailPreview({ subject, body: bodyLines.join("\n") });
+      setCheckEmailPreview({
+        subject: isEnglish ? `Check received - ${previewClientName}` : `Réception de votre chèque - ${previewClientName}`,
+        eyebrow: isEnglish ? "PAYMENT" : "PAIEMENT",
+        title: isEnglish ? "Check received" : "Chèque bien reçu",
+        greeting: isEnglish ? `Hello ${previewClientName},` : `Bonjour ${previewClientName},`,
+        intro: isEnglish
+          ? "We confirm that we have received your check."
+          : "Nous vous confirmons la bonne réception de votre chèque.",
+        rows: [
+          { label: isEnglish ? "Check amount" : "Montant du chèque", value: amountLabel },
+          { label: isEnglish ? "Date received" : "Date de réception", value: receivedLabel },
+          ...(depositLabel
+            ? [{ label: isEnglish ? "Planned bank deposit" : "Dépôt en banque prévu", value: depositLabel }]
+            : []),
+        ],
+        notice: isEnglish
+          ? depositLabel
+            ? `Receipt of your check does not mean it has been cashed yet. It will be cashed when deposited at the bank, as planned during ${depositLabel}.`
+            : "Receipt of your check does not mean it has been cashed yet. It will be cashed when deposited at the bank."
+          : depositLabel
+            ? `La réception de votre chèque ne vaut pas encore encaissement. Celui-ci interviendra lors de son dépôt en banque, prévu au cours du mois de ${depositLabel}.`
+            : "La réception de votre chèque ne vaut pas encore encaissement. Celui-ci interviendra lors de son dépôt en banque.",
+        footer: isEnglish
+          ? "This email was sent automatically by Piano Académie."
+          : "Cet e-mail a été envoyé automatiquement par Piano Académie.",
+      });
     };
 
     updatePreview();
@@ -487,7 +491,27 @@ export default function ManualTransactionLegalEntityFields({
               <p>
                 <strong>{text.emailPreviewBody}:</strong>
               </p>
-              <pre className="quote-email-preview-body quote-email-preview-text">{checkEmailPreview.body}</pre>
+              <div className="check-receipt-email-preview">
+                <div className="check-receipt-email-preview-header">
+                  <span>PIANO ACADÉMIE</span>
+                  <small>{checkEmailPreview.eyebrow}</small>
+                  <strong>{checkEmailPreview.title}</strong>
+                </div>
+                <div className="check-receipt-email-preview-content">
+                  <p className="check-receipt-email-preview-greeting">{checkEmailPreview.greeting}</p>
+                  <p>{checkEmailPreview.intro}</p>
+                  <dl>
+                    {checkEmailPreview.rows.map((row) => (
+                      <div key={row.label}>
+                        <dt>{row.label}</dt>
+                        <dd>{row.value}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                  <p className="check-receipt-email-preview-notice">{checkEmailPreview.notice}</p>
+                  <small className="check-receipt-email-preview-footer">{checkEmailPreview.footer}</small>
+                </div>
+              </div>
             </div>
           ) : null}
         </>

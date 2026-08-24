@@ -2498,7 +2498,6 @@ def _send_check_received_notification_email(
     currency: str,
     received_at: datetime,
     check_deposit_label: str | None = None,
-    description: str | None = None,
 ) -> tuple[list[str], str | None, str | None]:
     billing_profile = resolve_billing_profile(db, client)
     try:
@@ -2515,14 +2514,13 @@ def _send_check_received_notification_email(
         amount_label = f"{amount:.2f}".replace(".", ",") + " €"
     normalized_deposit_label = _normalize_optional(check_deposit_label)
     deposit_sentence = (
-        f"Ce message confirme uniquement la réception du chèque. L’encaissement interviendra lors du dépôt en banque prévu durant {normalized_deposit_label}."
+        f"La réception de votre chèque ne vaut pas encore encaissement. Celui-ci interviendra lors de son dépôt en banque, prévu au cours du mois de {normalized_deposit_label}."
         if normalized_deposit_label
-        else "Ce message confirme uniquement la réception du chèque. L’encaissement interviendra lors du dépôt en banque."
+        else "La réception de votre chèque ne vaut pas encore encaissement. Celui-ci interviendra lors de son dépôt en banque."
     )
-    normalized_description = _normalize_optional(description)
     rows = [("Montant du chèque", amount_label), ("Date de réception", received_label)]
-    if normalized_description:
-        rows.append(("Information de suivi", normalized_description))
+    if normalized_deposit_label:
+        rows.append(("Dépôt en banque prévu", normalized_deposit_label))
 
     sender = resolve_sender_profile(db, sender_kind="STUDIO")
     subject = f"Réception de votre chèque - {client_name}"
@@ -2531,7 +2529,7 @@ def _send_check_received_notification_email(
         eyebrow="PAIEMENT",
         title="Chèque bien reçu",
         greeting=f"Bonjour {client_name},",
-        intro="Nous confirmons la bonne réception de votre chèque.",
+        intro="Nous vous confirmons la bonne réception de votre chèque.",
         rows=rows,
         message=deposit_sentence,
     )
@@ -10531,7 +10529,6 @@ def create_admin_client_manual_transaction(
                 currency=currency,
                 received_at=occurred_at,
                 check_deposit_label=payload.check_deposit_label,
-                description=description,
             )
         else:
             billing_profile = resolve_billing_profile(db, client)
