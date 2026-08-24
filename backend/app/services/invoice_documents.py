@@ -679,6 +679,7 @@ COUNTRY_NAME_BY_CODE = {
 INVOICE_TEXT: dict[str, dict[str, str]] = {
     "fr": {
         "document_title": "FACTURE",
+        "credit_note_title": "AVOIR",
         "number_label": "Numero: {invoice_number}",
         "date_label": "Date: {issued_at}",
         "share_capital_label": "Capital social: {share_capital}",
@@ -718,6 +719,7 @@ INVOICE_TEXT: dict[str, dict[str, str]] = {
     },
     "en": {
         "document_title": "INVOICE",
+        "credit_note_title": "CREDIT NOTE",
         "number_label": "Number: {invoice_number}",
         "date_label": "Date: {issued_at}",
         "share_capital_label": "Share capital: {share_capital}",
@@ -1094,6 +1096,7 @@ def render_invoice_period_pdf(
     language: str | None = None,
     company_identity_override: CompanyIdentity | None = None,
     company_identity_snapshot: dict[str, object] | None = None,
+    document_type: str = "INVOICE",
 ) -> bytes:
     identity = (
         company_identity_override
@@ -1105,6 +1108,14 @@ def render_invoice_period_pdf(
         )
     )
     normalized_language = normalize_language(language)
+    normalized_document_type = (document_type or "INVOICE").strip().upper()
+    if normalized_document_type == "CREDIT_NOTE":
+        opening_balance_by_currency = None
+        applied_payment_totals_by_currency = None
+        applied_payment_lines = None
+        total_to_pay_by_currency = None
+        payment_link_url = None
+        due_date = None
     pdf = _SimplePdfDocument()
     logo_resource_name: str | None = None
     logo_width = 0.0
@@ -1168,7 +1179,10 @@ def render_invoice_period_pdf(
         pdf.text(
             x=title_x,
             top_y=54.0,
-            value=_invoice_text(normalized_language, "document_title"),
+            value=_invoice_text(
+                normalized_language,
+                "credit_note_title" if normalized_document_type == "CREDIT_NOTE" else "document_title",
+            ),
             size=12,
             bold=True,
             color=(0.95, 0.78, 0.48),
@@ -1221,17 +1235,18 @@ def render_invoice_period_pdf(
             size=10,
             bold=True,
         )
-        pdf.text(
-            x=330.0,
-            top_y=212.0,
-            value=_invoice_text(
-                normalized_language,
-                "due_date",
-                due_date=(due_date or issued_at.date()).strftime("%d/%m/%Y"),
-            ),
-            size=10,
-            bold=True,
-        )
+        if normalized_document_type != "CREDIT_NOTE":
+            pdf.text(
+                x=330.0,
+                top_y=212.0,
+                value=_invoice_text(
+                    normalized_language,
+                    "due_date",
+                    due_date=(due_date or issued_at.date()).strftime("%d/%m/%Y"),
+                ),
+                size=10,
+                bold=True,
+            )
 
         if not include_table_header:
             return

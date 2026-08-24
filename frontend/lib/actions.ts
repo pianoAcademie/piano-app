@@ -6214,6 +6214,41 @@ export async function updateAdminClientRangeInvoiceStatusAction(formData: FormDa
   redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=${returnTab}`, "ok", t("admin.client_action.invoice_status_updated")));
 }
 
+export async function createAdminClientRangeInvoiceCreditNoteAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
+  const clientId = String(formData.get("client_id") ?? "").trim();
+  const noteId = String(formData.get("note_id") ?? "").trim();
+  const issuedDate = String(formData.get("issued_date") ?? "").trim();
+  const reason = optionalField(formData, "reason");
+  if (!clientId || !noteId || !issuedDate) {
+    redirect(appendQueryMessage("/admin/clients", "error", t("admin.client_action.invalid_invoice")));
+  }
+  const result = await backendRequest<AdminRangeInvoiceOut>(
+    `/api/v1/admin/clients/${clientId}/invoices/range/${noteId}/credit-note`,
+    {
+      method: "POST",
+      body: JSON.stringify({ issued_date: issuedDate, reason }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=factures`, "error", result.message));
+  }
+  revalidatePath(`/admin/clients/${clientId}`);
+  redirect(
+    appendQueryMessage(
+      `/admin/clients/${clientId}?tab=factures`,
+      "ok",
+      `${t("admin.client_action.credit_note_recorded")} : ${result.data.invoice_number}`,
+    ),
+  );
+}
+
 export async function splitAdminClientRangeInvoiceByFamilyAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {

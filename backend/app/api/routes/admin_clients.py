@@ -136,6 +136,7 @@ from app.schemas.admin import (
     AdminClientAutoInvoiceRuleOut,
     AdminClientAutoInvoiceRuleUpsertRequest,
     AdminRangeInvoiceBankTransferManualPaymentRequest,
+    AdminRangeInvoiceCreditNoteRequest,
     AdminRangeInvoiceCreateRequest,
     AdminRangeInvoiceEmailOut,
     AdminRangeInvoiceEmailPreviewOut,
@@ -340,7 +341,7 @@ BANK_TRANSFER_BIC_SETTING_KEY = "bank_transfer_bic"
 DEFAULT_BANK_TRANSFER_ACCOUNT_HOLDER = "SAS PIANO ACADEMIE"
 DEFAULT_BANK_TRANSFER_IBAN = "FR76 1020 7000 9822 2117 9625 586"
 DEFAULT_BANK_TRANSFER_BIC = "CCBPFRPPMTG"
-INVOICE_RANGE_STATUSES = {"ISSUED", "PAID", "CANCELLED"}
+INVOICE_RANGE_STATUSES = {"ISSUED", "PAID", "CANCELLED", "CREDIT_NOTE"}
 INVOICE_RANGE_LAYOUT_ALIASES = {
     "DETAILED": "DETAILED",
     "DETAIL": "DETAILED",
@@ -3204,6 +3205,8 @@ def _normalize_invoice_range_metadata(payload: dict[str, object]) -> dict[str, o
         normalized[field] = value
 
     normalized["layout"] = _normalize_invoice_layout(str(normalized["layout"]))
+    document_type = str(payload.get("document_type") or "INVOICE").strip().upper()
+    normalized["document_type"] = document_type if document_type in {"INVOICE", "CREDIT_NOTE"} else "INVOICE"
 
     totals_raw = payload.get("totals_by_currency")
     if not isinstance(totals_raw, dict):
@@ -3250,6 +3253,8 @@ def _normalize_invoice_range_metadata(payload: dict[str, object]) -> dict[str, o
         "student_user_id",
         "family_billing_payer_user_id",
         "family_billing_source_note_id",
+        "original_invoice_note_id",
+        "credit_note_note_id",
     ):
         raw_uuid = _normalize_optional(str(payload.get(uuid_field) or ""))
         if not raw_uuid:
@@ -3264,6 +3269,10 @@ def _normalize_invoice_range_metadata(payload: dict[str, object]) -> dict[str, o
         "family_billing_allocation_type",
         "late_deposit_auto_reconciled_at",
         "late_deposit_source_invoice_number",
+        "original_invoice_number",
+        "credit_note_number",
+        "credit_note_reason",
+        "credited_at",
     ):
         raw_text = _normalize_optional(str(payload.get(text_field) or ""))
         if raw_text:
@@ -3470,8 +3479,9 @@ def _build_invoice_range_note_message(metadata: dict[str, object]) -> str:
     issued_date = str(metadata.get("issued_date") or "")
     due_date = str(metadata.get("due_date") or "")
     invoice_number = str(metadata.get("invoice_number") or "")
+    document_label = "Avoir" if str(metadata.get("document_type") or "INVOICE").upper() == "CREDIT_NOTE" else "Facture"
     summary = (
-        f"Facture {invoice_number} generee ({start_date} - {end_date}, "
+        f"{document_label} {invoice_number} genere ({start_date} - {end_date}, "
         f"emise le {issued_date}, echeance {due_date})."
     )
     payload_json = json.dumps(metadata, ensure_ascii=True, separators=(",", ":"))
@@ -3628,6 +3638,15 @@ def _invoice_range_out(
             else dict(metadata.get("total_to_pay_by_currency") or {})
         ),
         invoice_status=str(metadata.get("invoice_status") or "ISSUED"),
+        document_type=(
+            "CREDIT_NOTE"
+            if str(metadata.get("document_type") or "INVOICE").strip().upper() == "CREDIT_NOTE"
+            else "INVOICE"
+        ),
+        original_invoice_note_id=_parse_optional_uuid(metadata.get("original_invoice_note_id")),
+        original_invoice_number=_normalize_optional(str(metadata.get("original_invoice_number") or "")),
+        credit_note_note_id=_parse_optional_uuid(metadata.get("credit_note_note_id")),
+        credit_note_number=_normalize_optional(str(metadata.get("credit_note_number") or "")),
         check_coverage_status=(
             check_coverage_status if check_coverage_status in {"NONE", "PARTIAL", "COVERED"} else "NONE"
         ),
@@ -3750,6 +3769,8 @@ def _computed_invoice_range_display_totals(
 ) -> tuple[dict[str, str], dict[str, str]]:
     totals = _invoice_range_decimal_map(metadata.get("totals_by_currency"))
     stored_total_to_pay = _invoice_range_decimal_map(metadata.get("total_to_pay_by_currency"))
+    if str(metadata.get("document_type") or "INVOICE").strip().upper() == "CREDIT_NOTE":
+        return _invoice_range_money_payload(totals), _invoice_range_money_payload(stored_total_to_pay)
     stored_applied_payments = _invoice_range_decimal_map(metadata.get("applied_payment_totals_by_currency"))
     applied_payments = dict(stored_applied_payments)
     raw_auto_include_previous_balance = metadata.get("auto_include_previous_balance")
@@ -4279,7 +4300,7 @@ def _active_invoice_lock_by_payment_key(
     notes_without_lines: list[tuple[UUID, dict[str, object]]] = []
     for metadata in _range_invoice_metadatas_for_client(db, client_id=client_id):
         invoice_status = str(metadata.get("invoice_status") or "ISSUED").strip().upper()
-        if invoice_status == "CANCELLED":
+        if invoice_status in {"CANCELLED", "CREDIT_NOTE"}:
             continue
         invoice_number = _normalize_optional(str(metadata.get("invoice_number") or "")) or "-"
         note_id: UUID | None = None
@@ -12716,6 +12737,164 @@ def split_admin_client_range_invoice_by_family(
     )
 
 
+@router.post("/{client_id}/invoices/range/{note_id}/credit-note", response_model=AdminRangeInvoiceOut)
+def create_admin_client_range_invoice_credit_note(
+    client_id: UUID,
+    note_id: UUID,
+    payload: AdminRangeInvoiceCreditNoteRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminRangeInvoiceOut:
+    _require_client(db, client_id)
+    source_note, source_metadata = _load_range_invoice_note(
+        db,
+        client_id=client_id,
+        note_id=note_id,
+        for_update=True,
+    )
+    source_status = str(source_metadata.get("invoice_status") or "ISSUED").strip().upper()
+    source_document_type = str(source_metadata.get("document_type") or "INVOICE").strip().upper()
+    if source_document_type == "CREDIT_NOTE" or source_status == "CREDIT_NOTE":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Un avoir ne peut pas faire l'objet d'un nouvel avoir")
+    existing_credit_note_id = _parse_optional_uuid(source_metadata.get("credit_note_note_id"))
+    if existing_credit_note_id is not None:
+        existing_credit_note, existing_credit_metadata = _load_range_invoice_note(
+            db,
+            client_id=client_id,
+            note_id=existing_credit_note_id,
+            for_update=False,
+        )
+        return _invoice_range_out(note_id=existing_credit_note.id, metadata=existing_credit_metadata)
+    if source_status == "CANCELLED":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Cette facture est deja annulee")
+
+    source_lines = _invoice_lines_for_note(db, note_id=source_note.id)
+    if not source_lines:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Les lignes figees de cette facture sont introuvables; creation automatique de l'avoir impossible",
+        )
+
+    issued_at = datetime.combine(payload.issued_date, datetime.min.time(), tzinfo=timezone.utc)
+    seller_legal_entity_id = _parse_optional_uuid(source_metadata.get("seller_legal_entity_id"))
+    if seller_legal_entity_id is None:
+        seller_ids = {line.seller_legal_entity_id for line in source_lines if line.seller_legal_entity_id is not None}
+        seller_legal_entity_id = next(iter(seller_ids)) if len(seller_ids) == 1 else None
+    credit_note_number = _allocate_invoice_number_for_seller_entity(
+        db,
+        seller_legal_entity_id=seller_legal_entity_id,
+        issued_at=issued_at,
+    )
+    source_invoice_number = str(source_metadata.get("invoice_number") or "").strip()
+    reason = _normalize_optional(payload.reason) or "Annulation de la facture et remplacement par un nouveau mode de facturation."
+    totals = {
+        currency: f"{-_quantize_money(amount):.2f}"
+        for currency, amount in _invoice_range_decimal_map(source_metadata.get("totals_by_currency")).items()
+    }
+    if not totals:
+        aggregated: dict[str, Decimal] = {}
+        for line in source_lines:
+            currency = _normalize_currency(line.currency, fallback="EUR")
+            aggregated[currency] = _quantize_money(
+                aggregated.get(currency, Decimal("0.00")) + Decimal(line.total_incl_vat)
+            )
+        totals = {currency: f"{-amount:.2f}" for currency, amount in aggregated.items()}
+
+    credit_metadata = dict(source_metadata)
+    for field in (
+        "emailed_at",
+        "reminded_at",
+        "paid_at",
+        "payment_url",
+        "payment_provider",
+        "payment_provider_reference",
+        "payment_amount_paid",
+        "payment_currency",
+        "payment_checkout_status",
+        "payment_lookup_status",
+        "payment_transaction_id",
+        "bank_transfer_order_id",
+        "bank_transfer_order_reference",
+        "bank_transfer_order_status",
+        "bank_transfer_order_expires_at",
+        "bank_transfer_order_paid_at",
+        "reconciled_manual_payment_ids",
+        "applied_payment_totals_by_currency",
+        "applied_payment_lines",
+        "opening_balance_by_currency",
+        "credit_note_note_id",
+        "credit_note_number",
+    ):
+        credit_metadata.pop(field, None)
+    credit_metadata.update(
+        {
+            "document_type": "CREDIT_NOTE",
+            "invoice_number": credit_note_number,
+            "invoice_status": "CREDIT_NOTE",
+            "issued_date": payload.issued_date.isoformat(),
+            "due_date": payload.issued_date.isoformat(),
+            "no_due_date": True,
+            "included_payment_keys": [],
+            "totals_by_currency": totals,
+            "total_to_pay_by_currency": {currency: "0.00" for currency in totals},
+            "original_invoice_note_id": str(source_note.id),
+            "original_invoice_number": source_invoice_number,
+            "credit_note_reason": reason,
+            "credited_at": issued_at.isoformat(),
+            "public_note": (
+                f"Avoir relatif à la facture {source_invoice_number}. Motif : {reason}"
+                if source_invoice_number
+                else f"Motif : {reason}"
+            ),
+            "private_note": _append_private_invoice_note(
+                credit_metadata.get("private_note"),
+                f"Avoir cree pour annuler la facture {source_invoice_number or note_id}.",
+            ),
+        }
+    )
+    credit_note = ClientNoteEntry(
+        user_id=client_id,
+        author_user_id=actor.id,
+        entry_type="MANUAL",
+        message=_build_invoice_range_note_message(credit_metadata),
+    )
+    db.add(credit_note)
+    db.flush()
+    db.add_all(
+        [
+            ClientInvoiceLine(
+                note_id=credit_note.id,
+                user_id=client_id,
+                source=line.source,
+                source_payment_id=line.source_payment_id,
+                occurred_at=line.occurred_at,
+                label=line.label,
+                amount_excl_vat=-_quantize_money(Decimal(line.amount_excl_vat)),
+                vat_rate=Decimal(line.vat_rate),
+                vat_amount=-_quantize_money(Decimal(line.vat_amount)),
+                total_incl_vat=-_quantize_money(Decimal(line.total_incl_vat)),
+                currency=line.currency,
+                billing_entity=line.billing_entity,
+                seller_legal_entity_id=line.seller_legal_entity_id,
+            )
+            for line in source_lines
+        ]
+    )
+
+    source_metadata["invoice_status"] = "CANCELLED"
+    source_metadata["credit_note_note_id"] = str(credit_note.id)
+    source_metadata["credit_note_number"] = credit_note_number
+    source_metadata["credited_at"] = issued_at.isoformat()
+    source_metadata["private_note"] = _append_private_invoice_note(
+        source_metadata.get("private_note"),
+        f"Facture annulee par l'avoir {credit_note_number}. Motif : {reason}",
+    )
+    source_note.message = _build_invoice_range_note_message(source_metadata)
+    db.add(source_note)
+    db.commit()
+    return _invoice_range_out(note_id=credit_note.id, metadata=credit_metadata)
+
+
 @router.post("/{client_id}/invoices/range/{note_id}/status", response_model=AdminRangeInvoiceOut)
 def update_admin_client_range_invoice_status(
     client_id: UUID,
@@ -12726,6 +12905,8 @@ def update_admin_client_range_invoice_status(
 ) -> AdminRangeInvoiceOut:
     _require_client(db, client_id)
     note, metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=True)
+    if str(metadata.get("document_type") or "INVOICE").strip().upper() == "CREDIT_NOTE":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Le statut d'un avoir ne peut pas être modifié")
     metadata["invoice_status"] = payload.status
     note.message = _build_invoice_range_note_message(metadata)
     db.add(note)
@@ -12751,6 +12932,8 @@ def mark_admin_client_range_invoice_bank_transfer_paid(
 ) -> AdminRangeInvoiceOut:
     client = _require_client(db, client_id)
     note, metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=True)
+    if str(metadata.get("document_type") or "INVOICE").strip().upper() == "CREDIT_NOTE":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Un avoir ne peut pas recevoir de paiement")
     order = _latest_bank_transfer_order_for_invoice(db, client_id=client_id, note_id=note_id, for_update=True)
     invoice_status = str(metadata.get("invoice_status") or "ISSUED").strip().upper()
     if invoice_status == "PAID":
@@ -12839,6 +13022,8 @@ def mark_admin_client_range_invoice_manual_bank_transfer_paid(
 ) -> AdminRangeInvoiceOut:
     client = _require_client(db, client_id)
     note, metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=True)
+    if str(metadata.get("document_type") or "INVOICE").strip().upper() == "CREDIT_NOTE":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Un avoir ne peut pas recevoir de paiement")
     invoice_status = str(metadata.get("invoice_status") or "ISSUED").strip().upper()
     if invoice_status == "CANCELLED":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Facture annulee")
@@ -12902,6 +13087,8 @@ def delete_admin_client_range_invoice(
 ) -> Response:
     client = _require_client(db, client_id)
     note, metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=True)
+    if str(metadata.get("document_type") or "INVOICE").strip().upper() == "CREDIT_NOTE":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Un avoir ne peut pas être supprimé")
     if _parse_iso_datetime(metadata.get("emailed_at")) is not None or _parse_iso_datetime(metadata.get("reminded_at")) is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Facture deja envoyee ou relancee")
     if str(metadata.get("invoice_status") or "ISSUED").strip().upper() == "PAID":
@@ -12982,6 +13169,8 @@ def send_admin_client_range_invoice_email(
 ) -> AdminRangeInvoiceEmailOut:
     client = _require_client(db, client_id)
     note, metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=True)
+    if str(metadata.get("document_type") or "INVOICE").strip().upper() == "CREDIT_NOTE":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Utilisez le PDF de l'avoir pour le transmettre au client")
     recipient_client = _invoice_family_payer_from_metadata(db, owner_client=client, metadata=metadata)
     frozen_payment_keys, resolved_billing_entity, resolved_seller_legal_entity_id = _frozen_invoice_selection_for_note(
         db,
@@ -13512,6 +13701,7 @@ def download_admin_client_range_invoice(
     private_note: str | None = Query(default=None, max_length=2000),
     note: str | None = Query(default=None, max_length=2000),
     invoice_status: str | None = Query(default=None, max_length=20),
+    document_type: str = Query(default="INVOICE", max_length=20),
     language: str | None = Query(default=None, max_length=8),
     client_name_snapshot: str | None = Query(default=None, max_length=255),
     client_billing_address_snapshot: str | None = Query(default=None, max_length=1000),
@@ -13526,6 +13716,7 @@ def download_admin_client_range_invoice(
         language or billing_profile.preferred_language or client.preferred_language
     )
     normalized_note_id = note_id if isinstance(note_id, UUID) else None
+    normalized_document_type = "CREDIT_NOTE" if document_type.strip().upper() == "CREDIT_NOTE" else "INVOICE"
     normalized_layout = _normalize_invoice_layout(layout)
     normalized_generation_mode = _normalize_invoice_generation_mode(generation_mode)
     normalized_auto_layout_style = "CONDENSED" if auto_layout_style.strip().upper() == "CONDENSED" else "NORMAL"
@@ -13737,6 +13928,12 @@ def download_admin_client_range_invoice(
                     + carry_balance
                     + applied_payment_totals_by_currency.get(currency, Decimal("0.00"))
                 )
+
+    if normalized_document_type == "CREDIT_NOTE":
+        display_opening_balance_by_currency = {}
+        applied_payment_totals_by_currency = {}
+        applied_payment_lines = []
+        total_to_pay_by_currency = {}
 
     manual_quote_line_id_by_payment_id = {
         row.id: quote_line_id
@@ -14177,17 +14374,19 @@ def download_admin_client_range_invoice(
     elif requested_invoice_number is None:
         db.commit()
 
-    payment_link_url = _invoice_range_payment_url(
-        client_id=(client_id if persisted_note_id is not None else None),
-        note_id=persisted_note_id,
-        metadata={
-            "invoice_number": resolved_invoice_number,
-            "total_to_pay_by_currency": {
-                currency: f"{_quantize_money(amount):.2f}"
-                for currency, amount in sorted(total_to_pay_by_currency.items())
-            },
-        }
-    )
+    payment_link_url = None
+    if normalized_document_type != "CREDIT_NOTE":
+        payment_link_url = _invoice_range_payment_url(
+            client_id=(client_id if persisted_note_id is not None else None),
+            note_id=persisted_note_id,
+            metadata={
+                "invoice_number": resolved_invoice_number,
+                "total_to_pay_by_currency": {
+                    currency: f"{_quantize_money(amount):.2f}"
+                    for currency, amount in sorted(total_to_pay_by_currency.items())
+                },
+            }
+        )
     content = render_invoice_period_pdf(
         db,
         invoice_number=resolved_invoice_number,
@@ -14200,7 +14399,7 @@ def download_admin_client_range_invoice(
         adjustment_summary=adjustment_summary,
         note=normalized_public_note,
         client_billing_address=client_billing_address,
-        due_date=(None if no_due_date else due_date_value),
+        due_date=(None if no_due_date or normalized_document_type == "CREDIT_NOTE" else due_date_value),
         opening_balance_by_currency=display_opening_balance_by_currency,
         applied_payment_totals_by_currency=applied_payment_totals_by_currency,
         applied_payment_lines=applied_payment_lines,
@@ -14215,6 +14414,7 @@ def download_admin_client_range_invoice(
         billing_entity=resolved_billing_entity,
         company_identity_override=frozen_company_identity,
         language=invoice_language,
+        document_type=normalized_document_type,
     )
     file_name = f"{resolved_invoice_number}.pdf".replace('"', "")
     return Response(
@@ -14304,6 +14504,7 @@ def download_admin_client_range_invoice_from_note(
         private_note=_normalize_optional(str(metadata.get("private_note") or "")),
         note=None,
         invoice_status=_normalize_optional(str(metadata.get("invoice_status") or "")),
+        document_type=str(metadata.get("document_type") or "INVOICE"),
         language=normalize_language(str(metadata.get("language") or client.preferred_language)),
         client_name_snapshot=_normalize_optional(str(metadata.get("client_name") or "")),
         client_billing_address_snapshot=_normalize_optional(str(metadata.get("client_billing_address") or "")),
@@ -14397,6 +14598,7 @@ def download_admin_client_range_invoice_public(
         private_note=_normalize_optional(str(metadata.get("private_note") or "")),
         note=None,
         invoice_status=_normalize_optional(str(metadata.get("invoice_status") or "")),
+        document_type=str(metadata.get("document_type") or "INVOICE"),
         language=normalize_language(str(metadata.get("language") or client.preferred_language)),
         client_name_snapshot=_normalize_optional(str(metadata.get("client_name") or "")),
         client_billing_address_snapshot=_normalize_optional(str(metadata.get("client_billing_address") or "")),

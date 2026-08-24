@@ -1622,7 +1622,12 @@ class AdminRangeInvoiceOut(BaseModel):
     included_payment_keys: list[str] = Field(default_factory=list)
     totals_by_currency: dict[str, str]
     total_to_pay_by_currency: dict[str, str] = Field(default_factory=dict)
-    invoice_status: Literal["ISSUED", "PAID", "CANCELLED"]
+    invoice_status: Literal["ISSUED", "PAID", "CANCELLED", "CREDIT_NOTE"]
+    document_type: Literal["INVOICE", "CREDIT_NOTE"] = "INVOICE"
+    original_invoice_note_id: UUID | None = None
+    original_invoice_number: str | None = None
+    credit_note_note_id: UUID | None = None
+    credit_note_number: str | None = None
     check_coverage_status: Literal["NONE", "PARTIAL", "COVERED"] = "NONE"
     pending_check_amounts_by_currency: dict[str, str] = Field(default_factory=dict)
     pending_check_count: int = 0
@@ -1643,6 +1648,11 @@ class AdminRangeInvoiceOut(BaseModel):
 
 class AdminRangeInvoiceStatusUpdateRequest(BaseModel):
     status: Literal["ISSUED", "PAID", "CANCELLED"]
+
+
+class AdminRangeInvoiceCreditNoteRequest(BaseModel):
+    issued_date: date
+    reason: str | None = Field(default=None, max_length=1000)
 
 
 class AdminRangeInvoiceBankTransferManualPaymentRequest(BaseModel):

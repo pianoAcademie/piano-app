@@ -18,6 +18,7 @@ import {
   adminPurchasePlanForClientAction,
   adminViewClientPortalAction,
   createAdminClientRangeInvoiceAction,
+  createAdminClientRangeInvoiceCreditNoteAction,
   deleteAdminClientRangeInvoiceAction,
   markAdminClientRangeInvoiceBankTransferPaidAction,
   markAdminClientRangeInvoiceManualBankTransferPaidAction,
@@ -1052,7 +1053,10 @@ type RangeInvoiceNotePayload = {
   total_to_pay_by_currency?: Record<string, string>;
   seller_legal_entity_id?: string;
   billing_entity?: string;
-  invoice_status: "ISSUED" | "PAID" | "CANCELLED";
+  invoice_status: "ISSUED" | "PAID" | "CANCELLED" | "CREDIT_NOTE";
+  document_type?: "INVOICE" | "CREDIT_NOTE";
+  original_invoice_number?: string;
+  credit_note_number?: string;
   emailed_at?: string;
   reminded_at?: string;
   public_note?: string;
@@ -1128,6 +1132,9 @@ type InvoiceListRow =
       sellerLegalEntityId: string | null;
       billingEntity: string | null;
       familyBillingPayerName: string | null;
+      documentType: "INVOICE" | "CREDIT_NOTE";
+      originalInvoiceNumber: string | null;
+      creditNoteNumber: string | null;
     };
 
 type RangeInvoiceListRow = Extract<InvoiceListRow, { kind: "range" }>;
@@ -1234,9 +1241,18 @@ function parseRangeInvoiceNote(note: AdminClientNoteOut): RangeInvoiceNotePayloa
       seller_legal_entity_id: typeof payload.seller_legal_entity_id === "string" ? payload.seller_legal_entity_id : undefined,
       billing_entity: typeof payload.billing_entity === "string" ? payload.billing_entity : undefined,
       invoice_status:
-        payload.invoice_status === "PAID" || payload.invoice_status === "CANCELLED" || payload.invoice_status === "ISSUED"
+        payload.invoice_status === "PAID" ||
+        payload.invoice_status === "CANCELLED" ||
+        payload.invoice_status === "CREDIT_NOTE" ||
+        payload.invoice_status === "ISSUED"
           ? payload.invoice_status
           : "ISSUED",
+      document_type:
+        payload.document_type === "CREDIT_NOTE" ? "CREDIT_NOTE" : "INVOICE",
+      original_invoice_number:
+        typeof payload.original_invoice_number === "string" ? payload.original_invoice_number : undefined,
+      credit_note_number:
+        typeof payload.credit_note_number === "string" ? payload.credit_note_number : undefined,
       emailed_at: typeof payload.emailed_at === "string" ? payload.emailed_at : undefined,
       reminded_at: typeof payload.reminded_at === "string" ? payload.reminded_at : undefined,
       included_payment_keys: Array.isArray(payload.included_payment_keys)
@@ -1313,6 +1329,9 @@ function paymentReceiptPdfHref(clientId: string, receiptId: string, inline = fal
 
 function rangeInvoiceStatusLabel(status: string, language: UiLanguage = "fr"): string {
   const normalized = status.trim().toUpperCase();
+  if (normalized === "CREDIT_NOTE") {
+    return language === "en" ? "Credit note" : "Avoir";
+  }
   if (normalized === "PAID") {
     return uiText(language, "admin.client_detail.range_invoice_status.paid");
   }
@@ -1329,6 +1348,9 @@ function rangeInvoiceStatusClass(status: string): string {
   }
   if (normalized === "CANCELLED") {
     return "status-off";
+  }
+  if (normalized === "CREDIT_NOTE") {
+    return "status-ok";
   }
   return "status-warn";
 }
@@ -2851,6 +2873,9 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       sellerLegalEntityId: row.seller_legal_entity_id ?? null,
       billingEntity: row.billing_entity ?? null,
       familyBillingPayerName: row.family_billing_payer_client_id ? row.recipient_client_name ?? null : null,
+      documentType: row.document_type ?? (row.invoice_status === "CREDIT_NOTE" ? "CREDIT_NOTE" : "INVOICE"),
+      originalInvoiceNumber: row.original_invoice_number ?? null,
+      creditNoteNumber: row.credit_note_number ?? null,
     }));
 
   const historicalInvoices: InvoiceListRow[] = legacyInvoices.map((row) => ({
@@ -5993,7 +6018,19 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                             </div>
                           ) : null}
                         </td>
-                        <td>{row.label}</td>
+                        <td>
+                          {row.label}
+                          {row.kind === "range" && row.originalInvoiceNumber ? (
+                            <div className="muted">
+                              {language === "en" ? "Original invoice" : "Facture d’origine"} : {row.originalInvoiceNumber}
+                            </div>
+                          ) : null}
+                          {row.kind === "range" && row.creditNoteNumber ? (
+                            <div className="muted">
+                              {language === "en" ? "Credit note" : "Avoir"} : {row.creditNoteNumber}
+                            </div>
+                          ) : null}
+                        </td>
                         <td>
                           {row.kind === "range" ? (
                             <div className="stack-xs">
@@ -6087,7 +6124,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                               <a className="client-action-icon" href={row.downloadHref} title={t("admin.client_detail.download_invoice")}>
                                 ↓
                               </a>
-                              <Link
+                              {row.status !== "CREDIT_NOTE" ? <Link
                                 className="client-action-icon"
                                 href={invoicesHref(client.id, {
                                   payment_modal: "invoice_email",
@@ -6098,8 +6135,8 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                 title={t("admin.client_detail.email_invoice")}
                               >
                                 ✉
-                              </Link>
-                              {row.remindersSuspended ? (
+                              </Link> : null}
+                              {row.status !== "CREDIT_NOTE" && (row.remindersSuspended ? (
                                 <button
                                   type="button"
                                   className="client-action-icon"
@@ -6125,7 +6162,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                 >
                                   R
                                 </Link>
-                              )}
+                              ))}
                               {row.bankTransferOrderStatus === "pending_bank_transfer" ? (
                                 <form action={markAdminClientRangeInvoiceBankTransferPaidAction}>
                                   <input type="hidden" name="client_id" value={client.id} />
@@ -6153,7 +6190,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                   V€
                                 </Link>
                               ) : null}
-                              {row.status !== "PAID" ? (
+                              {row.status !== "CREDIT_NOTE" ? (row.status !== "PAID" ? (
                                 <form action={updateAdminClientRangeInvoiceStatusAction}>
                                   <input type="hidden" name="client_id" value={client.id} />
                                   <input type="hidden" name="note_id" value={row.noteId} />
@@ -6173,8 +6210,8 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                     ↺
                                   </button>
                                 </form>
-                              )}
-                              {row.status !== "CANCELLED" ? (
+                              )) : null}
+                              {row.status !== "CREDIT_NOTE" ? (row.status !== "CANCELLED" ? (
                                 <form action={updateAdminClientRangeInvoiceStatusAction}>
                                   <input type="hidden" name="client_id" value={client.id} />
                                   <input type="hidden" name="note_id" value={row.noteId} />
@@ -6194,7 +6231,33 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                     ↺
                                   </button>
                                 </form>
-                              )}
+                              )) : null}
+                              {(row.status === "ISSUED" || row.status === "PAID") && row.documentType === "INVOICE" ? (
+                                <form id={`range-credit-note-${row.noteId}`} action={createAdminClientRangeInvoiceCreditNoteAction}>
+                                  <input type="hidden" name="client_id" value={client.id} />
+                                  <input type="hidden" name="note_id" value={row.noteId} />
+                                  <input type="hidden" name="issued_date" value={todayInputValue} />
+                                  <input
+                                    type="hidden"
+                                    name="reason"
+                                    value={`Annulation de la facture ${row.invoiceNumber} et remplacement par un nouveau mode de facturation.`}
+                                  />
+                                  <ConfirmSubmitButton
+                                    formId={`range-credit-note-${row.noteId}`}
+                                    label="A"
+                                    title={language === "en" ? "Create a credit note" : "Créer un avoir"}
+                                    description={
+                                      language === "en"
+                                        ? `A numbered credit note will be created for invoice ${row.invoiceNumber}, which will then be cancelled. No email will be sent automatically.`
+                                        : `Un avoir numéroté sera créé pour la facture ${row.invoiceNumber}, qui sera ensuite annulée. Aucun e-mail ne sera envoyé automatiquement.`
+                                    }
+                                    confirmLabel={language === "en" ? "Create credit note" : "Créer l’avoir"}
+                                    language={language}
+                                    className="client-action-icon"
+                                    pendingLabel="…"
+                                  />
+                                </form>
+                              ) : null}
                               {row.status === "ISSUED" && hasConfiguredFamilyBillingSplit ? (
                                 <form
                                   id={`family-invoice-split-${row.noteId}`}
@@ -6214,7 +6277,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                   />
                                 </form>
                               ) : null}
-                              {row.status !== "CANCELLED" ? (
+                              {(row.status === "ISSUED" || row.status === "PAID") ? (
                                 <form action={reissueAdminClientRangeInvoiceAction}>
                                   <input type="hidden" name="client_id" value={client.id} />
                                   <input type="hidden" name="note_id" value={row.noteId} />
@@ -6239,7 +6302,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                   </button>
                                 </form>
                               ) : null}
-                              {!row.emailedAt && !row.remindedAt && row.status !== "PAID" ? (
+                              {!row.emailedAt && !row.remindedAt && row.status !== "PAID" && row.status !== "CREDIT_NOTE" ? (
                                 <form action={deleteAdminClientRangeInvoiceAction}>
                                   <input type="hidden" name="client_id" value={client.id} />
                                   <input type="hidden" name="note_id" value={row.noteId} />

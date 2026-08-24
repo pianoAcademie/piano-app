@@ -769,7 +769,12 @@ export type AdminRangeInvoiceOut = {
   included_payment_keys: string[];
   totals_by_currency: Record<string, string>;
   total_to_pay_by_currency: Record<string, string>;
-  invoice_status: "ISSUED" | "PAID" | "CANCELLED";
+  invoice_status: "ISSUED" | "PAID" | "CANCELLED" | "CREDIT_NOTE";
+  document_type: "INVOICE" | "CREDIT_NOTE";
+  original_invoice_note_id: string | null;
+  original_invoice_number: string | null;
+  credit_note_note_id: string | null;
+  credit_note_number: string | null;
   check_coverage_status: "NONE" | "PARTIAL" | "COVERED";
   pending_check_amounts_by_currency: Record<string, string>;
   pending_check_count: number;

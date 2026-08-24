@@ -269,6 +269,64 @@ class InvoicePeriodTotalsTests(unittest.TestCase):
         self.assertIn(f"/S /URI /URI ({payment_url})", payload)
         self.assertRegex(payload, r"/Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Annots \[")
 
+    def test_render_credit_note_pdf_has_no_due_date_or_payment_link(self) -> None:
+        identity = CompanyIdentity(
+            company_name="Piano Academie",
+            company_email="comptabilite@piano-academie.com",
+            company_phone="+33 1 86 47 60 88",
+            company_siren="828051417",
+            company_siret="82805141700032",
+            company_vat_number="FR74828051417",
+            company_address="1, rue de Richelieu, 75001 Paris (France)",
+            company_legal_form="SAS",
+            company_share_capital="5000 EUR",
+            company_logo_jpeg=None,
+            company_logo_width_px=None,
+            company_logo_height_px=None,
+        )
+        payment_url = "https://app.piano-academie.com/should-not-be-present"
+
+        with patch("app.services.invoice_documents._company_identity", return_value=identity):
+            pdf = render_invoice_period_pdf(
+                db=object(),
+                invoice_number="PA26-0099",
+                issued_at=datetime(2026, 8, 24, 0, 0, tzinfo=timezone.utc),
+                client_id="client-1",
+                client_name="Priya Shah",
+                period_label="01/05/2026 - 30/06/2027",
+                lines=[
+                    InvoicePeriodLine(
+                        date_label="01/05/2026 - 30/06/2027",
+                        type_label="Forfait",
+                        label="Annulation facture PA26-0443",
+                        quantity=1,
+                        amount_excl_vat=Decimal("-1184.17"),
+                        vat_rate=Decimal("20.00"),
+                        vat_amount=Decimal("-236.83"),
+                        total_incl_vat=Decimal("-1421.00"),
+                        currency="EUR",
+                    )
+                ],
+                totals_by_currency={
+                    "EUR": {
+                        "amount_excl_vat": Decimal("-1184.17"),
+                        "vat_amount": Decimal("-236.83"),
+                        "total_incl_vat": Decimal("-1421.00"),
+                    }
+                },
+                total_to_pay_by_currency={"EUR": Decimal("-1421.00")},
+                note="Avoir relatif a la facture PA26-0443",
+                client_billing_address="France",
+                due_date=date(2026, 8, 24),
+                payment_link_url=payment_url,
+                document_type="CREDIT_NOTE",
+            )
+
+        payload = pdf.decode("latin-1", errors="ignore")
+        self.assertIn("AVOIR", payload)
+        self.assertNotIn("Date d echeance", payload)
+        self.assertNotIn(payment_url, payload)
+
     def test_render_invoice_period_pdf_prefers_frozen_company_identity_override(self) -> None:
         frozen_identity = CompanyIdentity(
             company_name="Piano Academie Figee",
@@ -429,6 +487,29 @@ class InvoicePeriodTotalsTests(unittest.TestCase):
         self.assertEqual(normalized["client_name"], "Hector Souza")
         self.assertEqual(normalized["client_billing_address"], "1 rue de Richelieu, 75001 Paris, France")
         self.assertEqual(normalized["issuer_snapshot"]["company_name"], "Piano Academie")
+
+    def test_normalize_invoice_range_metadata_preserves_credit_note_links(self) -> None:
+        payload = {
+            "kind": "INVOICE_RANGE",
+            "invoice_number": "PA26-0099",
+            "issued_date": "2026-08-24",
+            "due_date": "2026-08-24",
+            "start_date": "2026-05-01",
+            "end_date": "2027-06-30",
+            "layout": "COMPILED",
+            "totals_by_currency": {"EUR": "-1421.00"},
+            "invoice_status": "CREDIT_NOTE",
+            "document_type": "CREDIT_NOTE",
+            "original_invoice_note_id": "99c29dde-e21d-4c3c-a7ad-aef7bed77d5a",
+            "original_invoice_number": "PA26-0443",
+        }
+
+        normalized = _normalize_invoice_range_metadata(payload)
+
+        self.assertIsNotNone(normalized)
+        self.assertEqual(normalized["invoice_status"], "CREDIT_NOTE")
+        self.assertEqual(normalized["document_type"], "CREDIT_NOTE")
+        self.assertEqual(normalized["original_invoice_number"], "PA26-0443")
 
 
 if __name__ == "__main__":
