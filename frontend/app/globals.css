@@ -23627,7 +23627,7 @@ button.danger:focus-visible {
   }
 }
 
-/* Professor contextual help assistant */
+/* Contextual help assistant (professor and administration portals) */
 .prof-help {
   --prof-help-ink: #17243a;
   --prof-help-gold: #c78328;

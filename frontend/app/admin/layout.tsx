@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { Suspense } from "react";
 
 import AdminBreadcrumb from "../../components/admin-breadcrumb";
+import AdminHelpAssistant from "../../components/admin-help-assistant";
 import AdminSidebar from "../../components/admin-sidebar";
 import PresenceHeartbeat from "../../components/presence-heartbeat";
 import { getAdminToken, getPortalReturnTo, readAdminImpersonationClaims } from "../../lib/auth-cookies";
@@ -83,6 +84,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           {children}
         </section>
       </div>
+      <AdminHelpAssistant language={language} />
     </div>
   );
 }
