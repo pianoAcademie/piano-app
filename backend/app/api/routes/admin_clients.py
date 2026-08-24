@@ -13294,6 +13294,7 @@ def send_admin_client_range_invoice_email(
         private_note=_normalize_optional(str(metadata.get("private_note") or "")),
         note=None,
         invoice_status=_normalize_optional(str(metadata.get("invoice_status") or "")),
+        document_type=str(metadata.get("document_type") or "INVOICE"),
         language=normalize_language(
             str(metadata.get("language") or getattr(recipient_client, "preferred_language", None) or "fr")
         ),

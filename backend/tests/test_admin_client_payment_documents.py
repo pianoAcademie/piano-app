@@ -506,6 +506,7 @@ class AdminClientPaymentDocumentTests(unittest.TestCase):
 
         self.assertEqual(response.note_id, note_id)
         self.assertEqual(download_pdf.call_args.kwargs["note_id"], note_id)
+        self.assertEqual(download_pdf.call_args.kwargs["document_type"], "INVOICE")
 
     def test_range_invoice_email_defaults_use_amount_to_pay_for_invoice_and_reminder(self) -> None:
         client_id = uuid4()
