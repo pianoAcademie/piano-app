@@ -34,6 +34,8 @@ export type PlanningReorganizationSession = {
   bookings: PlanningReorganizationBooking[];
 };
 
+type MoveScope = "single" | "series_future";
+
 type DraggedBooking = {
   bookingId: string;
   sourceSessionId: string;
@@ -43,6 +45,7 @@ type DraggedBooking = {
 type PlanningReorganizationBoardProps = {
   sessions: PlanningReorganizationSession[];
   returnTo: string;
+  initialScope?: MoveScope;
   language?: "fr" | "en";
 };
 
@@ -51,7 +54,23 @@ type PendingPriceConfirmation = {
   targetSessionId: string;
   targetLabel: string;
   preview: PlanningReorganizationMovePreview;
+  scope: MoveScope;
 };
+
+type PendingSeriesConfirmation = {
+  booking: DraggedBooking;
+  targetSessionId: string;
+  targetLabel: string;
+  preview: PlanningReorganizationMovePreview;
+  scope: MoveScope;
+};
+
+function returnPathWithScope(returnTo: string, scope: MoveScope): string {
+  const [path, rawQuery = ""] = returnTo.split("?", 2);
+  const query = new URLSearchParams(rawQuery);
+  query.set("scope", scope);
+  return `${path}?${query.toString()}`;
+}
 
 function formatTime(value: string, timezone: string): string {
   const parsed = new Date(value);
@@ -80,13 +99,15 @@ function formatPriceRange(minimum: number, maximum: number, currency: string, la
 export function PlanningReorganizationBoard({
   sessions,
   returnTo,
+  initialScope = "series_future",
   language = "fr",
 }: PlanningReorganizationBoardProps): JSX.Element {
   const [dragged, setDragged] = useState<DraggedBooking | null>(null);
   const [selected, setSelected] = useState<DraggedBooking | null>(null);
   const [dragOverSessionId, setDragOverSessionId] = useState<string | null>(null);
-  const [scope, setScope] = useState<"single" | "series_future">("single");
+  const [scope, setScope] = useState<MoveScope>(initialScope);
   const [priceConfirmation, setPriceConfirmation] = useState<PendingPriceConfirmation | null>(null);
+  const [seriesConfirmation, setSeriesConfirmation] = useState<PendingSeriesConfirmation | null>(null);
   const [interactionError, setInteractionError] = useState("");
   const [isPending, startTransition] = useTransition();
 
@@ -94,15 +115,17 @@ export function PlanningReorganizationBoard({
     bookingToMove: DraggedBooking,
     targetSessionId: string,
     pricePolicy: "keep_source" | "apply_target",
+    requestedScope: MoveScope,
   ): void {
     const formData = new FormData();
     formData.set("booking_id", bookingToMove.bookingId);
     formData.set("target_session_id", targetSessionId);
-    formData.set("scope", scope);
+    formData.set("scope", requestedScope);
     formData.set("price_policy", pricePolicy);
-    formData.set("return_to", returnTo);
+    formData.set("return_to", returnPathWithScope(returnTo, requestedScope));
     setSelected(null);
     setPriceConfirmation(null);
+    setSeriesConfirmation(null);
     void movePlanningReorganizationBookingAction(formData);
   }
 
@@ -111,12 +134,13 @@ export function PlanningReorganizationBoard({
     if (!bookingToMove || bookingToMove.sourceSessionId === targetSessionId || isPending) {
       return;
     }
+    const requestedScope = scope;
     setInteractionError("");
     startTransition(async () => {
       const previewResult = await previewPlanningReorganizationBookingMoveAction({
         bookingId: bookingToMove.bookingId,
         targetSessionId,
-        scope,
+        scope: requestedScope,
       });
       if (!previewResult.ok) {
         setInteractionError(previewResult.message);
@@ -129,10 +153,22 @@ export function PlanningReorganizationBoard({
           targetSessionId,
           targetLabel: targetSession ? sessionTimeLabel(targetSession) : "",
           preview: previewResult.data,
+          scope: requestedScope,
         });
         return;
       }
-      submitMove(bookingToMove, targetSessionId, "keep_source");
+      if (requestedScope === "series_future") {
+        const targetSession = sessions.find((session) => session.id === targetSessionId);
+        setSeriesConfirmation({
+          booking: bookingToMove,
+          targetSessionId,
+          targetLabel: targetSession ? sessionTimeLabel(targetSession) : "",
+          preview: previewResult.data,
+          scope: requestedScope,
+        });
+        return;
+      }
+      submitMove(bookingToMove, targetSessionId, "keep_source", requestedScope);
     });
   }
 
@@ -158,9 +194,11 @@ export function PlanningReorganizationBoard({
         </div>
         <label className="reorg-scope">
           {language === "en" ? "Scope" : "Portee"}
-          <select value={scope} onChange={(event) => setScope(event.target.value as "single" | "series_future")}>
+          <select value={scope} onChange={(event) => setScope(event.target.value as MoveScope)}>
+            <option value="series_future">
+              {language === "en" ? "All remaining sessions" : "Toute la serie a partir de cette date"}
+            </option>
             <option value="single">{language === "en" ? "This session only" : "Cette seance uniquement"}</option>
-            <option value="series_future">{language === "en" ? "Remaining series" : "Suite de la serie"}</option>
           </select>
         </label>
       </div>
@@ -289,7 +327,7 @@ export function PlanningReorganizationBoard({
                 <strong>{formatPriceRange(priceConfirmation.preview.target_price_min, priceConfirmation.preview.target_price_max, priceConfirmation.preview.currency, language)}</strong>
               </div>
             </div>
-            {scope === "series_future" ? (
+            {priceConfirmation.scope === "series_future" ? (
               <p className="reorg-price-scope-note">
                 {language === "en"
                   ? `This choice will apply to ${priceConfirmation.preview.price_change_count} future booking(s) with a price difference.`
@@ -301,7 +339,16 @@ export function PlanningReorganizationBoard({
                 type="button"
                 className="button secondary"
                 disabled={isPending}
-                onClick={() => startTransition(() => submitMove(priceConfirmation.booking, priceConfirmation.targetSessionId, "keep_source"))}
+                onClick={() =>
+                  startTransition(() =>
+                    submitMove(
+                      priceConfirmation.booking,
+                      priceConfirmation.targetSessionId,
+                      "keep_source",
+                      priceConfirmation.scope,
+                    ),
+                  )
+                }
               >
                 {language === "en" ? "Keep current price" : "Conserver le tarif actuel"}
               </button>
@@ -309,9 +356,72 @@ export function PlanningReorganizationBoard({
                 type="button"
                 className="button primary"
                 disabled={isPending}
-                onClick={() => startTransition(() => submitMove(priceConfirmation.booking, priceConfirmation.targetSessionId, "apply_target"))}
+                onClick={() =>
+                  startTransition(() =>
+                    submitMove(
+                      priceConfirmation.booking,
+                      priceConfirmation.targetSessionId,
+                      "apply_target",
+                      priceConfirmation.scope,
+                    ),
+                  )
+                }
               >
                 {language === "en" ? "Apply new price" : "Appliquer le nouveau tarif"}
+              </button>
+            </div>
+          </article>
+        </section>
+      ) : null}
+      {seriesConfirmation ? (
+        <section
+          className="modal-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label={language === "en" ? "Confirm series move" : "Confirmer le deplacement de la serie"}
+        >
+          <article className="modal-panel modal-compact reorg-price-modal">
+            <button
+              className="modal-close-x"
+              type="button"
+              onClick={() => setSeriesConfirmation(null)}
+              aria-label={language === "en" ? "Close" : "Fermer"}
+            >
+              ×
+            </button>
+            <h3 className="modal-title">
+              {language === "en" ? "Confirm the remaining series" : "Confirmer toute la suite de la serie"}
+            </h3>
+            <p>
+              {language === "en"
+                ? `${seriesConfirmation.booking.label} will be moved to ${seriesConfirmation.targetLabel} for ${seriesConfirmation.preview.affected_bookings} session(s). Prices will not change.`
+                : `${seriesConfirmation.booking.label} sera deplace vers ${seriesConfirmation.targetLabel} pour ${seriesConfirmation.preview.affected_bookings} seance(s). Les tarifs ne seront pas modifies.`}
+            </p>
+            <div className="row gap-sm reorg-price-actions">
+              <button
+                type="button"
+                className="button secondary"
+                disabled={isPending}
+                onClick={() => setSeriesConfirmation(null)}
+              >
+                {language === "en" ? "Cancel" : "Annuler"}
+              </button>
+              <button
+                type="button"
+                className="button primary"
+                disabled={isPending}
+                onClick={() =>
+                  startTransition(() =>
+                    submitMove(
+                      seriesConfirmation.booking,
+                      seriesConfirmation.targetSessionId,
+                      "keep_source",
+                      seriesConfirmation.scope,
+                    ),
+                  )
+                }
+              >
+                {language === "en" ? "Move all sessions" : "Deplacer toute la serie"}
               </button>
             </div>
           </article>

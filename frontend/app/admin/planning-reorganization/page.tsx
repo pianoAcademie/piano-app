@@ -60,9 +60,11 @@ function currentReturnTo(params: SearchParams): string {
   const schoolYear = readParam(params, "school_year").trim();
   const locationId = readParam(params, "location_id").trim();
   const day = readParam(params, "day").trim();
+  const scope = readParam(params, "scope").trim();
   if (schoolYear) query.set("school_year", schoolYear);
   if (locationId) query.set("location_id", locationId);
   if (day) query.set("day", day);
+  if (scope === "single" || scope === "series_future") query.set("scope", scope);
   const queryString = query.toString();
   return queryString ? `/admin/planning-reorganization?${queryString}` : "/admin/planning-reorganization";
 }
@@ -86,6 +88,7 @@ export default async function AdminPlanningReorganizationPage({
   const requestedSchoolYear = readParam(params, "school_year").trim();
   const requestedLocationId = readParam(params, "location_id").trim();
   const requestedDay = readParam(params, "day").trim();
+  const initialScope = readParam(params, "scope").trim() === "single" ? "single" : "series_future";
   const query = new URLSearchParams();
   if (requestedSchoolYear) query.set("school_year", requestedSchoolYear);
   if (requestedLocationId) query.set("location_id", requestedLocationId);
@@ -102,6 +105,7 @@ export default async function AdminPlanningReorganizationPage({
     school_year: snapshot?.selected_school_year ?? requestedSchoolYear,
     location_id: snapshot?.selected_location_id ?? requestedLocationId,
     day: selectedDay,
+    scope: initialScope,
   });
   const okMessage = messageParam(params, "ok");
   const errorMessage = messageParam(params, "error") || (result.ok ? "" : result.message);
@@ -186,7 +190,14 @@ export default async function AdminPlanningReorganizationPage({
         </div>
       </section>
 
-      {snapshot ? <PlanningReorganizationBoard sessions={snapshot.sessions} returnTo={returnTo} language={language} /> : null}
+      {snapshot ? (
+        <PlanningReorganizationBoard
+          sessions={snapshot.sessions}
+          returnTo={returnTo}
+          initialScope={initialScope}
+          language={language}
+        />
+      ) : null}
     </main>
   );
 }
