@@ -13,12 +13,11 @@ from sqlalchemy.orm import Session
 
 from app.api.routes.admin_clients import (
     INVOICE_RANGE_NOTE_PREFIX,
-    _invoice_range_reconciled_manual_payment_ids,
-    _manual_payment_method_code,
+    _invoice_range_pending_check_coverage,
     _parse_invoice_range_note_entry,
     send_admin_client_range_invoice_email,
 )
-from app.models.client_record import ClientManualTransaction, ClientNoteEntry
+from app.models.client_record import ClientNoteEntry
 from app.models.user import User, UserRole
 from app.schemas.admin import AdminRangeInvoiceEmailRequest
 
@@ -53,52 +52,9 @@ def _invoice_amount_due_positive(metadata: dict[str, object]) -> bool:
     return False
 
 
-def _invoice_currency_amounts(metadata: dict[str, object]) -> dict[str, Decimal]:
-    raw_totals = metadata.get("total_to_pay_by_currency") or metadata.get("totals_by_currency") or {}
-    if not isinstance(raw_totals, dict):
-        return {}
-    out: dict[str, Decimal] = {}
-    for raw_currency, raw_amount in raw_totals.items():
-        currency = str(raw_currency or "").strip().upper()
-        if not currency:
-            continue
-        try:
-            amount = Decimal(str(raw_amount)).quantize(Decimal("0.01"))
-        except (InvalidOperation, ValueError):
-            continue
-        if amount > Decimal("0.00"):
-            out[currency] = amount
-    return out
-
-
 def _invoice_is_covered_by_received_checks(db: Session, metadata: dict[str, object]) -> bool:
-    payment_ids = _invoice_range_reconciled_manual_payment_ids(metadata)
-    if not payment_ids:
-        return False
-    invoice_amounts = _invoice_currency_amounts(metadata)
-    if not invoice_amounts:
-        return False
-
-    rows = db.scalars(
-        select(ClientManualTransaction).where(
-            ClientManualTransaction.id.in_(payment_ids),
-            ClientManualTransaction.transaction_type == "PAYMENT",
-        )
-    ).all()
-    check_totals: dict[str, Decimal] = {}
-    for row in rows:
-        if _manual_payment_method_code(row.reference) != "CHECK":
-            continue
-        if str(row.status or "").strip().upper() not in {"CHECK_RECEIVED", "CHECK_DEPOSITED"}:
-            continue
-        currency = str(row.currency or "EUR").strip().upper() or "EUR"
-        check_totals[currency] = (check_totals.get(currency, Decimal("0.00")) + abs(Decimal(row.total_incl_vat))).quantize(
-            Decimal("0.01")
-        )
-
-    if not check_totals:
-        return False
-    return all(check_totals.get(currency, Decimal("0.00")) >= amount for currency, amount in invoice_amounts.items())
+    status_value, _, _ = _invoice_range_pending_check_coverage(db, metadata=metadata)
+    return status_value == "COVERED"
 
 
 def invoice_is_due_for_j_minus_one_reminder(

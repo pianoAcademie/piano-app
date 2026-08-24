@@ -85,7 +85,8 @@ export default function ManualTransactionLegalEntityFields({
         legalEntity: "Legal entity",
         noInvoice: "No issued invoice waiting for payment matching.",
         markPaid: "Manually mark selected invoices as paid (if the payment amount is sufficient)",
-        checkHint: "Checks are tracked as received first. Mark them as cashed from the payment list after bank deposit.",
+        checkHint:
+          "The invoice remains issued while checks are pending. If received checks cover the balance, reminders are suspended. It becomes paid only after the last check is cashed.",
         checkDepositMonth: "Expected deposit month (optional)",
         checkDepositMonthPlaceholder: "Month",
         checkDepositYearPlaceholder: "Year",
@@ -118,7 +119,8 @@ export default function ManualTransactionLegalEntityFields({
         legalEntity: "Entité légale",
         noInvoice: "Aucune facture émise en attente de paiement à rapprocher.",
         markPaid: "Marquer manuellement les factures sélectionnées comme payées (si le montant réglé est suffisant)",
-        checkHint: "Les chèques sont d'abord enregistrés comme reçus. Passez-les en encaissés depuis la liste des paiements après le dépôt en banque.",
+        checkHint:
+          "La facture reste émise tant que les chèques ne sont pas encaissés. Si les chèques reçus couvrent le solde, les relances sont suspendues. Elle passera en payée après l’encaissement du dernier chèque.",
         checkDepositMonth: "Mois de dépôt prévu (optionnel)",
         checkDepositMonthPlaceholder: "Mois",
         checkDepositYearPlaceholder: "Année",
@@ -412,7 +414,7 @@ export default function ManualTransactionLegalEntityFields({
             {text.markPaid}
           </label>
           {isCheckPayment ? <p className="muted">{text.checkHint}</p> : null}
-          <p className="muted">{text.reconciliationHint}</p>
+          {!isCheckPayment ? <p className="muted">{text.reconciliationHint}</p> : null}
         </fieldset>
       ) : null}
 

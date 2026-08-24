@@ -1623,6 +1623,10 @@ class AdminRangeInvoiceOut(BaseModel):
     totals_by_currency: dict[str, str]
     total_to_pay_by_currency: dict[str, str] = Field(default_factory=dict)
     invoice_status: Literal["ISSUED", "PAID", "CANCELLED"]
+    check_coverage_status: Literal["NONE", "PARTIAL", "COVERED"] = "NONE"
+    pending_check_amounts_by_currency: dict[str, str] = Field(default_factory=dict)
+    pending_check_count: int = 0
+    reminders_suspended: bool = False
     emailed_at: datetime | None = None
     reminded_at: datetime | None = None
     bank_transfer_order_id: UUID | None = None

@@ -3561,6 +3561,10 @@ def _invoice_range_out(
     related_invoices: list[AdminRangeInvoiceReferenceOut] | None = None,
     totals_by_currency: dict[str, str] | None = None,
     total_to_pay_by_currency: dict[str, str] | None = None,
+    check_coverage_status: str = "NONE",
+    pending_check_amounts_by_currency: dict[str, str] | None = None,
+    pending_check_count: int = 0,
+    reminders_suspended: bool = False,
 ) -> AdminRangeInvoiceOut:
     return AdminRangeInvoiceOut(
         note_id=note_id,
@@ -3622,6 +3626,12 @@ def _invoice_range_out(
             else dict(metadata.get("total_to_pay_by_currency") or {})
         ),
         invoice_status=str(metadata.get("invoice_status") or "ISSUED"),
+        check_coverage_status=(
+            check_coverage_status if check_coverage_status in {"NONE", "PARTIAL", "COVERED"} else "NONE"
+        ),
+        pending_check_amounts_by_currency=pending_check_amounts_by_currency or {},
+        pending_check_count=max(0, pending_check_count),
+        reminders_suspended=reminders_suspended,
         emailed_at=_parse_iso_datetime(metadata.get("emailed_at")),
         reminded_at=_parse_iso_datetime(metadata.get("reminded_at")),
         bank_transfer_order_id=_parse_optional_uuid(metadata.get("bank_transfer_order_id")),
@@ -3656,6 +3666,76 @@ def _invoice_range_money_payload(values: dict[str, Decimal]) -> dict[str, str]:
         currency: f"{_quantize_money(amount):.2f}"
         for currency, amount in sorted(values.items())
     }
+
+
+def _invoice_range_pending_check_coverage(
+    db: Session,
+    *,
+    metadata: dict[str, object],
+    total_to_pay_by_currency: dict[str, str] | None = None,
+) -> tuple[str, dict[str, str], int]:
+    """Describe coverage by reconciled checks that are not yet cashed.
+
+    Such checks reduce the operational balance and can suspend reminders, but
+    they do not make the invoice paid. The invoice becomes paid only after the
+    reconciled checks have actually been cashed.
+    """
+
+    payment_ids = _invoice_range_reconciled_manual_payment_ids(metadata)
+    if not payment_ids:
+        return "NONE", {}, 0
+
+    rows = db.scalars(
+        select(ClientManualTransaction).where(
+            ClientManualTransaction.id.in_(payment_ids),
+            ClientManualTransaction.transaction_type == "PAYMENT",
+        )
+    ).all()
+    pending_amounts: dict[str, Decimal] = {}
+    pending_count = 0
+    for row in rows:
+        if _manual_payment_method_code(row.reference) != "CHECK":
+            continue
+        if str(row.status or "").strip().upper() not in {"CHECK_RECEIVED", "CHECK_DEPOSITED"}:
+            continue
+        currency = _normalize_currency(row.currency, fallback="EUR")
+        pending_amounts[currency] = _quantize_money(
+            pending_amounts.get(currency, Decimal("0.00")) + abs(Decimal(row.total_incl_vat or 0))
+        )
+        pending_count += 1
+
+    if not pending_amounts:
+        return "NONE", {}, 0
+
+    raw_remaining = (
+        total_to_pay_by_currency
+        if total_to_pay_by_currency is not None
+        else metadata.get("total_to_pay_by_currency")
+    )
+    remaining = _invoice_range_decimal_map(raw_remaining)
+    if remaining:
+        # The synchronized balance already includes the received/deposited
+        # checks. A non-positive balance therefore means full coverage.
+        is_covered = all(amount <= Decimal("0.00") for amount in remaining.values())
+    else:
+        # Compatibility for older invoice notes without a synchronized
+        # balance: compare pending checks with the invoice face amount.
+        face_amounts = _invoice_range_decimal_map(metadata.get("totals_by_currency"))
+        positive_face_amounts = {
+            currency: amount
+            for currency, amount in face_amounts.items()
+            if amount > Decimal("0.00")
+        }
+        is_covered = bool(positive_face_amounts) and all(
+            pending_amounts.get(currency, Decimal("0.00")) >= amount
+            for currency, amount in positive_face_amounts.items()
+        )
+
+    return (
+        "COVERED" if is_covered else "PARTIAL",
+        _invoice_range_money_payload(pending_amounts),
+        pending_count,
+    )
 
 
 def _computed_invoice_range_display_totals(
@@ -4304,12 +4384,21 @@ def list_admin_client_range_invoices(
             note_created_at=note.created_at,
             metadata=metadata,
         )
+        check_coverage_status, pending_check_amounts, pending_check_count = _invoice_range_pending_check_coverage(
+            db,
+            metadata=metadata,
+            total_to_pay_by_currency=total_to_pay_by_currency,
+        )
         invoices.append(
             _invoice_range_out(
                 note_id=note.id,
                 metadata=metadata,
                 totals_by_currency=totals_by_currency,
                 total_to_pay_by_currency=total_to_pay_by_currency,
+                check_coverage_status=check_coverage_status,
+                pending_check_amounts_by_currency=pending_check_amounts,
+                pending_check_count=pending_check_count,
+                reminders_suspended=check_coverage_status == "COVERED",
                 related_invoices=_related_invoice_references_for_split_group(
                     db,
                     client_id=client_id,
@@ -12898,6 +12987,16 @@ def send_admin_client_range_invoice_email(
         metadata=metadata,
     )
     normalized_kind = "REMINDER" if payload.kind == "REMINDER" else "INVOICE"
+    if normalized_kind == "REMINDER":
+        check_coverage_status, _, _ = _invoice_range_pending_check_coverage(db, metadata=metadata)
+        if check_coverage_status == "COVERED":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Relance suspendue : le solde de cette facture est couvert par des chèques reçus "
+                    "ou déposés, en attente d'encaissement."
+                ),
+            )
     default_recipients, default_subject, default_body, default_body_format = _build_range_invoice_email_defaults(
         db,
         client=client,

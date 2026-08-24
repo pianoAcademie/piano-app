@@ -1110,6 +1110,11 @@ type InvoiceListRow =
       bankTransferOrderPaidAt: string | null;
       includedPaymentKeys: string[];
       totalLabel: string;
+      balanceLabel: string | null;
+      checkCoverageStatus: "NONE" | "PARTIAL" | "COVERED";
+      pendingCheckAmountLabel: string | null;
+      pendingCheckCount: number;
+      remindersSuspended: boolean;
       downloadHref: string;
       viewHref: string;
       sellerLegalEntityId: string | null;
@@ -2817,12 +2822,18 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       bankTransferOrderExpiresAt: row.bank_transfer_order_expires_at ?? null,
       bankTransferOrderPaidAt: row.bank_transfer_order_paid_at ?? null,
       includedPaymentKeys: row.included_payment_keys ?? [],
-      totalLabel: rangeInvoiceTotalLabel(
+      totalLabel: rangeInvoiceTotalLabel(row.totals_by_currency, language),
+      balanceLabel:
         row.invoice_status === "ISSUED" && Object.keys(row.total_to_pay_by_currency || {}).length > 0
-          ? row.total_to_pay_by_currency
-          : row.totals_by_currency,
-        language,
-      ),
+          ? rangeInvoiceTotalLabel(row.total_to_pay_by_currency, language)
+          : null,
+      checkCoverageStatus: row.check_coverage_status ?? "NONE",
+      pendingCheckAmountLabel:
+        Object.keys(row.pending_check_amounts_by_currency || {}).length > 0
+          ? rangeInvoiceTotalLabel(row.pending_check_amounts_by_currency, language)
+          : null,
+      pendingCheckCount: row.pending_check_count ?? 0,
+      remindersSuspended: Boolean(row.reminders_suspended),
       downloadHref: rangeInvoicePdfHref(client.id, row.note_id, false),
       viewHref: rangeInvoicePdfHref(client.id, row.note_id, true),
       sellerLegalEntityId: row.seller_legal_entity_id ?? null,
@@ -5993,6 +6004,29 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                   {t("admin.client_detail.invoice_reminder")}
                                 </span>
                               ) : null}
+                              {row.checkCoverageStatus !== "NONE" ? (
+                                <span
+                                  className={`status-pill ${row.checkCoverageStatus === "COVERED" ? "status-ok" : "status-warn"}`}
+                                  title={
+                                    row.checkCoverageStatus === "COVERED"
+                                      ? language === "en"
+                                        ? "The invoice remains issued until the checks are cashed. Payment reminders are suspended."
+                                        : "La facture reste émise jusqu’à l’encaissement des chèques. Les relances sont suspendues."
+                                      : language === "en"
+                                        ? "The received checks cover only part of the outstanding balance."
+                                        : "Les chèques reçus ne couvrent qu’une partie du solde."
+                                  }
+                                >
+                                  {row.checkCoverageStatus === "COVERED"
+                                    ? language === "en"
+                                      ? `Covered by ${row.pendingCheckCount} pending check(s)`
+                                      : `Couverte par ${row.pendingCheckCount} chèque(s) en attente`
+                                    : language === "en"
+                                      ? `${row.pendingCheckCount} pending check(s): partial coverage`
+                                      : `${row.pendingCheckCount} chèque(s) en attente : couverture partielle`}
+                                  {row.pendingCheckAmountLabel ? ` · ${row.pendingCheckAmountLabel}` : ""}
+                                </span>
+                              ) : null}
                               {row.bankTransferOrderReference ? (
                                 <span
                                   className={`status-pill ${
@@ -6012,7 +6046,20 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                             invoiceStatusLabel(row.status, language)
                           )}
                         </td>
-                        <td>{row.kind === "range" ? row.totalLabel : formatMoney(row.total, row.currency, language)}</td>
+                        <td>
+                          {row.kind === "range" ? (
+                            <div className="stack-xs">
+                              <span>{row.totalLabel}</span>
+                              {row.balanceLabel ? (
+                                <small className="muted">
+                                  {language === "en" ? "Outstanding balance" : "Solde restant"} : {row.balanceLabel}
+                                </small>
+                              ) : null}
+                            </div>
+                          ) : (
+                            formatMoney(row.total, row.currency, language)
+                          )}
+                        </td>
                         <td>
                           {row.kind === "range" ? (
                             <div className="row payment-row-actions">
@@ -6040,18 +6087,33 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                               >
                                 ✉
                               </Link>
-                              <Link
-                                className="client-action-icon"
-                                href={invoicesHref(client.id, {
-                                  payment_modal: "invoice_email",
-                                  payment_return_tab: "factures",
-                                  invoice_note_id: row.noteId,
-                                  invoice_email_kind: "REMINDER",
-                                })}
-                                title={t("admin.client_detail.send_invoice_reminder")}
-                              >
-                                R
-                              </Link>
+                              {row.remindersSuspended ? (
+                                <button
+                                  type="button"
+                                  className="client-action-icon"
+                                  disabled
+                                  title={
+                                    language === "en"
+                                      ? "Reminder suspended: the balance is covered by pending checks"
+                                      : "Relance suspendue : le solde est couvert par des chèques en attente d’encaissement"
+                                  }
+                                >
+                                  R
+                                </button>
+                              ) : (
+                                <Link
+                                  className="client-action-icon"
+                                  href={invoicesHref(client.id, {
+                                    payment_modal: "invoice_email",
+                                    payment_return_tab: "factures",
+                                    invoice_note_id: row.noteId,
+                                    invoice_email_kind: "REMINDER",
+                                  })}
+                                  title={t("admin.client_detail.send_invoice_reminder")}
+                                >
+                                  R
+                                </Link>
+                              )}
                               {row.bankTransferOrderStatus === "pending_bank_transfer" ? (
                                 <form action={markAdminClientRangeInvoiceBankTransferPaidAction}>
                                   <input type="hidden" name="client_id" value={client.id} />

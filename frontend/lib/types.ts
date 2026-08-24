@@ -770,6 +770,10 @@ export type AdminRangeInvoiceOut = {
   totals_by_currency: Record<string, string>;
   total_to_pay_by_currency: Record<string, string>;
   invoice_status: "ISSUED" | "PAID" | "CANCELLED";
+  check_coverage_status: "NONE" | "PARTIAL" | "COVERED";
+  pending_check_amounts_by_currency: Record<string, string>;
+  pending_check_count: number;
+  reminders_suspended: boolean;
   emailed_at: string | null;
   reminded_at: string | null;
   bank_transfer_order_id: string | null;
