@@ -18,7 +18,16 @@
 .contactResultRow:hover { background: #faf3e8; }
 .currentContact { color: #427353; font-size: 13px; font-weight: 700; }
 .actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
-.description { max-width: 430px; white-space: pre-wrap; }
+.description {
+  display: -webkit-box;
+  max-width: 430px;
+  overflow: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
 .meta { display: flex; flex-wrap: wrap; gap: 8px; color: #667085; font-size: 13px; }
 .detailGrid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr); gap: 18px; }
 .contactCard { display: grid; gap: 7px; padding: 16px; border-radius: 12px; background: #faf6ee; }

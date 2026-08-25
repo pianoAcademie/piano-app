@@ -264,7 +264,7 @@ export default async function AdminTasksPage({ searchParams = {} }: { searchPara
               {tasks.map((task) => (
                 <tr key={task.id}>
                   <td><span className={`status-pill ${taskStatusClass(task.effective_status)}`}>{STATUS_LABELS[task.effective_status]}</span></td>
-                  <td><strong>{TYPE_LABELS[task.task_type]}</strong><div className={styles.description}>{task.description}</div><div className={styles.meta}><span>Créée le {formatDate(task.created_at)}</span></div></td>
+                  <td><strong>{TYPE_LABELS[task.task_type]}</strong><div className={styles.description} title={task.description}>{task.description}</div><div className={styles.meta}><span>Créée le {formatDate(task.created_at)}</span></div></td>
                   <td>{task.contact ? <><strong>{task.contact.name}</strong><br /><span>{task.contact.phone || task.contact.email || "—"}</span></> : "—"}</td>
                   <td>{task.assignee?.name || "Non affectée"}</td>
                   <td>{formatDate(task.due_at)}</td>
