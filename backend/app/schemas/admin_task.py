@@ -14,11 +14,13 @@ AdminTaskType = Literal[
     "SLOT_CHOICE",
     "PROFESSOR_CONTACT",
     "SHEET_MUSIC_DELIVERY",
+    "PLANNING",
 ]
 AdminTaskStoredStatus = Literal[
     "CREATED",
     "ASSIGNED",
     "IN_PROGRESS",
+    "CONTACTED_NO_RESPONSE",
     "WAITING_CLIENT",
     "COMPLETED",
     "ARCHIVED",
@@ -27,6 +29,7 @@ AdminTaskEffectiveStatus = Literal[
     "CREATED",
     "ASSIGNED",
     "IN_PROGRESS",
+    "CONTACTED_NO_RESPONSE",
     "WAITING_CLIENT",
     "OVERDUE",
     "COMPLETED",

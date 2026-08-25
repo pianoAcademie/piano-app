@@ -77,6 +77,16 @@ class AdminTaskStatusTests(unittest.TestCase):
 
         self.assertEqual(_effective_status(task), "WAITING_CLIENT")
 
+    def test_contacted_without_response_status_is_preserved_before_due_date(self) -> None:
+        task = SimpleNamespace(status="CONTACTED_NO_RESPONSE", due_at=datetime.now(timezone.utc) + timedelta(days=1))
+
+        self.assertEqual(_effective_status(task), "CONTACTED_NO_RESPONSE")
+
+    def test_planning_task_type_is_accepted(self) -> None:
+        payload = AdminTaskCreateRequest(task_type="PLANNING", description="Mettre à jour la série")
+
+        self.assertEqual(payload.task_type, "PLANNING")
+
 
 class AdminTaskSourcePrefillTests(unittest.TestCase):
     def test_quote_description_contains_reference_and_direct_link(self) -> None:

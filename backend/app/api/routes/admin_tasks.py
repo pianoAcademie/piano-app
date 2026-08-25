@@ -52,6 +52,7 @@ TASK_TYPE_LABELS = {
     "SLOT_CHOICE": "Choix de créneau",
     "PROFESSOR_CONTACT": "Contact professeur",
     "SHEET_MUSIC_DELIVERY": "Remise de partition",
+    "PLANNING": "Planning",
 }
 
 

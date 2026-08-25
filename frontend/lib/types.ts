@@ -51,9 +51,10 @@ export type AdminTaskType =
   | "PROVIDER_CALL"
   | "SLOT_CHOICE"
   | "PROFESSOR_CONTACT"
-  | "SHEET_MUSIC_DELIVERY";
+  | "SHEET_MUSIC_DELIVERY"
+  | "PLANNING";
 
-export type AdminTaskStoredStatus = "CREATED" | "ASSIGNED" | "IN_PROGRESS" | "WAITING_CLIENT" | "COMPLETED" | "ARCHIVED";
+export type AdminTaskStoredStatus = "CREATED" | "ASSIGNED" | "IN_PROGRESS" | "CONTACTED_NO_RESPONSE" | "WAITING_CLIENT" | "COMPLETED" | "ARCHIVED";
 export type AdminTaskEffectiveStatus = AdminTaskStoredStatus | "OVERDUE";
 
 export type AdminTaskManagerOut = {

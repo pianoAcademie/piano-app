@@ -14,11 +14,11 @@ class AdminTask(Base):
     __tablename__ = "admin_tasks"
     __table_args__ = (
         CheckConstraint(
-            "task_type IN ('CLIENT_CALL','PROVIDER_CALL','SLOT_CHOICE','PROFESSOR_CONTACT','SHEET_MUSIC_DELIVERY')",
+            "task_type IN ('CLIENT_CALL','PROVIDER_CALL','SLOT_CHOICE','PROFESSOR_CONTACT','SHEET_MUSIC_DELIVERY','PLANNING')",
             name="ck_admin_tasks_type",
         ),
         CheckConstraint(
-            "status IN ('CREATED','ASSIGNED','IN_PROGRESS','WAITING_CLIENT','COMPLETED','ARCHIVED')",
+            "status IN ('CREATED','ASSIGNED','IN_PROGRESS','CONTACTED_NO_RESPONSE','WAITING_CLIENT','COMPLETED','ARCHIVED')",
             name="ck_admin_tasks_status",
         ),
         Index("ix_admin_tasks_assignee_status", "assignee_user_id", "status"),

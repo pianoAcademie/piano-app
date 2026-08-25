@@ -24,12 +24,14 @@ const TYPE_LABELS: Record<AdminTaskType, string> = {
   SLOT_CHOICE: "Choix de créneau",
   PROFESSOR_CONTACT: "Contact professeur",
   SHEET_MUSIC_DELIVERY: "Remise de partition",
+  PLANNING: "Planning",
 };
 
 const STATUS_LABELS: Record<AdminTaskEffectiveStatus, string> = {
   CREATED: "Créée",
   ASSIGNED: "Affectée",
   IN_PROGRESS: "En cours",
+  CONTACTED_NO_RESPONSE: "Contacté sans réponse",
   WAITING_CLIENT: "En attente de réponse client",
   OVERDUE: "En retard",
   COMPLETED: "Terminée",

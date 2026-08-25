@@ -12,7 +12,7 @@ type SearchParams = Record<string, string | string[] | undefined>;
 
 const TYPE_LABELS: Record<AdminTaskType, string> = {
   CLIENT_CALL: "Appel client", PROVIDER_CALL: "Appel prestataire", SLOT_CHOICE: "Choix de créneau",
-  PROFESSOR_CONTACT: "Contact professeur", SHEET_MUSIC_DELIVERY: "Remise de partition",
+  PROFESSOR_CONTACT: "Contact professeur", SHEET_MUSIC_DELIVERY: "Remise de partition", PLANNING: "Planning",
 };
 
 function param(params: SearchParams, key: string): string {
@@ -79,7 +79,7 @@ export default async function AdminTaskDetailPage({ params, searchParams = {} }:
             <input type="hidden" name="task_id" value={task.id} />
             <input type="hidden" name="return_to" value={`/admin/tasks/${task.id}`} />
             <label className={styles.field}><span>Type</span><select name="task_type" defaultValue={task.task_type}>{Object.entries(TYPE_LABELS).map(([item, label]) => <option key={item} value={item}>{label}</option>)}</select></label>
-            <label className={styles.field}><span>Statut</span><select name="status" defaultValue={task.status}><option value="CREATED">Créée</option><option value="ASSIGNED">Affectée</option><option value="IN_PROGRESS">En cours</option><option value="WAITING_CLIENT">En attente de réponse client</option><option value="COMPLETED">Terminée</option><option value="ARCHIVED">Archivée</option></select></label>
+            <label className={styles.field}><span>Statut</span><select name="status" defaultValue={task.status}><option value="CREATED">Créée</option><option value="ASSIGNED">Affectée</option><option value="IN_PROGRESS">En cours</option><option value="CONTACTED_NO_RESPONSE">Contacté sans réponse</option><option value="WAITING_CLIENT">En attente de réponse client</option><option value="COMPLETED">Terminée</option><option value="ARCHIVED">Archivée</option></select></label>
             <label className={styles.field}><span>Responsable</span><select name="assignee_user_id" defaultValue={task.assignee?.id || ""}><option value="">Non affectée</option>{optionsResult.data.managers.map((manager) => <option key={manager.id} value={manager.id}>{manager.name}</option>)}</select><small>Un email sera envoyé en cas de nouvelle affectation.</small></label>
             <label className={styles.field}><span>Échéance</span><input name="due_at" type="datetime-local" defaultValue={localInput(task.due_at)} /></label>
             <label className={`${styles.field} ${styles.span2}`}><span>Descriptif</span><textarea name="description" rows={6} required defaultValue={task.description} /></label>
