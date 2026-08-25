@@ -4,8 +4,8 @@ import { redirect } from "next/navigation";
 import { hasTaskManagerAccess } from "../../../../lib/admin-access";
 import { getAdminToken } from "../../../../lib/auth-cookies";
 import { backendRequest } from "../../../../lib/backend";
-import type { AdminTaskOptionsOut, AdminTaskOut, AdminTaskType, UserOut } from "../../../../lib/types";
-import { updateAdminTaskAction } from "../actions";
+import type { AdminTaskContactOut, AdminTaskOptionsOut, AdminTaskOut, AdminTaskType, UserOut } from "../../../../lib/types";
+import { updateAdminTaskAction, updateAdminTaskContactAction } from "../actions";
 import styles from "../tasks.module.css";
 
 type SearchParams = Record<string, string | string[] | undefined>;
@@ -48,6 +48,18 @@ export default async function AdminTaskDetailPage({ params, searchParams = {} }:
   const task = taskResult.data;
   const ok = param(searchParams, "ok");
   const error = param(searchParams, "error");
+  const contactQuery = param(searchParams, "contact_q").trim();
+  let contacts: AdminTaskContactOut[] = [];
+  let contactSearchError = "";
+  if (contactQuery.length >= 2) {
+    const result = await backendRequest<AdminTaskContactOut[]>(
+      `/api/v1/admin/tasks/contacts?q=${encodeURIComponent(contactQuery)}`,
+      {},
+      token,
+    );
+    if (result.ok) contacts = result.data;
+    else contactSearchError = result.message;
+  }
   const contactHref = task.contact?.kind === "CLIENT"
     ? `/admin/clients/${task.contact.id}`
     : task.contact?.linked_client_id ? `/admin/clients/${task.contact.linked_client_id}` : task.contact ? `/admin/prospects/${task.contact.id}` : null;
@@ -79,6 +91,47 @@ export default async function AdminTaskDetailPage({ params, searchParams = {} }:
           <section className={styles.panel}>
             <h3>Personne liée</h3>
             {task.contact ? <div className={styles.contactCard}><strong>{task.contact.name}</strong><span>{task.contact.kind === "CLIENT" ? "Client" : "Prospect"}</span>{task.contact.phone ? <a href={`tel:${task.contact.phone}`}>{task.contact.phone}</a> : <span>Téléphone non renseigné</span>}{task.contact.email ? <a href={`mailto:${task.contact.email}`}>{task.contact.email}</a> : null}{contactHref ? <Link className="ghost" href={contactHref}>Ouvrir la fiche</Link> : null}</div> : <p className="muted">Aucun client ou prospect lié.</p>}
+            <form className={`${styles.contactSearch} top-gap-sm`} method="get">
+              <label className={styles.field}>
+                <span>{task.contact ? "Lier une autre personne" : "Lier une personne"}</span>
+                <input name="contact_q" defaultValue={contactQuery} placeholder="Nom, email ou téléphone" minLength={2} required />
+              </label>
+              <button type="submit">Rechercher</button>
+            </form>
+            {contactSearchError ? <p className="notice error top-gap-sm">{contactSearchError}</p> : null}
+            {contactQuery.length >= 2 && !contactSearchError ? (
+              contacts.length ? (
+                <div className={`${styles.contactResults} top-gap-sm`}>
+                  {contacts.map((contact) => {
+                    const isCurrent = task.contact?.kind === contact.kind && task.contact.id === contact.id;
+                    return (
+                      <div className={styles.contactResultRow} key={`${contact.kind}-${contact.id}`}>
+                        <span>
+                          <strong>{contact.name}</strong><br />
+                          <small>{contact.kind === "CLIENT" ? "Client" : "Prospect"} · {contact.phone || contact.email || "Coordonnées non renseignées"}</small>
+                        </span>
+                        {isCurrent ? <span className={styles.currentContact}>Déjà liée</span> : (
+                          <form action={updateAdminTaskContactAction}>
+                            <input type="hidden" name="task_id" value={task.id} />
+                            <input type="hidden" name="return_to" value={`/admin/tasks/${task.id}`} />
+                            <input type="hidden" name="contact_ref" value={`${contact.kind}:${contact.id}`} />
+                            <button type="submit">{task.contact ? "Remplacer" : "Lier"}</button>
+                          </form>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : <p className="muted top-gap-sm">Aucun client ou prospect trouvé.</p>
+            ) : null}
+            {task.contact ? (
+              <form action={updateAdminTaskContactAction} className={`${styles.actions} top-gap-sm`}>
+                <input type="hidden" name="task_id" value={task.id} />
+                <input type="hidden" name="return_to" value={`/admin/tasks/${task.id}`} />
+                <input type="hidden" name="contact_ref" value="CLEAR" />
+                <button className="ghost" type="submit">Retirer la liaison</button>
+              </form>
+            ) : null}
           </section>
           <section className={styles.panel}>
             <h3>Contexte</h3>

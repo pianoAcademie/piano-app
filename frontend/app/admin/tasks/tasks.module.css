@@ -14,6 +14,9 @@
 .contactResults { display: grid; gap: 8px; max-height: 270px; overflow: auto; padding: 10px; border: 1px solid #ead8b7; border-radius: 12px; }
 .contactOption { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 10px; padding: 8px; border-radius: 8px; }
 .contactOption:hover { background: #faf3e8; }
+.contactResultRow { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 8px; border-radius: 8px; }
+.contactResultRow:hover { background: #faf3e8; }
+.currentContact { color: #427353; font-size: 13px; font-weight: 700; }
 .actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
 .description { max-width: 430px; white-space: pre-wrap; }
 .meta { display: flex; flex-wrap: wrap; gap: 8px; color: #667085; font-size: 13px; }
@@ -25,4 +28,5 @@
   .filters, .formGrid { grid-template-columns: 1fr; }
   .span2 { grid-column: auto; }
   .contactSearch { grid-template-columns: 1fr; }
+  .contactResultRow { grid-template-columns: 1fr; }
 }

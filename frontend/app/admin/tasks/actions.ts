@@ -80,3 +80,31 @@ export async function updateAdminTaskAction(formData: FormData): Promise<void> {
   revalidatePath(`/admin/tasks/${taskId}`);
   redirect(`${returnTo}?ok=${encodeURIComponent("Tâche mise à jour.")}`);
 }
+
+export async function updateAdminTaskContactAction(formData: FormData): Promise<void> {
+  const token = getAdminToken();
+  if (!token) redirect("/login?error_code=session_expired");
+  const taskId = value(formData, "task_id");
+  const returnTo = safeReturnTo(value(formData, "return_to"), `/admin/tasks/${taskId}`);
+  const contactReference = value(formData, "contact_ref");
+  const payload = contactReference === "CLEAR"
+    ? { clear_contact: true }
+    : contactPayload(contactReference);
+
+  if (!taskId || (contactReference !== "CLEAR" && !Object.keys(payload).length)) {
+    redirect(`${returnTo}?error=${encodeURIComponent("Sélectionnez un client ou un prospect valide.")}`);
+  }
+
+  const result = await backendRequest<AdminTaskOut>(
+    `/api/v1/admin/tasks/${encodeURIComponent(taskId)}`,
+    { method: "PATCH", body: JSON.stringify(payload) },
+    token,
+  );
+  if (!result.ok) {
+    redirect(`${returnTo}?error=${encodeURIComponent(result.message)}`);
+  }
+  revalidatePath("/admin/tasks");
+  revalidatePath(`/admin/tasks/${taskId}`);
+  const message = contactReference === "CLEAR" ? "Liaison retirée." : "Personne liée à la tâche.";
+  redirect(`${returnTo}?ok=${encodeURIComponent(message)}`);
+}
