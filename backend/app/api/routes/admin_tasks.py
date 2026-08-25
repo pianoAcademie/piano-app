@@ -11,15 +11,17 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_admin_permission_map, get_current_user, get_db
 from app.models.admin_task import AdminTask
+from app.models.family import ClientFamilyLink
 from app.models.quote import Prospect, Quote
 from app.models.typeform_intake import TypeformIntake
-from app.models.user import User, UserRole
+from app.models.user import ClientKind, User, UserRole
 from app.schemas.admin_task import (
     AdminTaskContactOut,
     AdminTaskCreateRequest,
     AdminTaskManagerOut,
     AdminTaskOptionsOut,
     AdminTaskOut,
+    AdminTaskSourcePrefillOut,
     AdminTaskSourceOut,
     AdminTaskUpdateRequest,
 )
@@ -195,6 +197,19 @@ def _validate_assignee(db: Session, assignee_user_id: UUID | None) -> User | Non
     return assignee
 
 
+def _responsible_client_id(db: Session, client_id: UUID) -> UUID:
+    client = db.get(User, client_id)
+    if client is None or client.role != UserRole.CLIENT or client.client_kind != ClientKind.CHILD:
+        return client_id
+    family_link = db.scalar(
+        select(ClientFamilyLink)
+        .where(ClientFamilyLink.child_user_id == client.id)
+        .order_by(ClientFamilyLink.is_billing_recipient.desc(), ClientFamilyLink.created_at.asc())
+        .limit(1)
+    )
+    return family_link.adult_user_id if family_link is not None else client_id
+
+
 def _resolve_sources_and_contact(
     db: Session,
     *,
@@ -212,8 +227,10 @@ def _resolve_sources_and_contact(
     if quote_id and quote is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Devis introuvable")
     if client_id is None and prospect_id is None and quote is not None:
-        client_id = quote.client_id
+        client_id = _responsible_client_id(db, quote.client_id) if quote.client_id is not None else None
         prospect_id = None if client_id is not None else quote.prospect_id
+    if client_id is None and prospect_id is None and intake is not None:
+        client_id, prospect_id = _resolve_intake_contact(db, intake)
     if client_id is not None:
         client = db.get(User, client_id)
         if client is None or client.role != UserRole.CLIENT:
@@ -223,10 +240,99 @@ def _resolve_sources_and_contact(
     return quote_id, client_id, prospect_id
 
 
-def _send_assignment_email(db: Session, task: AdminTask, assignee: User, sender: User) -> None:
+def _uuid_or_none(value: object) -> UUID | None:
+    try:
+        return UUID(str(value)) if value else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _resolve_intake_contact(db: Session, intake: TypeformIntake) -> tuple[UUID | None, UUID | None]:
+    resolution = intake.resolution_json if isinstance(intake.resolution_json, dict) else {}
+    client_resolution = resolution.get("client_resolution")
+    client_resolution = client_resolution if isinstance(client_resolution, dict) else {}
+    for key in (
+        "selected_family_billing_client_id",
+        "selected_family_adult_client_id",
+    ):
+        candidate_id = _uuid_or_none(client_resolution.get(key))
+        candidate = db.get(User, candidate_id) if candidate_id else None
+        if candidate is not None and candidate.role == UserRole.CLIENT:
+            return candidate.id, None
+
+    selected_client_id = _uuid_or_none(client_resolution.get("selected_client_id"))
+    selected_client = db.get(User, selected_client_id) if selected_client_id else None
+    if selected_client is not None and selected_client.role == UserRole.CLIENT:
+        if selected_client.client_kind == ClientKind.ADULT:
+            return selected_client.id, None
+        family_link = db.scalar(
+            select(ClientFamilyLink)
+            .where(ClientFamilyLink.child_user_id == selected_client.id)
+            .order_by(ClientFamilyLink.is_billing_recipient.desc(), ClientFamilyLink.created_at.asc())
+            .limit(1)
+        )
+        if family_link is not None:
+            adult = db.get(User, family_link.adult_user_id)
+            if adult is not None and adult.role == UserRole.CLIENT:
+                return adult.id, None
+
+    normalized = intake.normalized_payload_json if isinstance(intake.normalized_payload_json, dict) else {}
+    email = next(
+        (
+            str(normalized.get(key) or "").strip().lower()
+            for key in ("parent_email", "adult_email", "email")
+            if str(normalized.get(key) or "").strip()
+        ),
+        "",
+    )
+    if not email:
+        return None, None
+    client = db.scalar(
+        select(User)
+        .where(
+            User.role == UserRole.CLIENT,
+            User.account_deleted_at.is_(None),
+            or_(func.lower(User.email) == email, func.lower(User.contact_email) == email),
+        )
+        .order_by(User.created_at.desc())
+        .limit(1)
+    )
+    if client is not None:
+        return client.id, None
+    prospect = db.scalar(
+        select(Prospect)
+        .where(func.lower(Prospect.email) == email)
+        .order_by(Prospect.created_at.desc())
+        .limit(1)
+    )
+    if prospect is not None and prospect.linked_client_id is not None:
+        linked_client = db.get(User, prospect.linked_client_id)
+        if linked_client is not None and linked_client.role == UserRole.CLIENT:
+            return linked_client.id, None
+    if prospect is not None:
+        return None, prospect.id
+    if selected_client is not None and selected_client.role == UserRole.CLIENT:
+        return selected_client.id, None
+    return None, None
+
+
+def _source_description(
+    intake: TypeformIntake | None,
+    quote: Quote | None,
+    frontend_base_url: str,
+) -> str:
+    base_url = frontend_base_url.rstrip("/")
+    if intake is not None:
+        return f"Intake {intake.source_response_id}\n{base_url}/admin/intakes/{intake.id}"
+    if quote is not None:
+        return f"Devis {quote.quote_number}\n{base_url}/admin/quotes/{quote.id}"
+    return ""
+
+
+def _send_assignment_email(db: Session, task: AdminTask, assignee: User, sender: User) -> str | None:
     to_email = _user_email(assignee)
     if not to_email:
-        return
+        return None
     task_url = f"{resolve_frontend_base_url(db).rstrip('/')}/admin/tasks/{task.id}"
     type_label = TASK_TYPE_LABELS.get(task.task_type, task.task_type)
     due_label = (
@@ -255,7 +361,7 @@ def _send_assignment_email(db: Session, task: AdminTask, assignee: User, sender:
       </div>
     </div>
     """
-    send_email(
+    return send_email(
         to_email=to_email,
         subject=f"Piano Académie — Tâche assignée : {type_label}",
         body=body,
@@ -264,7 +370,6 @@ def _send_assignment_email(db: Session, task: AdminTask, assignee: User, sender:
         sender_user_id=sender.id,
         sender_label=_user_name(sender),
         recipient_user_id=assignee.id,
-        db=db,
         raise_on_failure=False,
     )
 
@@ -329,6 +434,46 @@ def search_task_contacts(
         *[contact for client in clients if (contact := _contact_out(client, None)) is not None],
         *[contact for prospect in prospects if (contact := _contact_out(None, prospect)) is not None],
     ]
+
+
+@router.get("/source-prefill", response_model=AdminTaskSourcePrefillOut)
+def task_source_prefill(
+    intake_id: UUID | None = None,
+    quote_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_task_manager),
+) -> AdminTaskSourcePrefillOut:
+    if intake_id is None and quote_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Un devis ou un intake est requis",
+        )
+    explicit_quote_id = quote_id
+    resolved_quote_id, client_id, prospect_id = _resolve_sources_and_contact(
+        db,
+        intake_id=intake_id,
+        quote_id=quote_id,
+        client_id=None,
+        prospect_id=None,
+    )
+    intake = db.get(TypeformIntake, intake_id) if intake_id else None
+    quote = db.get(Quote, resolved_quote_id) if resolved_quote_id else None
+    client = db.get(User, client_id) if client_id else None
+    prospect = db.get(Prospect, prospect_id) if prospect_id else None
+    return AdminTaskSourcePrefillOut(
+        contact=_contact_out(client, prospect),
+        description=_source_description(
+            intake,
+            quote if explicit_quote_id is not None else None,
+            resolve_frontend_base_url(db),
+        ),
+        source=AdminTaskSourceOut(
+            intake_id=intake.id if intake is not None else None,
+            intake_label=f"Questionnaire {intake.source_response_id}" if intake is not None else None,
+            quote_id=quote.id if quote is not None else None,
+            quote_label=f"Devis {quote.quote_number}" if quote is not None else None,
+        ),
+    )
 
 
 @router.get("", response_model=list[AdminTaskOut])

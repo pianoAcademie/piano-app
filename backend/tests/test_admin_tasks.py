@@ -6,12 +6,13 @@ import sys
 import unittest
 from types import SimpleNamespace
 from uuid import uuid4
+from unittest.mock import patch
 
 from pydantic import ValidationError
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from app.api.routes.admin_tasks import _effective_status
+from app.api.routes.admin_tasks import _effective_status, _send_assignment_email, _source_description
 from app.schemas.admin_task import AdminTaskCreateRequest, AdminTaskUpdateRequest
 
 
@@ -59,6 +60,67 @@ class AdminTaskStatusTests(unittest.TestCase):
         task = SimpleNamespace(status="COMPLETED", due_at=datetime.now(timezone.utc) - timedelta(days=10))
 
         self.assertEqual(_effective_status(task), "COMPLETED")
+
+
+class AdminTaskSourcePrefillTests(unittest.TestCase):
+    def test_quote_description_contains_reference_and_direct_link(self) -> None:
+        quote_id = uuid4()
+        quote = SimpleNamespace(id=quote_id, quote_number="DV-20260825-1234")
+
+        description = _source_description(None, quote, "https://app.piano-academie.com/")
+
+        self.assertEqual(
+            description,
+            f"Devis DV-20260825-1234\nhttps://app.piano-academie.com/admin/quotes/{quote_id}",
+        )
+
+    def test_intake_description_contains_reference_and_direct_link(self) -> None:
+        intake_id = uuid4()
+        intake = SimpleNamespace(id=intake_id, source_response_id="response-abc")
+
+        description = _source_description(intake, None, "https://app.piano-academie.com")
+
+        self.assertEqual(
+            description,
+            f"Intake response-abc\nhttps://app.piano-academie.com/admin/intakes/{intake_id}",
+        )
+
+
+class AdminTaskAssignmentEmailTests(unittest.TestCase):
+    @patch("app.api.routes.admin_tasks.resolve_frontend_base_url", return_value="https://app.piano-academie.com")
+    @patch("app.api.routes.admin_tasks.send_email", return_value="mail-test")
+    def test_assignment_email_uses_own_journal_session(self, send_email_mock, _base_url_mock) -> None:
+        task_id = uuid4()
+        assignee_id = uuid4()
+        sender_id = uuid4()
+        task = SimpleNamespace(
+            id=task_id,
+            task_type="CLIENT_CALL",
+            due_at=None,
+            description="Rappeler la famille",
+        )
+        assignee = SimpleNamespace(
+            id=assignee_id,
+            first_name="Estela",
+            last_name="Oliviero",
+            contact_email=None,
+            email="estela.oliviero@piano-academie.com",
+        )
+        sender = SimpleNamespace(
+            id=sender_id,
+            first_name="",
+            last_name="",
+            contact_email="admin@piano-academie.com",
+            email="admin@piano-academie.com",
+        )
+
+        result = _send_assignment_email(SimpleNamespace(), task, assignee, sender)
+
+        self.assertEqual(result, "mail-test")
+        kwargs = send_email_mock.call_args.kwargs
+        self.assertNotIn("db", kwargs)
+        self.assertEqual(kwargs["recipient_user_id"], assignee_id)
+        self.assertEqual(kwargs["context"], "ADMIN_TASK_ASSIGNED")
 
 
 if __name__ == "__main__":

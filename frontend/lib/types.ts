@@ -99,6 +99,12 @@ export type AdminTaskOptionsOut = {
   current_user_id: string;
 };
 
+export type AdminTaskSourcePrefillOut = {
+  contact: AdminTaskContactOut | null;
+  description: string;
+  source: AdminTaskOut["source"];
+};
+
 export type CourseTypeOut = {
   id: string;
   code: string;

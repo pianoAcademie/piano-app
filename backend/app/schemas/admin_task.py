@@ -107,6 +107,12 @@ class AdminTaskSourceOut(BaseModel):
     quote_label: str | None = None
 
 
+class AdminTaskSourcePrefillOut(BaseModel):
+    contact: AdminTaskContactOut | None = None
+    description: str
+    source: AdminTaskSourceOut
+
+
 class AdminTaskOut(BaseModel):
     id: UUID
     task_type: AdminTaskType

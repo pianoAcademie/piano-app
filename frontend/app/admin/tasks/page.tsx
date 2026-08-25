@@ -9,6 +9,7 @@ import type {
   AdminTaskEffectiveStatus,
   AdminTaskOptionsOut,
   AdminTaskOut,
+  AdminTaskSourcePrefillOut,
   AdminTaskType,
   UserOut,
 } from "../../../lib/types";
@@ -91,6 +92,21 @@ export default async function AdminTasksPage({ searchParams = {} }: { searchPara
   if (!optionsResult.ok) redirect(`/admin?error=${encodeURIComponent(optionsResult.message)}`);
   const tasks = tasksResult.ok ? tasksResult.data : [];
   const options = optionsResult.data;
+  const createOpen = param(searchParams, "create") === "1";
+  const intakeId = param(searchParams, "intake_id");
+  const quoteId = param(searchParams, "quote_id");
+  let sourcePrefill: AdminTaskSourcePrefillOut | null = null;
+  if (createOpen && (intakeId || quoteId)) {
+    const sourceQuery = new URLSearchParams();
+    if (intakeId) sourceQuery.set("intake_id", intakeId);
+    if (quoteId) sourceQuery.set("quote_id", quoteId);
+    const result = await backendRequest<AdminTaskSourcePrefillOut>(
+      `/api/v1/admin/tasks/source-prefill?${sourceQuery.toString()}`,
+      {},
+      token,
+    );
+    sourcePrefill = result.ok ? result.data : null;
+  }
   const contactQuery = param(searchParams, "contact_q").trim();
   let contacts: AdminTaskContactOut[] = [];
   if (contactQuery.length >= 2) {
@@ -101,9 +117,12 @@ export default async function AdminTasksPage({ searchParams = {} }: { searchPara
     );
     contacts = result.ok ? result.data : [];
   }
-  const createOpen = param(searchParams, "create") === "1";
-  const intakeId = param(searchParams, "intake_id");
-  const quoteId = param(searchParams, "quote_id");
+  const sourceContactKey = sourcePrefill?.contact
+    ? `${sourcePrefill.contact.kind}-${sourcePrefill.contact.id}`
+    : "";
+  const contactOptions = sourcePrefill?.contact
+    ? [sourcePrefill.contact, ...contacts.filter((contact) => `${contact.kind}-${contact.id}` !== sourceContactKey)]
+    : contacts;
   const error = param(searchParams, "error") || (!tasksResult.ok ? tasksResult.message : "");
   const ok = param(searchParams, "ok");
   const createReturnTo = listHref(searchParams, {});
@@ -170,12 +189,23 @@ export default async function AdminTasksPage({ searchParams = {} }: { searchPara
             </label>
             <div className={styles.field}>
               <span>Client ou prospect</span>
-              {contacts.length ? (
+              {contactOptions.length ? (
                 <div className={styles.contactResults}>
-                  {contacts.map((contact) => (
+                  {contactOptions.map((contact) => (
                     <label className={styles.contactOption} key={`${contact.kind}-${contact.id}`}>
-                      <input type="radio" name="contact_ref" value={`${contact.kind}:${contact.id}`} />
-                      <span><strong>{contact.name}</strong><br /><small>{contact.kind === "CLIENT" ? "Client" : "Prospect"} · {contact.phone || contact.email || "Coordonnées non renseignées"}</small></span>
+                      <input
+                        type="radio"
+                        name="contact_ref"
+                        value={`${contact.kind}:${contact.id}`}
+                        defaultChecked={`${contact.kind}-${contact.id}` === sourceContactKey}
+                      />
+                      <span>
+                        <strong>{contact.name}</strong><br />
+                        <small>
+                          {contact.kind === "CLIENT" ? "Client" : "Prospect"} · {contact.phone || contact.email || "Coordonnées non renseignées"}
+                          {`${contact.kind}-${contact.id}` === sourceContactKey ? " · Responsable repris automatiquement" : ""}
+                        </small>
+                      </span>
                     </label>
                   ))}
                 </div>
@@ -183,7 +213,7 @@ export default async function AdminTasksPage({ searchParams = {} }: { searchPara
             </div>
             <label className={`${styles.field} ${styles.span2}`}>
               <span>Descriptif *</span>
-              <textarea name="description" required rows={4} maxLength={10000} />
+              <textarea name="description" required rows={4} maxLength={10000} defaultValue={sourcePrefill?.description || ""} />
             </label>
             <label className={`${styles.field} ${styles.span2}`}>
               <span>Commentaire</span>
