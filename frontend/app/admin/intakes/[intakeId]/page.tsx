@@ -985,6 +985,9 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
             <p className="muted">{t("admin.intakes.received_on", { responseId: detail.source_response_id, date: formatDate(detail.received_at, language) })}</p>
           </div>
           <div className="row wrap gap-sm">
+            <Link className="ghost" href={`/admin/tasks?create=1&intake_id=${encodeURIComponent(detail.id)}`}>
+              Créer une tâche
+            </Link>
             <Link className="ghost" href={backHref}>{t("admin.intakes.back_inbox")}</Link>
             {detail.related_quote_id ? (
               <Link className="ghost" href={`/admin/quotes/${encodeURIComponent(detail.related_quote_id)}`}>{t("admin.intakes.open_related_quote")}</Link>

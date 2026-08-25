@@ -84,6 +84,12 @@ function labelForSegment(segment: string, previous: string, language: UiLanguage
   if (segment === "intakes") {
     return "Intakes";
   }
+  if (segment === "tasks") {
+    return pickText(language, "Tâches", "Tasks");
+  }
+  if (previous === "tasks" && looksLikeId(segment)) {
+    return pickText(language, "Détail de la tâche", "Task details");
+  }
   if (segment === "events") {
     return pickText(language, "Événements", "Events");
   }

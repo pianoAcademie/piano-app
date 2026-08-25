@@ -26,6 +26,7 @@ const NAV_SECTIONS: NavSection[] = [
     title: { fr: "Operations", en: "Operations" },
     items: [
       { href: "/admin", label: { fr: "Planning", en: "Schedule" }, icon: "📅", permission: "can_view_planning" },
+      { href: "/admin/tasks", label: { fr: "Tâches", en: "Tasks" }, icon: "📋", permission: "can_manage_tasks" },
       { href: "/admin/events", label: { fr: "Événements", en: "Events" }, icon: "🎟️", permission: "can_manage_events" },
       { href: "/admin/planning-reorganization", label: { fr: "Reorganisation saison", en: "Season reorg" }, icon: "🧩", permission: "can_edit_planning" },
       { href: "/admin/simulation-planning", label: { fr: "Simulation planning", en: "Planning simulation" }, icon: "🧮", permission: "can_view_planning_simulation" },
@@ -100,6 +101,21 @@ function hasVisiblePermission(permission: string, permissions: Partial<Record<st
   }
   if (permission === "can_manage_mobile_news" && permissions.can_manage_website_and_news) {
     return true;
+  }
+  if (permission === "can_manage_tasks") {
+    return [
+      "can_edit_planning",
+      "can_view_planning_simulation",
+      "can_manage_check_deposits",
+      "can_view_clients",
+      "can_access_collaborators",
+      "can_view_intakes",
+      "can_view_quotes",
+      "can_manage_events",
+      "can_manage_mobile_news",
+      "can_manage_invoices_and_accounts",
+      "can_manage_website_and_news",
+    ].some((key) => Boolean(permissions[key]));
   }
   return Boolean(permissions[permission]);
 }

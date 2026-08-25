@@ -1,0 +1,28 @@
+.page { display: grid; gap: 18px; }
+.hero { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 22px; border: 1px solid var(--border); border-radius: 16px; background: #fff; }
+.hero h1, .panel h2, .panel h3 { margin-top: 0; }
+.panel { padding: 20px; border: 1px solid var(--border); border-radius: 16px; background: #fff; }
+.tabs { display: flex; flex-wrap: wrap; gap: 8px; }
+.tab { display: inline-flex; padding: 10px 14px; border: 1px solid #dbc6a4; border-radius: 10px; color: #46331e; text-decoration: none; background: #fffaf3; font-weight: 700; }
+.tabActive { background: #f4dfbe; border-color: #d59b3d; }
+.filters { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) auto auto; align-items: end; gap: 12px; }
+.field { display: grid; gap: 6px; font-weight: 700; }
+.field small { font-weight: 400; }
+.formGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.span2 { grid-column: 1 / -1; }
+.contactSearch { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: end; }
+.contactResults { display: grid; gap: 8px; max-height: 270px; overflow: auto; padding: 10px; border: 1px solid #ead8b7; border-radius: 12px; }
+.contactOption { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 10px; padding: 8px; border-radius: 8px; }
+.contactOption:hover { background: #faf3e8; }
+.actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
+.description { max-width: 430px; white-space: pre-wrap; }
+.meta { display: flex; flex-wrap: wrap; gap: 8px; color: #667085; font-size: 13px; }
+.detailGrid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr); gap: 18px; }
+.contactCard { display: grid; gap: 7px; padding: 16px; border-radius: 12px; background: #faf6ee; }
+.empty { padding: 26px; text-align: center; color: #667085; }
+@media (max-width: 820px) {
+  .hero, .detailGrid { display: grid; grid-template-columns: 1fr; }
+  .filters, .formGrid { grid-template-columns: 1fr; }
+  .span2 { grid-column: auto; }
+  .contactSearch { grid-template-columns: 1fr; }
+}

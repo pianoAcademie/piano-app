@@ -15,6 +15,20 @@ export const MANAGER_ADMIN_PERMISSION_KEYS: AdminPermissionKey[] = [
   "can_manage_events",
 ];
 
+export const TASK_MANAGER_PERMISSION_KEYS: AdminPermissionKey[] = [
+  "can_edit_planning",
+  "can_view_planning_simulation",
+  "can_manage_check_deposits",
+  "can_view_clients",
+  "can_access_collaborators",
+  "can_view_intakes",
+  "can_view_quotes",
+  "can_manage_events",
+  "can_manage_mobile_news",
+  "can_manage_invoices_and_accounts",
+  "can_manage_website_and_news",
+];
+
 export function hasAdminPermission(user: UserOut, key: AdminPermissionKey): boolean {
   if (key === "can_view_planning" && Boolean(user.admin_permissions?.can_edit_planning)) {
     return true;
@@ -24,6 +38,10 @@ export function hasAdminPermission(user: UserOut, key: AdminPermissionKey): bool
 
 export function hasAnyAdminAccess(user: UserOut): boolean {
   return user.role === "admin" || MANAGER_ADMIN_PERMISSION_KEYS.some((key) => hasAdminPermission(user, key));
+}
+
+export function hasTaskManagerAccess(user: UserOut): boolean {
+  return user.role === "admin" || TASK_MANAGER_PERMISSION_KEYS.some((key) => hasAdminPermission(user, key));
 }
 
 export function adminRoleLabel(user: UserOut, language: UiLanguage): string {

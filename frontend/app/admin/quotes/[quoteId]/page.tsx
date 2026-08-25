@@ -3145,6 +3145,9 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
             })}
             backLink={(
               <>
+                <Link className="ghost" href={`/admin/tasks?create=1&quote_id=${encodeURIComponent(detail.quote.id)}`}>
+                  Créer une tâche
+                </Link>
                 <Link className="ghost" href={intakePanelHref}>{t("admin.quote_detail.intake_info_button")}</Link>
                 <Link className="ghost" href={backPath}>{t("admin.quote_detail.back_to_quotes")}</Link>
                 <Link className="ghost" href="/admin/quotes/new">{t("admin.quotes.new_quote")}</Link>

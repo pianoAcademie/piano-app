@@ -46,6 +46,59 @@ export type UserOut = {
   updated_at: string;
 };
 
+export type AdminTaskType =
+  | "CLIENT_CALL"
+  | "PROVIDER_CALL"
+  | "SLOT_CHOICE"
+  | "PROFESSOR_CONTACT"
+  | "SHEET_MUSIC_DELIVERY";
+
+export type AdminTaskStoredStatus = "CREATED" | "ASSIGNED" | "IN_PROGRESS" | "COMPLETED" | "ARCHIVED";
+export type AdminTaskEffectiveStatus = AdminTaskStoredStatus | "OVERDUE";
+
+export type AdminTaskManagerOut = {
+  id: string;
+  name: string;
+  email: string;
+};
+
+export type AdminTaskContactOut = {
+  kind: "CLIENT" | "PROSPECT";
+  id: string;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  linked_client_id: string | null;
+};
+
+export type AdminTaskOut = {
+  id: string;
+  task_type: AdminTaskType;
+  status: AdminTaskStoredStatus;
+  effective_status: AdminTaskEffectiveStatus;
+  description: string;
+  comment: string | null;
+  assignee: AdminTaskManagerOut | null;
+  created_by: AdminTaskManagerOut | null;
+  contact: AdminTaskContactOut | null;
+  source: {
+    intake_id: string | null;
+    intake_label: string | null;
+    quote_id: string | null;
+    quote_label: string | null;
+  };
+  due_at: string | null;
+  completed_at: string | null;
+  archived_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AdminTaskOptionsOut = {
+  managers: AdminTaskManagerOut[];
+  current_user_id: string;
+};
+
 export type CourseTypeOut = {
   id: string;
   code: string;

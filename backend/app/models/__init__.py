@@ -1,3 +1,4 @@
+from app.models.admin_task import AdminTask
 from app.models.family import ClientFamilyBillingAllocation, ClientFamilyLink
 from app.models.makeup import MakeupPassPurchase, MakeupRequest, MakeupRequestStatus
 from app.models.client_group import ClientGroup, ClientGroupMembership
@@ -293,6 +294,7 @@ __all__ = [
     "JobRunLog",
     "JobCursor",
     "AdminNotificationSetting",
+    "AdminTask",
     "MessageFormat",
     "ReminderStatus",
     "SessionStatus",
