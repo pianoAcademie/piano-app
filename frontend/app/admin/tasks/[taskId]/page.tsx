@@ -5,7 +5,7 @@ import { hasTaskManagerAccess } from "../../../../lib/admin-access";
 import { getAdminToken } from "../../../../lib/auth-cookies";
 import { backendRequest } from "../../../../lib/backend";
 import type { AdminTaskContactOut, AdminTaskOptionsOut, AdminTaskOut, AdminTaskType, UserOut } from "../../../../lib/types";
-import { updateAdminTaskAction, updateAdminTaskContactAction } from "../actions";
+import { addAdminTaskCommentAction, updateAdminTaskAction, updateAdminTaskContactAction } from "../actions";
 import styles from "../tasks.module.css";
 
 type SearchParams = Record<string, string | string[] | undefined>;
@@ -79,13 +79,37 @@ export default async function AdminTaskDetailPage({ params, searchParams = {} }:
             <input type="hidden" name="task_id" value={task.id} />
             <input type="hidden" name="return_to" value={`/admin/tasks/${task.id}`} />
             <label className={styles.field}><span>Type</span><select name="task_type" defaultValue={task.task_type}>{Object.entries(TYPE_LABELS).map(([item, label]) => <option key={item} value={item}>{label}</option>)}</select></label>
-            <label className={styles.field}><span>Statut</span><select name="status" defaultValue={task.status}><option value="CREATED">Créée</option><option value="ASSIGNED">Affectée</option><option value="IN_PROGRESS">En cours</option><option value="COMPLETED">Terminée</option><option value="ARCHIVED">Archivée</option></select></label>
+            <label className={styles.field}><span>Statut</span><select name="status" defaultValue={task.status}><option value="CREATED">Créée</option><option value="ASSIGNED">Affectée</option><option value="IN_PROGRESS">En cours</option><option value="WAITING_CLIENT">En attente de réponse client</option><option value="COMPLETED">Terminée</option><option value="ARCHIVED">Archivée</option></select></label>
             <label className={styles.field}><span>Responsable</span><select name="assignee_user_id" defaultValue={task.assignee?.id || ""}><option value="">Non affectée</option>{optionsResult.data.managers.map((manager) => <option key={manager.id} value={manager.id}>{manager.name}</option>)}</select><small>Un email sera envoyé en cas de nouvelle affectation.</small></label>
             <label className={styles.field}><span>Échéance</span><input name="due_at" type="datetime-local" defaultValue={localInput(task.due_at)} /></label>
             <label className={`${styles.field} ${styles.span2}`}><span>Descriptif</span><textarea name="description" rows={6} required defaultValue={task.description} /></label>
-            <label className={`${styles.field} ${styles.span2}`}><span>Commentaire de suivi</span><textarea name="comment" rows={5} defaultValue={task.comment || ""} /></label>
             <div className={`${styles.actions} ${styles.span2}`}><button type="submit">Enregistrer les modifications</button></div>
           </form>
+          <section className={styles.followUpSection}>
+            <h3>Commentaires de suivi</h3>
+            <form action={addAdminTaskCommentAction} className={styles.commentComposer}>
+              <input type="hidden" name="task_id" value={task.id} />
+              <input type="hidden" name="return_to" value={`/admin/tasks/${task.id}`} />
+              <label className={styles.field}>
+                <span>Ajouter un nouveau commentaire</span>
+                <textarea name="body" rows={8} maxLength={10000} required placeholder="Saisissez ici la nouvelle information de suivi…" />
+              </label>
+              <div className={styles.actions}><button type="submit">Ajouter le commentaire</button></div>
+            </form>
+            {task.comments.length ? (
+              <div className={styles.commentHistory}>
+                {task.comments.map((comment) => (
+                  <article className={styles.commentCard} key={comment.id}>
+                    <p className={styles.commentMeta}>
+                      <strong>{comment.author?.name || "Auteur non renseigné (commentaire antérieur)"}</strong>
+                      <span>{formatDate(comment.created_at)}</span>
+                    </p>
+                    <p className={styles.commentBody}>{comment.body}</p>
+                  </article>
+                ))}
+              </div>
+            ) : <p className="muted">Aucun commentaire de suivi pour le moment.</p>}
+          </section>
         </div>
         <aside className={styles.page}>
           <section className={styles.panel}>

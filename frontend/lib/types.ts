@@ -53,13 +53,20 @@ export type AdminTaskType =
   | "PROFESSOR_CONTACT"
   | "SHEET_MUSIC_DELIVERY";
 
-export type AdminTaskStoredStatus = "CREATED" | "ASSIGNED" | "IN_PROGRESS" | "COMPLETED" | "ARCHIVED";
+export type AdminTaskStoredStatus = "CREATED" | "ASSIGNED" | "IN_PROGRESS" | "WAITING_CLIENT" | "COMPLETED" | "ARCHIVED";
 export type AdminTaskEffectiveStatus = AdminTaskStoredStatus | "OVERDUE";
 
 export type AdminTaskManagerOut = {
   id: string;
   name: string;
   email: string;
+};
+
+export type AdminTaskCommentOut = {
+  id: string;
+  body: string;
+  author: AdminTaskManagerOut | null;
+  created_at: string;
 };
 
 export type AdminTaskContactOut = {
@@ -78,6 +85,7 @@ export type AdminTaskOut = {
   effective_status: AdminTaskEffectiveStatus;
   description: string;
   comment: string | null;
+  comments: AdminTaskCommentOut[];
   assignee: AdminTaskManagerOut | null;
   created_by: AdminTaskManagerOut | null;
   contact: AdminTaskContactOut | null;

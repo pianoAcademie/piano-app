@@ -13,7 +13,11 @@ from pydantic import ValidationError
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.api.routes.admin_tasks import _effective_status, _send_assignment_email, _source_description
-from app.schemas.admin_task import AdminTaskCreateRequest, AdminTaskUpdateRequest
+from app.schemas.admin_task import (
+    AdminTaskCommentCreateRequest,
+    AdminTaskCreateRequest,
+    AdminTaskUpdateRequest,
+)
 
 
 class AdminTaskSchemaTests(unittest.TestCase):
@@ -49,6 +53,13 @@ class AdminTaskSchemaTests(unittest.TestCase):
         self.assertIn("comment", payload.model_fields_set)
         self.assertIsNone(payload.comment)
 
+    def test_follow_up_comment_is_trimmed_and_required(self) -> None:
+        payload = AdminTaskCommentCreateRequest(body="  Retour de la famille attendu  ")
+
+        self.assertEqual(payload.body, "Retour de la famille attendu")
+        with self.assertRaises(ValidationError):
+            AdminTaskCommentCreateRequest(body="   ")
+
 
 class AdminTaskStatusTests(unittest.TestCase):
     def test_open_task_past_due_is_exposed_as_overdue(self) -> None:
@@ -60,6 +71,11 @@ class AdminTaskStatusTests(unittest.TestCase):
         task = SimpleNamespace(status="COMPLETED", due_at=datetime.now(timezone.utc) - timedelta(days=10))
 
         self.assertEqual(_effective_status(task), "COMPLETED")
+
+    def test_waiting_client_status_is_preserved_before_due_date(self) -> None:
+        task = SimpleNamespace(status="WAITING_CLIENT", due_at=datetime.now(timezone.utc) + timedelta(days=1))
+
+        self.assertEqual(_effective_status(task), "WAITING_CLIENT")
 
 
 class AdminTaskSourcePrefillTests(unittest.TestCase):

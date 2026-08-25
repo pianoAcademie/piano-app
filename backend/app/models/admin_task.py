@@ -18,7 +18,7 @@ class AdminTask(Base):
             name="ck_admin_tasks_type",
         ),
         CheckConstraint(
-            "status IN ('CREATED','ASSIGNED','IN_PROGRESS','COMPLETED','ARCHIVED')",
+            "status IN ('CREATED','ASSIGNED','IN_PROGRESS','WAITING_CLIENT','COMPLETED','ARCHIVED')",
             name="ck_admin_tasks_status",
         ),
         Index("ix_admin_tasks_assignee_status", "assignee_user_id", "status"),
@@ -78,6 +78,37 @@ class AdminTask(Base):
         server_default=text("now()"),
     )
     updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("now()"),
+    )
+
+
+class AdminTaskComment(Base):
+    __tablename__ = "admin_task_comments"
+    __table_args__ = (
+        Index("ix_admin_task_comments_task_created", "task_id", "created_at"),
+        Index("ix_admin_task_comments_author_user_id", "author_user_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        primary_key=True,
+        nullable=False,
+        server_default=text("gen_random_uuid()"),
+    )
+    task_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("admin_tasks.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    author_user_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
         server_default=text("now()"),

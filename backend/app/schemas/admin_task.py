@@ -15,8 +15,23 @@ AdminTaskType = Literal[
     "PROFESSOR_CONTACT",
     "SHEET_MUSIC_DELIVERY",
 ]
-AdminTaskStoredStatus = Literal["CREATED", "ASSIGNED", "IN_PROGRESS", "COMPLETED", "ARCHIVED"]
-AdminTaskEffectiveStatus = Literal["CREATED", "ASSIGNED", "IN_PROGRESS", "OVERDUE", "COMPLETED", "ARCHIVED"]
+AdminTaskStoredStatus = Literal[
+    "CREATED",
+    "ASSIGNED",
+    "IN_PROGRESS",
+    "WAITING_CLIENT",
+    "COMPLETED",
+    "ARCHIVED",
+]
+AdminTaskEffectiveStatus = Literal[
+    "CREATED",
+    "ASSIGNED",
+    "IN_PROGRESS",
+    "WAITING_CLIENT",
+    "OVERDUE",
+    "COMPLETED",
+    "ARCHIVED",
+]
 
 
 class AdminTaskCreateRequest(BaseModel):
@@ -91,6 +106,24 @@ class AdminTaskManagerOut(BaseModel):
     email: str
 
 
+class AdminTaskCommentCreateRequest(BaseModel):
+    body: str = Field(min_length=1, max_length=10000)
+
+    @field_validator("body", mode="before")
+    @classmethod
+    def strip_body(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        return value.strip()
+
+
+class AdminTaskCommentOut(BaseModel):
+    id: UUID
+    body: str
+    author: AdminTaskManagerOut | None = None
+    created_at: datetime
+
+
 class AdminTaskContactOut(BaseModel):
     kind: Literal["CLIENT", "PROSPECT"]
     id: UUID
@@ -120,6 +153,7 @@ class AdminTaskOut(BaseModel):
     effective_status: AdminTaskEffectiveStatus
     description: str
     comment: str | None = None
+    comments: list[AdminTaskCommentOut] = Field(default_factory=list)
     assignee: AdminTaskManagerOut | None = None
     created_by: AdminTaskManagerOut | None = None
     contact: AdminTaskContactOut | None = None

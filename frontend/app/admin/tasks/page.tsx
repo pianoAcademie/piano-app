@@ -30,6 +30,7 @@ const STATUS_LABELS: Record<AdminTaskEffectiveStatus, string> = {
   CREATED: "Créée",
   ASSIGNED: "Affectée",
   IN_PROGRESS: "En cours",
+  WAITING_CLIENT: "En attente de réponse client",
   OVERDUE: "En retard",
   COMPLETED: "Terminée",
   ARCHIVED: "Archivée",

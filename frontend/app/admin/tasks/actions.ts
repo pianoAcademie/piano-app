@@ -61,7 +61,6 @@ export async function updateAdminTaskAction(formData: FormData): Promise<void> {
     task_type: value(formData, "task_type"),
     status: value(formData, "status"),
     description: value(formData, "description"),
-    comment: value(formData, "comment") || null,
     assignee_user_id: assigneeId || null,
     clear_assignee: !assigneeId,
     due_at: dueAt || null,
@@ -79,6 +78,28 @@ export async function updateAdminTaskAction(formData: FormData): Promise<void> {
   revalidatePath("/admin/tasks");
   revalidatePath(`/admin/tasks/${taskId}`);
   redirect(`${returnTo}?ok=${encodeURIComponent("Tâche mise à jour.")}`);
+}
+
+export async function addAdminTaskCommentAction(formData: FormData): Promise<void> {
+  const token = getAdminToken();
+  if (!token) redirect("/login?error_code=session_expired");
+  const taskId = value(formData, "task_id");
+  const returnTo = safeReturnTo(value(formData, "return_to"), `/admin/tasks/${taskId}`);
+  const body = value(formData, "body");
+  if (!taskId || !body) {
+    redirect(`${returnTo}?error=${encodeURIComponent("Le commentaire ne peut pas être vide.")}`);
+  }
+  const result = await backendRequest<AdminTaskOut>(
+    `/api/v1/admin/tasks/${encodeURIComponent(taskId)}/comments`,
+    { method: "POST", body: JSON.stringify({ body }) },
+    token,
+  );
+  if (!result.ok) {
+    redirect(`${returnTo}?error=${encodeURIComponent(result.message)}`);
+  }
+  revalidatePath("/admin/tasks");
+  revalidatePath(`/admin/tasks/${taskId}`);
+  redirect(`${returnTo}?ok=${encodeURIComponent("Commentaire de suivi ajouté.")}`);
 }
 
 export async function updateAdminTaskContactAction(formData: FormData): Promise<void> {

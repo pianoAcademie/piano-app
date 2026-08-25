@@ -10,13 +10,15 @@ from sqlalchemy import case, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_admin_permission_map, get_current_user, get_db
-from app.models.admin_task import AdminTask
+from app.models.admin_task import AdminTask, AdminTaskComment
 from app.models.family import ClientFamilyLink
 from app.models.quote import Prospect, Quote
 from app.models.typeform_intake import TypeformIntake
 from app.models.user import ClientKind, User, UserRole
 from app.schemas.admin_task import (
     AdminTaskContactOut,
+    AdminTaskCommentCreateRequest,
+    AdminTaskCommentOut,
     AdminTaskCreateRequest,
     AdminTaskManagerOut,
     AdminTaskOptionsOut,
@@ -164,6 +166,18 @@ def _task_out(db: Session, task: AdminTask) -> AdminTaskOut:
     if intake is not None:
         intake_label = f"Questionnaire {intake.source_response_id}"
     quote_label = f"Devis {quote.quote_number}" if quote is not None else None
+    comment_rows = list(
+        db.scalars(
+            select(AdminTaskComment)
+            .where(AdminTaskComment.task_id == task.id)
+            .order_by(AdminTaskComment.created_at.desc(), AdminTaskComment.id.desc())
+        ).all()
+    )
+    comment_authors = {
+        comment.author_user_id: db.get(User, comment.author_user_id)
+        for comment in comment_rows
+        if comment.author_user_id is not None
+    }
     return AdminTaskOut(
         id=task.id,
         task_type=task.task_type,
@@ -171,6 +185,15 @@ def _task_out(db: Session, task: AdminTask) -> AdminTaskOut:
         effective_status=_effective_status(task),
         description=task.description,
         comment=task.comment,
+        comments=[
+            AdminTaskCommentOut(
+                id=comment.id,
+                body=comment.body,
+                author=_manager_out(comment_authors.get(comment.author_user_id)),
+                created_at=comment.created_at,
+            )
+            for comment in comment_rows
+        ],
         assignee=_manager_out(assignee),
         created_by=_manager_out(creator),
         contact=_contact_out(client, prospect),
@@ -545,6 +568,15 @@ def create_task(
         due_at=payload.due_at,
     )
     db.add(task)
+    db.flush()
+    if payload.comment:
+        db.add(
+            AdminTaskComment(
+                task_id=task.id,
+                author_user_id=current_user.id,
+                body=payload.comment,
+            )
+        )
     db.commit()
     db.refresh(task)
     if assignee is not None:
@@ -591,7 +623,17 @@ def update_task(
     if payload.description is not None:
         task.description = payload.description
     if "comment" in fields:
+        previous_comment = (task.comment or "").strip()
+        next_comment = (payload.comment or "").strip()
         task.comment = payload.comment
+        if next_comment and next_comment != previous_comment:
+            db.add(
+                AdminTaskComment(
+                    task_id=task.id,
+                    author_user_id=current_user.id,
+                    body=next_comment,
+                )
+            )
     if payload.clear_due_at:
         task.due_at = None
     elif "due_at" in fields:
@@ -631,4 +673,28 @@ def update_task(
         assignee = db.get(User, task.assignee_user_id)
         if assignee is not None:
             _send_assignment_email(db, task, assignee, current_user)
+    return _task_out(db, task)
+
+
+@router.post("/{task_id}/comments", response_model=AdminTaskOut, status_code=status.HTTP_201_CREATED)
+def add_task_comment(
+    task_id: UUID,
+    payload: AdminTaskCommentCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_task_manager),
+) -> AdminTaskOut:
+    task = db.get(AdminTask, task_id)
+    if task is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tâche introuvable")
+    comment = AdminTaskComment(
+        task_id=task.id,
+        author_user_id=current_user.id,
+        body=payload.body,
+    )
+    db.add(comment)
+    # Conservé comme dernier commentaire pour les anciennes versions du portail.
+    task.comment = payload.body
+    task.updated_at = _utcnow()
+    db.commit()
+    db.refresh(task)
     return _task_out(db, task)
