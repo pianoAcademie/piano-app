@@ -12,6 +12,7 @@ import {
   clearPortalReturnTo,
   clearPortalToken,
   getAdminImpersonationReturnToken,
+  getAdminToken,
   getAnyToken,
   getPortalToken,
   getTokenForPathname,
@@ -46,6 +47,7 @@ import type {
   AdminLegalEntityOut,
   AdminInvoiceNumberingOut,
   AdminInvoiceTemplateOut,
+  AdminGiftCardOut,
   AdminTeacherInvoiceTemplateOut,
   AdminClientPasswordEmailTemplateOut,
   AdminClientAutoInvoiceRuleOut,
@@ -91,6 +93,8 @@ import type {
   AdminProfessorPayGridPeriodOut,
   AuthLoginResponse,
   ClientPaymentCheckoutOut,
+  GiftCardPublicPreviewOut,
+  GiftCardRedeemOut,
   PublicFormulaPurchaseContextOut,
   PublicFormulaPurchaseStartOut,
   ProfessorPermissionOut,
@@ -516,6 +520,7 @@ function safePublicReturnPath(raw: string, fallback: string): string {
     || value.startsWith("/login")
     || value.startsWith("/embed/")
     || value.startsWith("/events")
+    || value.startsWith("/cadeau")
     || value.startsWith("/client")
     || value.startsWith("/dashboard")
   ) {
@@ -1870,6 +1875,135 @@ export async function purchasePlanAction(formData: FormData): Promise<void> {
   successPath = setQueryParam(successPath, "purchase_user_id", purchaseUserId || null);
   successPath = setQueryParam(successPath, "purchase_start_date", startDateRaw || null);
   redirect(successPath);
+}
+
+export async function lookupGiftCardAction(formData: FormData): Promise<void> {
+  const code = String(formData.get("code") ?? "").trim();
+  const language = normalizeUiLanguage(String(formData.get("lang") ?? "fr"));
+  const returnTo = language === "en" ? "/cadeau?lang=en" : "/cadeau";
+  if (!code) {
+    redirect(appendQueryMessage(returnTo, "error", language === "en" ? "Enter your gift card code." : "Saisissez le code de votre carte cadeau."));
+  }
+  const result = await backendRequest<GiftCardPublicPreviewOut>("/api/v1/public/gift-cards/lookup", {
+    method: "POST",
+    body: JSON.stringify({ code }),
+  });
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  redirect(setQueryParam(returnTo, "gift_token", result.data.redeem_token));
+}
+
+export async function redeemGiftCardAction(formData: FormData): Promise<void> {
+  const redeemToken = String(formData.get("redeem_token") ?? "").trim();
+  const userId = String(formData.get("user_id") ?? "").trim();
+  const language = normalizeUiLanguage(String(formData.get("lang") ?? "fr"));
+  let returnTo = language === "en" ? "/cadeau?lang=en" : "/cadeau";
+  returnTo = setQueryParam(returnTo, "gift_token", redeemToken || null);
+  if (!redeemToken) {
+    redirect(appendQueryMessage(returnTo, "error", language === "en" ? "This activation link is invalid." : "Ce lien d'activation est invalide."));
+  }
+  const token = currentPortalToken();
+  if (!token) {
+    redirect(`/login?mode=login&return_to=${encodeURIComponent(returnTo)}${language === "en" ? "&lang=en" : ""}`);
+  }
+  const result = await backendRequest<GiftCardRedeemOut>(
+    "/api/v1/gift-cards/redeem",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        redeem_token: redeemToken,
+        user_id: userId || null,
+        legal_terms_accepted: checkboxField(formData, "legal_terms_accepted"),
+        legal_terms_language: language,
+      }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    if (result.status === 401) {
+      clearToken();
+      redirect(`/login?mode=login&return_to=${encodeURIComponent(returnTo)}${language === "en" ? "&lang=en" : ""}`);
+    }
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/client");
+  revalidatePath("/dashboard");
+  const success = language === "en"
+    ? `${result.data.plan_name} has been added. You can now book.`
+    : `${result.data.plan_name} a bien été ajouté. Vous pouvez maintenant réserver.`;
+  redirect(`/client?tab=planning&ok=${encodeURIComponent(success)}`);
+}
+
+export async function importAdminGiftCardAction(formData: FormData): Promise<void> {
+  const token = getAdminToken() ?? currentToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+  const code = String(formData.get("code") ?? "").trim();
+  const planId = String(formData.get("plan_id") ?? "").trim();
+  const returnTo = "/admin/gift-cards";
+  if (!code || !planId) {
+    redirect(appendQueryMessage(returnTo, "error", "Le code et l'offre sont obligatoires."));
+  }
+  const payload = {
+    code,
+    plan_id: planId,
+    source: String(formData.get("source") ?? "WORDPRESS").trim().toUpperCase() || "WORDPRESS",
+    status: "ACTIVE",
+    external_order_ref: optionalField(formData, "external_order_ref"),
+    external_line_ref: optionalField(formData, "external_line_ref"),
+    purchaser_name: optionalField(formData, "purchaser_name"),
+    purchaser_email: optionalField(formData, "purchaser_email"),
+    recipient_name: optionalField(formData, "recipient_name"),
+    recipient_email: optionalField(formData, "recipient_email"),
+    personal_message: optionalField(formData, "personal_message"),
+    face_value_ttc: String(formData.get("face_value_ttc") ?? "0").trim() || "0",
+    purchase_price_ttc: String(formData.get("purchase_price_ttc") ?? "0").trim() || "0",
+    discount_ttc: String(formData.get("discount_ttc") ?? "0").trim() || "0",
+    vat_rate: String(formData.get("vat_rate") ?? "20").trim() || "20",
+    currency: "EUR",
+    paid_at: optionalField(formData, "paid_at"),
+    valid_from: optionalField(formData, "valid_from"),
+    expires_at: optionalField(formData, "expires_at"),
+    delivered_at: optionalField(formData, "delivered_at"),
+    terms_required: true,
+    metadata: { import_channel: "ADMIN_UI" },
+  };
+  const result = await backendRequest<AdminGiftCardOut>(
+    "/api/v1/admin/gift-cards/import",
+    { method: "POST", body: JSON.stringify(payload) },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath(returnTo);
+  const message = result.data.idempotent_replay
+    ? `Carte déjà importée (code finissant par ${result.data.code_suffix}).`
+    : `Carte importée (code finissant par ${result.data.code_suffix}).`;
+  redirect(appendQueryMessage(returnTo, "ok", message));
+}
+
+export async function updateAdminGiftCardStatusAction(formData: FormData): Promise<void> {
+  const token = getAdminToken() ?? currentToken();
+  if (!token) redirect("/login?error_code=session_expired");
+  const giftCardId = String(formData.get("gift_card_id") ?? "").trim();
+  const nextStatus = String(formData.get("status") ?? "").trim().toUpperCase();
+  const allowed = new Set(["ACTIVE", "BLOCKED", "CANCELLED", "REFUNDED"]);
+  if (!giftCardId || !allowed.has(nextStatus)) {
+    redirect("/admin/gift-cards?error=Modification invalide.");
+  }
+  const result = await backendRequest<AdminGiftCardOut>(
+    `/api/v1/admin/gift-cards/${giftCardId}/status`,
+    { method: "PATCH", body: JSON.stringify({ status: nextStatus }) },
+    token,
+  );
+  if (!result.ok) {
+    redirect(`/admin/gift-cards?error=${encodeURIComponent(result.message)}`);
+  }
+  revalidatePath("/admin/gift-cards");
+  redirect(`/admin/gift-cards?ok=${encodeURIComponent(`Statut mis à jour : ${result.data.status}.`)}`);
 }
 
 export async function startFormulaPurchaseLinkAction(formData: FormData): Promise<void> {

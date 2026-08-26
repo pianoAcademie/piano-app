@@ -2454,6 +2454,61 @@ export type PublicFormulaPurchaseContextOut = {
   summary: PublicFormulaPurchaseSummaryOut;
 };
 
+export type GiftCardPublicPreviewOut = {
+  redeem_token: string;
+  status: "ACTIVE";
+  plan_id: string;
+  plan_name: string;
+  plan_description: string | null;
+  plan_kind: string;
+  recipient_name: string | null;
+  personal_message: string | null;
+  expires_at: string | null;
+  terms_required: boolean;
+};
+
+export type GiftCardRedeemOut = {
+  gift_card_id: string;
+  subscription_id: string;
+  redeemed_for_user_id: string;
+  plan_id: string;
+  plan_name: string;
+  credits_granted: number;
+  expires_at: string | null;
+  next_url: string;
+};
+
+export type AdminGiftCardOut = {
+  id: string;
+  code_suffix: string;
+  status: string;
+  source: string;
+  plan_id: string;
+  plan_name: string;
+  external_order_ref: string | null;
+  external_line_ref: string | null;
+  purchaser_name: string | null;
+  purchaser_email: string | null;
+  recipient_name: string | null;
+  recipient_email: string | null;
+  face_value_ttc: string;
+  purchase_price_ttc: string;
+  discount_ttc: string;
+  vat_rate: string;
+  currency: string;
+  paid_at: string | null;
+  valid_from: string | null;
+  expires_at: string | null;
+  delivered_at: string | null;
+  redeemed_at: string | null;
+  redeemed_by_user_id: string | null;
+  redeemed_for_user_id: string | null;
+  subscription_id: string | null;
+  created_at: string;
+  updated_at: string;
+  idempotent_replay: boolean;
+};
+
 export type ClientSessionFormulaOptionOut = {
   formula_id: string;
   formula_code: string;

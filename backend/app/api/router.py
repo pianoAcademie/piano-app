@@ -22,6 +22,7 @@ from app.api.routes import (
     client_news,
     clients,
     events,
+    gift_cards,
     internal_jobs,
     notification_webhooks,
     mobile_push,
@@ -40,6 +41,7 @@ api_router = APIRouter()
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(clients.router, tags=["clients"])
 api_router.include_router(events.router, tags=["events"])
+api_router.include_router(gift_cards.router, tags=["gift-cards"])
 api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
 api_router.include_router(admin_catalog.router, tags=["admin-catalog"])
 api_router.include_router(admin_config.router, tags=["admin-config"])

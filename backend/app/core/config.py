@@ -22,6 +22,9 @@ class Settings:
         "INVOICE_DOWNLOAD_SECRET",
         "dev-invoice-download-secret-change-me",
     )
+    # Stable HMAC secret used to store gift-card bearer codes without keeping
+    # their raw value. Production must use a dedicated random value.
+    gift_card_code_pepper: str = os.getenv("GIFT_CARD_CODE_PEPPER", "")
     typeform_webhook_secret: str = os.getenv("TYPEFORM_WEBHOOK_SECRET", "")
     brevo_webhook_secret: str = os.getenv("BREVO_WEBHOOK_SECRET", "")
     access_token_expire_minutes: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))

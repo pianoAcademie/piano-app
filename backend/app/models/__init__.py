@@ -1,5 +1,6 @@
 from app.models.admin_task import AdminTask, AdminTaskComment
 from app.models.family import ClientFamilyBillingAllocation, ClientFamilyLink
+from app.models.gift_card import GiftCard, GiftCardEvent
 from app.models.makeup import MakeupPassPurchase, MakeupRequest, MakeupRequestStatus
 from app.models.client_group import ClientGroup, ClientGroupMembership
 from app.models.client_news import ClientNewsArticle
@@ -175,6 +176,8 @@ __all__ = [
     "CommunicationSenderCategory",
     "CreditType",
     "ClientFamilyLink",
+    "GiftCard",
+    "GiftCardEvent",
     "ClientAutoInvoiceOccurrence",
     "ClientAutoInvoiceRule",
     "BankTransferOrder",

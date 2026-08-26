@@ -123,6 +123,9 @@ function labelForSegment(segment: string, previous: string, language: UiLanguage
   if (segment === "products") {
     return pickText(language, "Produits", "Products");
   }
+  if (segment === "gift-cards") {
+    return pickText(language, "Cartes cadeaux", "Gift cards");
+  }
   if (segment === "config") {
     return pickText(language, "Configuration", "Settings");
   }

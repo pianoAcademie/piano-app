@@ -11,6 +11,7 @@ from pathlib import Path
 
 
 ALLOWED_KEYS = {
+    "GIFT_CARD_CODE_PEPPER",
     "PUSH_NOTIFICATIONS_ENABLED",
     "APNS_TEAM_ID",
     "APNS_KEY_ID",
@@ -130,7 +131,7 @@ def _update_env_file(path: Path, payload: dict[str, str]) -> None:
     if remaining:
         if output and output[-1]:
             output.append("")
-        output.append("# Native mobile push notifications")
+        output.append("# Protected runtime configuration")
         output.extend(f"{key}={value}" for key, value in remaining.items())
 
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -154,10 +155,10 @@ def main() -> int:
         payload = _read_payload()
         _update_env_file(Path(".env"), payload)
     except (ValueError, OSError, RuntimeError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
-        print(f"[ERROR] Unable to configure push environment: {exc}", file=sys.stderr)
+        print(f"[ERROR] Unable to configure protected runtime environment: {exc}", file=sys.stderr)
         return 1
 
-    print(f"[OK] Push environment configured ({len(payload)} protected values).")
+    print(f"[OK] Protected runtime environment configured ({len(payload)} protected values).")
     return 0
 
 

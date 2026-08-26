@@ -627,6 +627,9 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
   if (section === "products") {
     redirect("/admin/products");
   }
+  if (section === "promo") {
+    redirect("/admin/gift-cards");
+  }
   if (section === "formulas") {
     const redirectParams = new URLSearchParams();
     const ok = readParam(params, "ok").trim();
@@ -1181,6 +1184,8 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                     const href =
                       item.key === "formulas"
                         ? "/admin/config/formulas"
+                        : item.key === "promo"
+                        ? "/admin/gift-cards"
                         : item.key === "quotes"
                         ? "/admin/config/quotes"
                         : item.key === "calendars"
