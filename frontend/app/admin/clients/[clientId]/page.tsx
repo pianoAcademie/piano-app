@@ -61,6 +61,7 @@ import {
 } from "../../../../lib/reference-data";
 import ManualTransactionNonCashFlowFields from "../../../../components/manual-transaction-noncashflow-fields";
 import ManualTransactionLegalEntityFields from "../../../../components/manual-transaction-legal-entity-fields";
+import ManualCheckSubmitButtons from "../../../../components/manual-check-submit-buttons";
 import RichMessageEditor from "../../../../components/rich-message-editor";
 import ModalFirstErrorFocus from "../../../../components/modal-first-error-focus";
 import SearchMultiSelect from "../../../../components/search-multi-select";
@@ -6806,6 +6807,20 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 <strong>{manualAmountInputValue ? formatMoney(manualAmountInputValue, client.preferred_currency || "EUR", language) : "-"}</strong>
               </p>
             </header>
+            {manualCheckBatchIds.length > 0 ? (
+              <section className="flash-ok manual-check-batch-confirmation" role="status">
+                <strong>
+                  {language === "en"
+                    ? `Check no. ${manualCheckBatchIds.length} saved.`
+                    : `Chèque n°${manualCheckBatchIds.length} enregistré.`}
+                </strong>
+                <span>
+                  {language === "en"
+                    ? " This check has been created. You can now enter the next one."
+                    : " Ce chèque a bien été créé. Vous pouvez maintenant saisir le suivant."}
+                </span>
+              </section>
+            ) : null}
             <form action={createAdminClientManualTransactionAction} className="grid top-gap-sm">
               <input type="hidden" name="client_id" value={client.id} />
               <input type="hidden" name="currency" value={client.preferred_currency || "EUR"} />
@@ -6910,21 +6925,21 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 <Link className="reset-link" href={manualStepTwoBackHref}>
                   {t("common.previous")}
                 </Link>
-                <button
-                  type="submit"
-                  name="submit_intent"
-                  value="save_and_add_check"
-                  data-check-repeat-submit
-                  hidden
-                  className="secondary"
-                >
-                  {language === "en" ? "Save and enter the next check" : "Enregistrer et saisir le chèque suivant"}
-                </button>
-                <button type="submit" name="submit_intent" value="save">
-                  {manualCheckBatchIds.length > 0
-                    ? (language === "en" ? "Finish and send the summary" : "Terminer et envoyer le récapitulatif")
-                    : manualTransactionSubmitLabel}
-                </button>
+                {manualIsPayment ? (
+                  <ManualCheckSubmitButtons
+                    repeatLabel={language === "en" ? "Save and enter the next check" : "Enregistrer et saisir le chèque suivant"}
+                    finishLabel={
+                      manualCheckBatchIds.length > 0
+                        ? (language === "en" ? "Finish and send the summary" : "Terminer et envoyer le récapitulatif")
+                        : manualTransactionSubmitLabel
+                    }
+                    pendingLabel={language === "en" ? "Saving payment…" : "Enregistrement du paiement…"}
+                  />
+                ) : (
+                  <ClientActionSubmitButton pendingLabel={language === "en" ? "Saving…" : "Enregistrement…"}>
+                    {manualTransactionSubmitLabel}
+                  </ClientActionSubmitButton>
+                )}
               </div>
             </form>
           </article>

@@ -460,6 +460,7 @@ export default function ManualTransactionLegalEntityFields({
               <select
                 name="check_deposit_month"
                 defaultValue=""
+                autoFocus={checkBatchPreviousCount > 0}
                 onChange={(event) => setCheckDepositMonth(event.currentTarget.value)}
               >
                 <option value="">{text.checkDepositMonthPlaceholder}</option>
