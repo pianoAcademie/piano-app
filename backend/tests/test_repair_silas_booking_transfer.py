@@ -8,6 +8,7 @@ from uuid import uuid4
 from scripts.repair_prod_silas_piyatissa_booking_transfer import (
     BookingSession,
     _copy_price,
+    _is_paid_target_invoice,
     _nearest_target,
 )
 
@@ -63,3 +64,15 @@ def test_repair_rejects_a_target_linked_to_another_subscription() -> None:
     )
 
     assert _nearest_target(source, [target]) is None
+
+
+def test_repair_only_accepts_the_paid_target_invoice() -> None:
+    assert _is_paid_target_invoice(
+        {"invoice_number": "PA26-0687", "invoice_status": "PAID"}
+    )
+    assert not _is_paid_target_invoice(
+        {"invoice_number": "PA26-0687", "invoice_status": "ISSUED"}
+    )
+    assert not _is_paid_target_invoice(
+        {"invoice_number": "PA26-9999", "invoice_status": "PAID"}
+    )

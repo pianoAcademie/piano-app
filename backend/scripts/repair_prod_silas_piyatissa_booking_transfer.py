@@ -28,6 +28,7 @@ from app.models.user import User, UserRole
 SCRIPT_PREFIX = "PROD_REPAIR_SILAS_PIYATISSA_BOOKING_TRANSFER"
 TARGET_FIRST_NAME = "silas"
 TARGET_LAST_NAME = "piyatissa"
+TARGET_INVOICE_NUMBER = "PA26-0687"
 SOURCE_WEEKDAY = 2  # Wednesday
 SOURCE_HOUR = 17
 TARGET_WEEKDAY = 5  # Saturday
@@ -39,6 +40,10 @@ ACTIVE_STATUSES = {
     BookingStatus.ATTENDED,
     BookingStatus.NO_SHOW,
     BookingStatus.EXCUSED_ABSENCE,
+}
+ACCEPTED_SOURCE_CANCELLATION_REASONS = {
+    "ADMIN_MOVED_TO_ANOTHER_SLOT",
+    "ADMIN_REMOVED",
 }
 
 
@@ -63,6 +68,14 @@ def _copy_price(source: Booking, target: Booking) -> None:
     target.total_incl_vat_snapshot = source.total_incl_vat_snapshot
     target.currency_snapshot = source.currency_snapshot
     target.pricing_snapshot_locked = True
+
+
+def _is_paid_target_invoice(metadata: object) -> bool:
+    if not isinstance(metadata, dict):
+        return False
+    invoice_status = str(metadata.get("invoice_status") or "ISSUED").strip().upper()
+    invoice_number = str(metadata.get("invoice_number") or "").strip().upper()
+    return invoice_status == "PAID" and invoice_number == TARGET_INVOICE_NUMBER
 
 
 def _nearest_target(source: BookingSession, targets: list[BookingSession]) -> BookingSession | None:
@@ -142,9 +155,7 @@ def main() -> None:
                 metadata = json.loads((note_message or "")[marker_index + len(marker) :].strip())
             except (TypeError, ValueError):
                 continue
-            if not isinstance(metadata, dict):
-                continue
-            if str(metadata.get("invoice_status") or "ISSUED").strip().upper() == "PAID":
+            if _is_paid_target_invoice(metadata):
                 paid_invoice_booking_ids.add(booking_id)
 
         sources = [
@@ -156,7 +167,7 @@ def main() -> None:
                 or (
                     row.booking.status == BookingStatus.CANCELLED
                     and (row.booking.cancellation_reason or "").strip().upper()
-                    == "ADMIN_MOVED_TO_ANOTHER_SLOT"
+                    in ACCEPTED_SOURCE_CANCELLATION_REASONS
                 )
             )
             and _local_start(row).weekday() == SOURCE_WEEKDAY
