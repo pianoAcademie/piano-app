@@ -107,8 +107,9 @@ jobs:
             -e "ssh -i ~/.ssh/id_ed25519 -p ${VPS_PORT:-22}" \
             ./ "${VPS_USER}@${VPS_HOST}:${VPS_PATH}/"
 
-      - name: Configure native push environment
+      - name: Configure protected runtime environment
         env:
+          GIFT_CARD_CODE_PEPPER: ${{ secrets.GIFT_CARD_CODE_PEPPER }}
           PUSH_NOTIFICATIONS_ENABLED: ${{ secrets.PUSH_NOTIFICATIONS_ENABLED }}
           APNS_TEAM_ID: ${{ secrets.APNS_TEAM_ID }}
           APNS_KEY_ID: ${{ secrets.APNS_KEY_ID }}
@@ -117,7 +118,7 @@ jobs:
           APNS_USE_SANDBOX: ${{ secrets.APNS_USE_SANDBOX }}
         run: |
           set -euo pipefail
-          for variable in PUSH_NOTIFICATIONS_ENABLED APNS_TEAM_ID APNS_KEY_ID APNS_PRIVATE_KEY APNS_CLIENT_BUNDLE_ID APNS_USE_SANDBOX; do
+          for variable in GIFT_CARD_CODE_PEPPER PUSH_NOTIFICATIONS_ENABLED APNS_TEAM_ID APNS_KEY_ID APNS_PRIVATE_KEY APNS_CLIENT_BUNDLE_ID APNS_USE_SANDBOX; do
             test -n "${!variable:-}" || { echo "Missing production secret: ${variable}"; exit 1; }
           done
 
@@ -127,6 +128,7 @@ jobs:
           import os
 
           keys = (
+              "GIFT_CARD_CODE_PEPPER",
               "PUSH_NOTIFICATIONS_ENABLED",
               "APNS_TEAM_ID",
               "APNS_KEY_ID",
