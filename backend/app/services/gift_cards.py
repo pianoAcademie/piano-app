@@ -14,6 +14,7 @@ from app.core.config import settings
 
 GIFT_CARD_CONTEXT_SCOPE = "GIFT_CARD_REDEEM"
 GIFT_CARD_CONTEXT_TTL = timedelta(hours=24)
+GIFT_CARD_CODE_PEPPER_MIN_LENGTH = 32
 
 
 def normalize_gift_card_code(raw_code: str) -> str:
@@ -31,7 +32,13 @@ def gift_card_code_hash(raw_code: str) -> str:
     normalized = normalize_gift_card_code(raw_code)
     if len(normalized) < 6:
         raise ValueError("Gift card code is too short")
-    pepper = (settings.gift_card_code_pepper or settings.jwt_secret_key).encode("utf-8")
+    pepper_value = str(settings.gift_card_code_pepper or "").strip()
+    if len(pepper_value) < GIFT_CARD_CODE_PEPPER_MIN_LENGTH:
+        raise RuntimeError(
+            "GIFT_CARD_CODE_PEPPER must be configured with at least "
+            f"{GIFT_CARD_CODE_PEPPER_MIN_LENGTH} characters"
+        )
+    pepper = pepper_value.encode("utf-8")
     return hmac.new(pepper, normalized.encode("utf-8"), hashlib.sha256).hexdigest()
 
 

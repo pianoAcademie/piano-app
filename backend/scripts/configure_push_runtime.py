@@ -104,6 +104,8 @@ def _read_payload() -> dict[str, str]:
             raise ValueError(f"unsupported environment key: {key}")
         if not isinstance(value, str) or not value:
             raise ValueError(f"missing value for environment key: {key}")
+        if key == "GIFT_CARD_CODE_PEPPER" and len(value.strip()) < 32:
+            raise ValueError("GIFT_CARD_CODE_PEPPER must contain at least 32 characters")
         if any(character in value for character in ("\n", "\r", "\x00")):
             raise ValueError(f"unsafe value for environment key: {key}")
         payload[key] = value

@@ -28,6 +28,18 @@ from app.services.gift_cards import (
 
 
 class GiftCardCodeSecurityTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.pepper_patch = patch(
+            "app.services.gift_cards.settings",
+            SimpleNamespace(
+                gift_card_code_pepper="test-gift-card-code-pepper-with-at-least-32-characters"
+            ),
+        )
+        self.pepper_patch.start()
+
+    def tearDown(self) -> None:
+        self.pepper_patch.stop()
+
     def test_print_formatting_does_not_change_code_identity(self) -> None:
         raw = "268E-B072-8557-F80C"
 
@@ -45,6 +57,16 @@ class GiftCardCodeSecurityTests(unittest.TestCase):
     def test_short_codes_are_rejected(self) -> None:
         with self.assertRaises(ValueError):
             gift_card_code_hash("123")
+
+    def test_missing_or_short_pepper_fails_closed(self) -> None:
+        for invalid_pepper in ("", "too-short"):
+            with self.subTest(pepper=invalid_pepper):
+                with patch(
+                    "app.services.gift_cards.settings",
+                    SimpleNamespace(gift_card_code_pepper=invalid_pepper),
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "GIFT_CARD_CODE_PEPPER"):
+                        gift_card_code_hash("268E-B072-8557-F80C")
 
 
 class GiftCardContextTests(unittest.TestCase):
