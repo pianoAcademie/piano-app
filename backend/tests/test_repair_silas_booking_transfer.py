@@ -66,6 +66,22 @@ def test_repair_rejects_a_target_linked_to_another_subscription() -> None:
     assert _nearest_target(source, [target]) is None
 
 
+def test_repair_accepts_a_school_holiday_gap() -> None:
+    subscription_id = uuid4()
+    source = _row(
+        start_at=datetime(2027, 1, 6, 16, 0, tzinfo=timezone.utc),
+        subscription_id=subscription_id,
+        total="36.00",
+    )
+    target = _row(
+        start_at=datetime(2026, 12, 19, 11, 0, tzinfo=timezone.utc),
+        subscription_id=None,
+        total="38.00",
+    )
+
+    assert _nearest_target(source, [target]) is target
+
+
 def test_repair_only_accepts_the_paid_target_invoice() -> None:
     assert _is_paid_target_invoice(
         {"invoice_number": "PA26-0687", "invoice_status": "PAID"}

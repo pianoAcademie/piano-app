@@ -33,6 +33,7 @@ SOURCE_WEEKDAY = 2  # Wednesday
 SOURCE_HOUR = 17
 TARGET_WEEKDAY = 5  # Saturday
 TARGET_HOUR = 12
+MAX_PAIR_DISTANCE_DAYS = 28
 START_UTC = datetime(2026, 8, 26, tzinfo=timezone.utc)
 END_UTC = datetime(2027, 8, 31, tzinfo=timezone.utc)
 ACTIVE_STATUSES = {
@@ -87,7 +88,7 @@ def _nearest_target(source: BookingSession, targets: list[BookingSession]) -> Bo
             None,
             source.booking.client_plan_subscription_id,
         }
-        and abs((_local_start(target).date() - source_local.date()).days) <= 14
+        and abs((_local_start(target).date() - source_local.date()).days) <= MAX_PAIR_DISTANCE_DAYS
     ]
     if not candidates:
         return None
@@ -210,7 +211,7 @@ def main() -> None:
                     None,
                     source.booking.client_plan_subscription_id,
                 }
-                and abs((_local_start(source).date() - target_local.date()).days) <= 14
+                and abs((_local_start(source).date() - target_local.date()).days) <= MAX_PAIR_DISTANCE_DAYS
             ]
             if not candidates:
                 raise SystemExit(
