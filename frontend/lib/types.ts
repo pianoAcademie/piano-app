@@ -1566,8 +1566,14 @@ export type ProfessorLocalIntakePartitionOut = {
   estimated_quantity: number;
 };
 
+export type ProfessorLocalIntakeAnswerOut = {
+  label: string;
+  value: string;
+};
+
 export type ProfessorLocalIntakeDetailOut = ProfessorLocalIntakeTaskOut & {
   normalized_payload_json: Record<string, unknown>;
+  answers: ProfessorLocalIntakeAnswerOut[];
   slot_options: ProfessorLocalIntakeSlotOut[];
   partition_options: ProfessorLocalIntakePartitionOut[];
   local_confirmation_session_id: string | null;

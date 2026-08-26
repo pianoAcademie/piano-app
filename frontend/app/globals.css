@@ -24090,6 +24090,110 @@ button.danger:focus-visible {
   color: var(--muted, #766b5f);
 }
 
+.teacher-intake-list-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.teacher-intake-request-modal {
+  width: min(820px, 96vw);
+  max-height: 90vh;
+  padding: 18px;
+  gap: 16px;
+}
+
+.teacher-intake-request-modal .modal-title,
+.teacher-intake-request-modal p {
+  margin: 0;
+}
+
+.teacher-intake-request-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.teacher-intake-request-summary > div {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid var(--line, #ead3aa);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.teacher-intake-request-summary span,
+.teacher-intake-request-answers dt {
+  color: var(--muted, #766b5f);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.teacher-intake-request-answers {
+  display: grid;
+  gap: 10px;
+}
+
+.teacher-intake-request-answers h3 {
+  margin: 0;
+}
+
+.teacher-intake-request-answers dl {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  border: 1px solid var(--line, #ead3aa);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.teacher-intake-request-answers dl > div {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.85fr) minmax(0, 1.6fr);
+  gap: 16px;
+  padding: 11px 12px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.teacher-intake-request-answers dl > div + div {
+  border-top: 1px solid var(--line, #ead3aa);
+}
+
+.teacher-intake-request-answers dd {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.teacher-intake-request-actions {
+  position: sticky;
+  bottom: -18px;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
+  margin: 0 -18px -18px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--line, #ead3aa);
+  background: rgba(255, 253, 249, 0.97);
+}
+
+.teacher-intake-request-confirm {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 9px 14px;
+  border-radius: 10px;
+  background: #ba6e1c;
+  color: #fff;
+  font-weight: 800;
+  text-decoration: none;
+}
+
 .teacher-intake-form,
 .teacher-intake-control {
   display: grid;
@@ -24214,6 +24318,23 @@ button.danger:focus-visible {
 
   .teacher-intake-mode-grid label {
     justify-content: flex-start;
+  }
+
+  .teacher-intake-request-summary,
+  .teacher-intake-request-answers dl > div {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .teacher-intake-request-actions {
+    align-items: stretch;
+    flex-direction: column-reverse;
+  }
+
+  .teacher-intake-request-actions .mode-link,
+  .teacher-intake-request-confirm {
+    width: 100%;
+    text-align: center;
   }
 }
 

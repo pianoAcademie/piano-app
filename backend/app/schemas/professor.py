@@ -214,8 +214,14 @@ class ProfessorLocalIntakePartitionOut(BaseModel):
     estimated_quantity: int
 
 
+class ProfessorLocalIntakeAnswerOut(BaseModel):
+    label: str
+    value: str
+
+
 class ProfessorLocalIntakeDetailOut(ProfessorLocalIntakeTaskOut):
     normalized_payload_json: dict[str, object] = Field(default_factory=dict)
+    answers: list[ProfessorLocalIntakeAnswerOut] = Field(default_factory=list)
     slot_options: list[ProfessorLocalIntakeSlotOut] = Field(default_factory=list)
     partition_options: list[ProfessorLocalIntakePartitionOut] = Field(default_factory=list)
     local_confirmation_session_id: UUID | None = None

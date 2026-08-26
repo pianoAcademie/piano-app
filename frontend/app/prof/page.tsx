@@ -26,6 +26,7 @@ import ProfessorHelpAssistant from "../../components/teacher-ui/help-assistant";
 import ProfessorMobilePushRegistration from "../../components/teacher-ui/mobile-push-registration";
 import PresenceHeartbeat from "../../components/presence-heartbeat";
 import ListRow from "../../components/teacher-ui/list-row";
+import ProfessorLocalIntakeRequestModal from "../../components/professor-local-intake-request-modal";
 import PageHeaderMobile from "../../components/teacher-ui/page-header-mobile";
 import PortalBrandLockup from "../../components/portal-brand-lockup";
 import SectionAccordion from "../../components/teacher-ui/section-accordion";
@@ -41,6 +42,7 @@ import type {
   ProfessorContractGridOut,
   ProfessorInternalNoteListOut,
   ProfessorLocalIntakeTaskOut,
+  ProfessorLocalIntakeDetailOut,
   AdminCatalogProductOut,
   AdminCatalogRequestOut,
   LocationOut,
@@ -390,6 +392,7 @@ function buildProfHref(params: {
   dayDetails?: string | null;
   attendanceFilter?: string | null;
   planningScope?: PlanningScope;
+  intakeDetail?: string | null;
 }): string {
   const query = new URLSearchParams();
   query.set("tab", params.tab);
@@ -409,6 +412,9 @@ function buildProfHref(params: {
   }
   if (params.planningScope === "all") {
     query.set("planning_scope", "all");
+  }
+  if (params.intakeDetail) {
+    query.set("intake_detail", params.intakeDetail);
   }
   return `/prof?${query.toString()}`;
 }
@@ -573,6 +579,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
   const agendaRange = buildAgendaRange(agendaView, agendaDate, language);
   const requestedPlanningScope: PlanningScope =
     currentTab === "planning" && readParam(searchParams, "planning_scope") === "all" ? "all" : "mine";
+  const selectedLocalIntakeId = currentTab === "overview" ? readParam(searchParams, "intake_detail").trim() : "";
 
   const sessionsQuery = new URLSearchParams();
   sessionsQuery.set("from", agendaRange.from.toISOString());
@@ -595,6 +602,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
     catalogLocationsResult,
     catalogRequestsResult,
     localIntakesResult,
+    selectedLocalIntakeResult,
   ] = await Promise.all([
     backendRequest<ProfessorMeOut>("/api/v1/professors/me", {}, token),
     backendRequest<ProfessorAttendancePendingOut[]>("/api/v1/professors/me/attendance/pending?limit=200", {}, token),
@@ -618,6 +626,13 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
       {},
       token,
     ),
+    selectedLocalIntakeId
+      ? backendRequest<ProfessorLocalIntakeDetailOut>(
+          `/api/v1/professors/me/intakes/local-confirmations/${encodeURIComponent(selectedLocalIntakeId)}`,
+          {},
+          token,
+        )
+      : Promise.resolve({ ok: true as const, status: 200, data: null as ProfessorLocalIntakeDetailOut | null }),
   ]);
 
   if (!profileResult.ok) {
@@ -910,10 +925,28 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                 {pendingLocalIntakes.map((intake) => (
                   <ListRow
                     key={intake.id}
-                    href={`/prof/intakes/${intake.id}`}
-                    left={intake.child_label || intake.prospect_label}
+                    left={(
+                      <Link href={`/prof/intakes/${intake.id}`}>
+                        {intake.child_label || intake.prospect_label}
+                      </Link>
+                    )}
                     subtitle={[intake.requested_summary, intake.prospect_label].filter(Boolean).join(" · ")}
-                    right={<span className="status-pill status-warn">À confirmer</span>}
+                    right={(
+                      <div className="teacher-intake-list-actions">
+                        <span className="status-pill status-warn">À confirmer</span>
+                        <Link
+                          className="mode-link"
+                          href={buildProfHref({
+                            tab: "overview",
+                            agendaView,
+                            agendaDate,
+                            intakeDetail: intake.id,
+                          })}
+                        >
+                          Voir la demande
+                        </Link>
+                      </div>
+                    )}
                   />
                 ))}
               </div>
@@ -1958,6 +1991,29 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
             </footer>
           </article>
         </section>
+      ) : null}
+
+      {selectedLocalIntakeId && !selectedLocalIntakeResult.ok ? (
+        <section className="modal-overlay modal-overlay-front">
+          <article className="modal-panel modal-compact" role="dialog" aria-modal="true" aria-label="Demande indisponible">
+            <Link
+              className="modal-close-x"
+              href={buildProfHref({ tab: "overview", agendaView, agendaDate })}
+              aria-label="Fermer"
+            >
+              ×
+            </Link>
+            <h2 className="modal-title">Demande indisponible</h2>
+            <AlertCard tone="error">Cette demande n’est plus disponible ou ne vous est pas affectée.</AlertCard>
+          </article>
+        </section>
+      ) : null}
+
+      {selectedLocalIntakeResult.ok && selectedLocalIntakeResult.data ? (
+        <ProfessorLocalIntakeRequestModal
+          intake={selectedLocalIntakeResult.data}
+          closeHref={buildProfHref({ tab: "overview", agendaView, agendaDate })}
+        />
       ) : null}
 
       {currentTab === "messages" && selectedMessage ? (

@@ -736,6 +736,25 @@ def _normalized_intake_payload(intake: TypeformIntake) -> dict[str, object]:
     return intake.normalized_payload_json if isinstance(intake.normalized_payload_json, dict) else {}
 
 
+def _local_intake_answers(intake: TypeformIntake) -> list[dict[str, str]]:
+    raw_answers = intake.simplified_response_json if isinstance(intake.simplified_response_json, list) else []
+    answers: list[dict[str, str]] = []
+    for raw_answer in raw_answers:
+        if not isinstance(raw_answer, dict):
+            continue
+        label = str(raw_answer.get("field_title") or raw_answer.get("label") or "").strip()
+        raw_value = raw_answer.get("value")
+        if isinstance(raw_value, list):
+            value = ", ".join(str(item or "").strip() for item in raw_value if str(item or "").strip())
+        elif isinstance(raw_value, bool):
+            value = "Oui" if raw_value else "Non"
+        else:
+            value = str(raw_value or "").strip()
+        if label and value:
+            answers.append({"label": label, "value": value})
+    return answers
+
+
 def _intake_people(intake: TypeformIntake) -> tuple[str, str | None]:
     normalized = _normalized_intake_payload(intake)
     parent = " ".join(
@@ -939,6 +958,7 @@ def _local_intake_detail_out(
     return ProfessorLocalIntakeDetailOut(
         **task.model_dump(),
         normalized_payload_json=_normalized_intake_payload(intake),
+        answers=_local_intake_answers(intake),
         slot_options=_local_intake_slot_options(db, professor_id=professor_id),
         partition_options=_local_intake_partition_options(db),
         local_confirmation_session_id=intake.local_confirmation_session_id,
