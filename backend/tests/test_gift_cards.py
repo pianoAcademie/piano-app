@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 import sys
@@ -25,6 +26,7 @@ from app.services.gift_cards import (
     gift_card_external_reference_key,
     normalize_gift_card_code,
 )
+from app.services.gift_card_imports import MAX_GIFT_CARD_IMPORT_ROWS, parse_gift_card_csv
 
 
 class GiftCardCodeSecurityTests(unittest.TestCase):
@@ -163,6 +165,56 @@ class GiftCardLifecycleTests(unittest.TestCase):
     def test_admin_status_schema_cannot_mark_a_card_redeemed(self) -> None:
         with self.assertRaises(ValidationError):
             AdminGiftCardStatusRequest(status="REDEEMED")
+
+
+class GiftCardCsvPreviewTests(unittest.TestCase):
+    def test_paid_wordpress_row_is_ready_for_database_checks(self) -> None:
+        csv_content = (
+            "Code de la carte-cadeau;Numéro de commande;État de la commande;"
+            "Date de paiement;Nom de l’élément;Valeur de l'offre TTC;Prix payé TTC\n"
+            "268E-B072-8557-F80C;485529;Terminée;2026-08-26 15:30;"
+            "Carte cadeau - Apprenez votre 1er morceau;150;150\n"
+        ).encode()
+
+        rows = parse_gift_card_csv(csv_content)
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].code_suffix, "8557F80C")
+        self.assertEqual(rows[0].external_order_ref, "485529")
+        self.assertEqual(rows[0].face_value_ttc, Decimal("150.00"))
+        self.assertEqual(rows[0].purchase_price_ttc, Decimal("150.00"))
+        self.assertEqual(rows[0].errors, ())
+
+    def test_unpaid_or_incomplete_row_is_blocked(self) -> None:
+        csv_content = (
+            "code,order_id,status,paid_at,face_value_ttc,purchase_price_ttc\n"
+            "268E-B072-8557-F80C,485529,pending,,150,125\n"
+        ).encode()
+
+        row = parse_gift_card_csv(csv_content)[0]
+
+        self.assertIn("Le statut de la commande ne confirme pas le paiement.", row.errors)
+        self.assertIn("Date de paiement manquante.", row.errors)
+
+    def test_missing_code_and_amounts_are_reported_without_guessing(self) -> None:
+        csv_content = "order_id,status,paid_at\n485529,completed,2026-08-26\n".encode()
+
+        row = parse_gift_card_csv(csv_content)[0]
+
+        self.assertIsNone(row.code)
+        self.assertIsNone(row.face_value_ttc)
+        self.assertIsNone(row.purchase_price_ttc)
+        self.assertGreaterEqual(len(row.errors), 3)
+
+    def test_import_row_limit_is_enforced(self) -> None:
+        header = "code,order_id,status,paid_at,face_value_ttc,purchase_price_ttc\n"
+        data = "\n".join(
+            f"AAAA-BBBB-CCCC-{index:04X},{index},completed,2026-08-26,150,150"
+            for index in range(MAX_GIFT_CARD_IMPORT_ROWS + 1)
+        )
+
+        with self.assertRaisesRegex(ValueError, "limité"):
+            parse_gift_card_csv(f"{header}{data}\n".encode())
 
 
 if __name__ == "__main__":

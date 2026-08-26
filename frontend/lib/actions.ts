@@ -47,6 +47,7 @@ import type {
   AdminLegalEntityOut,
   AdminInvoiceNumberingOut,
   AdminInvoiceTemplateOut,
+  AdminGiftCardCsvPreviewOut,
   AdminGiftCardOut,
   AdminTeacherInvoiceTemplateOut,
   AdminClientPasswordEmailTemplateOut,
@@ -1983,6 +1984,41 @@ export async function importAdminGiftCardAction(formData: FormData): Promise<voi
     ? `Carte déjà importée (code finissant par ${result.data.code_suffix}).`
     : `Carte importée (code finissant par ${result.data.code_suffix}).`;
   redirect(appendQueryMessage(returnTo, "ok", message));
+}
+
+export async function previewAdminGiftCardCsvAction(formData: FormData): Promise<void> {
+  const token = getAdminToken() ?? currentToken();
+  if (!token) redirect("/login?error_code=session_expired");
+  const returnTo = "/admin/gift-cards";
+  const planId = String(formData.get("plan_id") ?? "").trim();
+  const csvFile = formData.get("gift_card_file");
+  if (!planId || !(csvFile instanceof File) || csvFile.size <= 0) {
+    redirect(appendQueryMessage(returnTo, "error", "Sélectionnez une offre et un fichier CSV."));
+  }
+  if (!csvFile.name.toLowerCase().endsWith(".csv")) {
+    redirect(appendQueryMessage(returnTo, "error", "Le fichier de prévisualisation doit être au format CSV."));
+  }
+
+  const payload = new FormData();
+  payload.set("plan_id", planId);
+  payload.set("file", csvFile, csvFile.name);
+  const result = await backendRequest<AdminGiftCardCsvPreviewOut>(
+    "/api/v1/admin/gift-cards/import/preview-csv",
+    { method: "POST", body: payload },
+    token,
+    120000,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  const firstBlocked = result.data.rows.find((row) => row.result === "BLOCKED");
+  const summary = `${result.data.total_rows} ligne(s) contrôlée(s) : ${result.data.ready_rows} prête(s), ${result.data.already_imported_rows} déjà importée(s), ${result.data.blocked_rows} bloquée(s).`;
+  if (result.data.blocked_rows > 0) {
+    const detail = firstBlocked?.messages[0] ? ` Première erreur (ligne ${firstBlocked.row_number}) : ${firstBlocked.messages[0]}` : "";
+    redirect(appendQueryMessage(returnTo, "error", `${summary}${detail}`));
+  }
+  redirect(appendQueryMessage(returnTo, "ok", `${summary} Aucune donnée n'a été importée.`));
 }
 
 export async function updateAdminGiftCardStatusAction(formData: FormData): Promise<void> {

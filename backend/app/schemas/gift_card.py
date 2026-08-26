@@ -137,3 +137,26 @@ class AdminGiftCardOut(BaseModel):
 
 class AdminGiftCardStatusRequest(BaseModel):
     status: Literal["ACTIVE", "BLOCKED", "CANCELLED", "REFUNDED"]
+
+
+class AdminGiftCardCsvPreviewRowOut(BaseModel):
+    row_number: int
+    result: Literal["READY", "ALREADY_IMPORTED", "BLOCKED"]
+    code_suffix: str | None = None
+    external_order_ref: str | None = None
+    external_line_ref: str | None = None
+    payment_status: str | None = None
+    product_name: str | None = None
+    face_value_ttc: Decimal | None = None
+    purchase_price_ttc: Decimal | None = None
+    messages: list[str] = Field(default_factory=list)
+
+
+class AdminGiftCardCsvPreviewOut(BaseModel):
+    plan_id: UUID
+    plan_name: str
+    total_rows: int
+    ready_rows: int
+    already_imported_rows: int
+    blocked_rows: int
+    rows: list[AdminGiftCardCsvPreviewRowOut]

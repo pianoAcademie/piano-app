@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -17,6 +17,8 @@ from app.models.user import User, UserRole
 from app.schemas.gift_card import (
     AdminGiftCardImportRequest,
     AdminGiftCardOut,
+    AdminGiftCardCsvPreviewOut,
+    AdminGiftCardCsvPreviewRowOut,
     AdminGiftCardStatusRequest,
     GiftCardCodeRequest,
     GiftCardContextOut,
@@ -33,6 +35,7 @@ from app.services.gift_cards import (
     gift_card_code_suffix,
     gift_card_external_reference_key,
 )
+from app.services.gift_card_imports import parse_gift_card_csv
 from app.services.legal_terms import resolve_legal_terms
 from app.services.notifications.application.orchestrator import enqueue_notifications
 from app.services.shared.rate_limit import consume_rate_limit
@@ -302,6 +305,106 @@ def redeem_gift_card(
         plan_name=plan.name,
         credits_granted=credits,
         expires_at=ends_at,
+    )
+
+
+@router.post("/admin/gift-cards/import/preview-csv", response_model=AdminGiftCardCsvPreviewOut)
+async def preview_gift_card_csv_import(
+    plan_id: UUID = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminGiftCardCsvPreviewOut:
+    plan = db.scalar(select(Plan).where(Plan.id == plan_id))
+    if plan is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Offre introuvable.")
+    if plan.kind != PlanKind.PACK:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Une carte cadeau doit être associée à une formule de type carnet.",
+        )
+    content = await file.read(2_000_001)
+    if len(content) > 2_000_000:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Le fichier CSV ne doit pas dépasser 2 Mo.",
+        )
+    try:
+        candidates = parse_gift_card_csv(content)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+    seen_codes: set[str] = set()
+    seen_references: set[str] = set()
+    preview_rows: list[AdminGiftCardCsvPreviewRowOut] = []
+    for candidate in candidates:
+        messages = list(candidate.errors)
+        row_result = "BLOCKED" if messages else "READY"
+        code_hash: str | None = None
+        external_key: str | None = None
+        if candidate.code is not None:
+            code_hash = gift_card_code_hash(candidate.code)
+            if code_hash in seen_codes:
+                messages.append("Code dupliqué dans le fichier.")
+                row_result = "BLOCKED"
+            seen_codes.add(code_hash)
+        if candidate.external_order_ref is not None:
+            external_key = gift_card_external_reference_key(
+                source="WORDPRESS",
+                external_order_ref=candidate.external_order_ref,
+                external_line_ref=candidate.external_line_ref,
+            )
+            if external_key in seen_references:
+                messages.append("Commande et ligne dupliquées dans le fichier.")
+                row_result = "BLOCKED"
+            if external_key is not None:
+                seen_references.add(external_key)
+
+        existing: GiftCard | None = None
+        criteria = []
+        if code_hash is not None:
+            criteria.append(GiftCard.code_hash == code_hash)
+        if external_key is not None:
+            criteria.append(GiftCard.external_reference_key == external_key)
+        if criteria:
+            existing = db.scalar(select(GiftCard).where(or_(*criteria)).limit(1))
+        if existing is not None:
+            same_import = bool(
+                existing.code_hash == code_hash
+                and existing.plan_id == plan_id
+                and existing.source == "WORDPRESS"
+                and existing.external_reference_key == external_key
+            )
+            if same_import and not messages:
+                row_result = "ALREADY_IMPORTED"
+                messages.append("Carte déjà importée avec les mêmes références.")
+            else:
+                row_result = "BLOCKED"
+                messages.append("Code ou référence déjà rattaché à une autre carte.")
+
+        preview_rows.append(
+            AdminGiftCardCsvPreviewRowOut(
+                row_number=candidate.row_number,
+                result=row_result,
+                code_suffix=candidate.code_suffix,
+                external_order_ref=candidate.external_order_ref,
+                external_line_ref=candidate.external_line_ref,
+                payment_status=candidate.payment_status,
+                product_name=candidate.product_name,
+                face_value_ttc=candidate.face_value_ttc,
+                purchase_price_ttc=candidate.purchase_price_ttc,
+                messages=messages,
+            )
+        )
+
+    return AdminGiftCardCsvPreviewOut(
+        plan_id=plan.id,
+        plan_name=plan.name,
+        total_rows=len(preview_rows),
+        ready_rows=sum(row.result == "READY" for row in preview_rows),
+        already_imported_rows=sum(row.result == "ALREADY_IMPORTED" for row in preview_rows),
+        blocked_rows=sum(row.result == "BLOCKED" for row in preview_rows),
+        rows=preview_rows,
     )
 
 

@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
-import { importAdminGiftCardAction, updateAdminGiftCardStatusAction } from "../../../lib/actions";
+import { importAdminGiftCardAction, previewAdminGiftCardCsvAction, updateAdminGiftCardStatusAction } from "../../../lib/actions";
 import { backendRequest } from "../../../lib/backend";
 import { normalizeUiLanguage } from "../../../lib/ui-i18n";
 import type { AdminFormulaOut, AdminGiftCardOut, UserOut } from "../../../lib/types";
@@ -65,6 +65,37 @@ export default async function AdminGiftCardsPage({ searchParams }: { searchParam
       </section>
       {okMessage ? <section className="flash-ok">{okMessage}</section> : null}
       {errorMessage || loadError ? <section className="flash-err">{errorMessage || loadError}</section> : null}
+
+      <section className="card">
+        <h2>{fr ? "Contrôler un export WordPress" : "Check a WordPress export"}</h2>
+        <p className="muted">
+          {fr
+            ? "Prévisualisation uniquement : aucune carte n'est créée. Les lignes sans code, commande payée, date de paiement ou montants TTC sont bloquées ; les doublons sont signalés."
+            : "Preview only: no card is created. Rows missing a code, paid order, payment date, or tax-inclusive amounts are blocked; duplicates are reported."}
+        </p>
+        <form action={previewAdminGiftCardCsvAction} className="grid cols-3 config-form-grid">
+          <label>
+            {fr ? "Offre remise au bénéficiaire" : "Gifted offer"}
+            <select name="plan_id" required defaultValue="">
+              <option value="" disabled>{fr ? "Sélectionner une offre" : "Select an offer"}</option>
+              {plans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name}</option>)}
+            </select>
+          </label>
+          <label className="span-2">
+            {fr ? "Export CSV WordPress" : "WordPress CSV export"}
+            <input type="file" name="gift_card_file" accept=".csv,text/csv" required />
+          </label>
+          <p className="muted span-3">
+            {fr
+              ? "Colonnes attendues : code, numéro de commande, statut, date de paiement, valeur offerte TTC et prix payé TTC. Limite : 500 lignes / 2 Mo."
+              : "Required columns: code, order number, status, payment date, gifted value incl. tax, and paid price incl. tax. Limit: 500 rows / 2 MB."}
+          </p>
+          <div className="row span-3">
+            <button type="submit" className="ghost">{fr ? "Prévisualiser sans importer" : "Preview without importing"}</button>
+            <a className="ghost" href="/admin/gift-cards/template">{fr ? "Télécharger le modèle CSV" : "Download CSV template"}</a>
+          </div>
+        </form>
+      </section>
 
       <section className="card">
         <h2>{fr ? "Importer une carte existante" : "Import an existing card"}</h2>

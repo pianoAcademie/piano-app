@@ -2509,6 +2509,29 @@ export type AdminGiftCardOut = {
   idempotent_replay: boolean;
 };
 
+export type AdminGiftCardCsvPreviewRowOut = {
+  row_number: number;
+  result: "READY" | "ALREADY_IMPORTED" | "BLOCKED";
+  code_suffix: string | null;
+  external_order_ref: string | null;
+  external_line_ref: string | null;
+  payment_status: string | null;
+  product_name: string | null;
+  face_value_ttc: string | null;
+  purchase_price_ttc: string | null;
+  messages: string[];
+};
+
+export type AdminGiftCardCsvPreviewOut = {
+  plan_id: string;
+  plan_name: string;
+  total_rows: number;
+  ready_rows: number;
+  already_imported_rows: number;
+  blocked_rows: number;
+  rows: AdminGiftCardCsvPreviewRowOut[];
+};
+
 export type ClientSessionFormulaOptionOut = {
   formula_id: string;
   formula_code: string;
