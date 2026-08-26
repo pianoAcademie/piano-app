@@ -38,6 +38,8 @@ NOTIFICATION_TYPE_SUBSCRIPTION_PAYMENT_FAILED_FINAL_CUSTOMER = "subscription_pay
 NOTIFICATION_TYPE_SUBSCRIPTION_PAYMENT_FAILED_FINAL_ADMIN = "subscription_payment_failed_final_admin"
 NOTIFICATION_TYPE_SUBSCRIPTION_PAYMENT_RECOVERED_CUSTOMER = "subscription_payment_recovered_customer"
 NOTIFICATION_TYPE_SUBSCRIPTION_PAYMENT_RECOVERED_ADMIN = "subscription_payment_recovered_admin"
+NOTIFICATION_TYPE_SUBSCRIPTION_PAYMENT_METHOD_REQUIRED_CUSTOMER = "subscription_payment_method_required_customer"
+NOTIFICATION_TYPE_SUBSCRIPTION_INITIAL_PAYMENT_REQUIRED_CUSTOMER = "subscription_initial_payment_required_customer"
 NOTIFICATION_TYPE_ADMIN_QUOTES_EXPIRING_TODAY = "admin_quotes_expiring_today"
 
 IMMEDIATE_NOTIFICATION_TYPES = {
@@ -83,6 +85,8 @@ EVENT_SUBSCRIPTION_PAYMENT_SUCCESS = "subscription_payment_success"
 EVENT_SUBSCRIPTION_PAYMENT_FAILED_FIRST = "subscription_payment_failed_first"
 EVENT_SUBSCRIPTION_PAYMENT_FAILED_FINAL = "subscription_payment_failed_final"
 EVENT_SUBSCRIPTION_PAYMENT_RECOVERED = "subscription_payment_recovered"
+EVENT_SUBSCRIPTION_PAYMENT_METHOD_REQUIRED = "subscription_payment_method_required"
+EVENT_SUBSCRIPTION_INITIAL_PAYMENT_REQUIRED = "subscription_initial_payment_required"
 
 SOURCE_CLIENT_PORTAL = "client_portal"
 SOURCE_ADMIN_BO = "admin_bo"

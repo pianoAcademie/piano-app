@@ -1310,7 +1310,15 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     if (getAdminToken()) {
       redirect("/admin?error=Ouvrir%20la%20vue%20client%20depuis%20la%20fiche%20client");
     }
-    redirect("/login?error_code=session_expired");
+    const returnParams = new URLSearchParams();
+    for (const [key, rawValue] of Object.entries(searchParams)) {
+      const value = Array.isArray(rawValue) ? rawValue[0] : rawValue;
+      if (value) {
+        returnParams.set(key, value);
+      }
+    }
+    const returnTo = `/client${returnParams.size > 0 ? `?${returnParams.toString()}` : ""}`;
+    redirect(`/login?mode=login&return_to=${encodeURIComponent(returnTo)}&error_code=session_expired`);
   }
 
   const meResult = await backendRequest<UserOut>("/api/v1/clients/me", {}, token);

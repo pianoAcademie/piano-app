@@ -23,6 +23,7 @@ from app.services.professor_daily_digest import run_send_professor_daily_digest_
 from app.services.professor_attendance_reminders import run_send_professor_attendance_reminder_job
 from app.services.session_automation import run_auto_cancel_empty_sessions_job, run_expire_pending_payment_bookings_job
 from app.services.notifications.application.orchestrator import enqueue_notifications
+from app.services.subscription_payment_reminders import run_subscription_payment_action_reminder_job
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,7 @@ def main() -> None:
     last_reminder_generation_at: datetime | None = None
     last_professor_digest_at: datetime | None = None
     last_professor_attendance_reminder_at: datetime | None = None
+    last_subscription_payment_reminder_at: datetime | None = None
     while True:
         db = SessionLocal()
         try:
@@ -55,6 +57,12 @@ def main() -> None:
             ):
                 jobs.append(("professor_attendance_reminder", run_send_professor_attendance_reminder_job))
                 last_professor_attendance_reminder_at = cycle_now
+            if (
+                last_subscription_payment_reminder_at is None
+                or cycle_now - last_subscription_payment_reminder_at >= timedelta(minutes=30)
+            ):
+                jobs.append(("subscription_payment_action_reminders", run_subscription_payment_action_reminder_job))
+                last_subscription_payment_reminder_at = cycle_now
             jobs.extend((
                 ("scheduled_notification_dispatch", run_scheduled_notification_dispatch_job),
                 ("invoice_due_reminders", run_invoice_due_reminder_job),
