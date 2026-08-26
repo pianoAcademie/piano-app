@@ -53,6 +53,9 @@ type ManualTransactionLegalEntityFieldsProps = {
   clientDisplayName?: string;
   language?: "fr" | "en";
   checkReceiptLocations?: CheckReceiptLocationOption[];
+  initialReconciledInvoiceNoteIds?: string[];
+  initialCheckReceiptLocationId?: string;
+  checkBatchPreviousCount?: number;
 };
 
 export default function ManualTransactionLegalEntityFields({
@@ -67,6 +70,9 @@ export default function ManualTransactionLegalEntityFields({
   clientDisplayName,
   language,
   checkReceiptLocations = [],
+  initialReconciledInvoiceNoteIds = [],
+  initialCheckReceiptLocationId = "",
+  checkBatchPreviousCount = 0,
 }: ManualTransactionLegalEntityFieldsProps): JSX.Element {
   const searchParams = useSearchParams();
   const resolvedLanguage = language ?? (searchParams?.get("lang") === "en" ? "en" : "fr");
@@ -97,6 +103,8 @@ export default function ManualTransactionLegalEntityFields({
           "Bar-le-Duc checks are immediately ready for local bank deposit. Rue de Richelieu checks must first be sent to administration.",
         receiptEmailGeneric: "Send a receipt email to the client",
         receiptEmailCheck: "Notify the client that the check has been received",
+        receiptEmailBatch: `A single summary email will be sent for all ${checkBatchPreviousCount + 1} checks.`,
+        repeatCheckHelp: "Save intermediate checks with “Save and enter the next check”. Finish with the main button to send one summary email.",
         emailPreviewTitle: "Email preview",
         emailPreviewSubject: "Subject",
         emailPreviewBody: "Message",
@@ -131,6 +139,8 @@ export default function ManualTransactionLegalEntityFields({
           "À Bar-le-Duc, le chèque est directement prêt pour la remise locale. À Richelieu, il devra d'abord être transmis à l'administration.",
         receiptEmailGeneric: "Envoyer un reçu par courriel au client",
         receiptEmailCheck: "Notifier le client que le chèque a bien été reçu",
+        receiptEmailBatch: `Un seul courriel récapitulatif sera envoyé pour les ${checkBatchPreviousCount + 1} chèques.`,
+        repeatCheckHelp: "Enregistrez les chèques intermédiaires avec « Enregistrer et saisir le chèque suivant ». Terminez avec le bouton principal pour envoyer un seul récapitulatif.",
         emailPreviewTitle: "Aperçu du courriel",
         emailPreviewSubject: "Objet",
         emailPreviewBody: "Message",
@@ -143,7 +153,9 @@ export default function ManualTransactionLegalEntityFields({
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [paymentMethodCode, setPaymentMethodCode] = useState<string>(initialPaymentMethodCode);
   const [manualLegalEntityId, setManualLegalEntityId] = useState<string>(initialLegalEntityId ?? "");
-  const [selectedNoteIds, setSelectedNoteIds] = useState<Set<string>>(new Set<string>());
+  const [selectedNoteIds, setSelectedNoteIds] = useState<Set<string>>(
+    new Set<string>(initialReconciledInvoiceNoteIds),
+  );
   const [checkDepositMonth, setCheckDepositMonth] = useState<string>("");
   const [checkDepositYear, setCheckDepositYear] = useState<string>(String(new Date().getFullYear()));
   const [receiptEmailChecked, setReceiptEmailChecked] = useState<boolean>(false);
@@ -248,6 +260,14 @@ export default function ManualTransactionLegalEntityFields({
     const currentYear = new Date().getFullYear();
     return Array.from({ length: 5 }, (_, index) => String(currentYear + index));
   }, []);
+
+  useEffect(() => {
+    const form = rootRef.current?.closest("form");
+    const repeatButton = form?.querySelector<HTMLButtonElement>("[data-check-repeat-submit]");
+    if (repeatButton) {
+      repeatButton.hidden = !isCheckPayment;
+    }
+  }, [isCheckPayment]);
 
   useEffect(() => {
     const form = rootRef.current?.closest("form");
@@ -381,6 +401,7 @@ export default function ManualTransactionLegalEntityFields({
                           type="checkbox"
                           name="reconciled_invoice_note_ids"
                           value={row.noteId}
+                          defaultChecked={initialReconciledInvoiceNoteIds.includes(row.noteId)}
                           onChange={(event) => {
                             const noteId = row.noteId;
                             const checked = event.currentTarget.checked;
@@ -423,7 +444,7 @@ export default function ManualTransactionLegalEntityFields({
           {checkReceiptLocations.length > 0 ? (
             <label className="span-2">
               {text.checkReceiptLocation}
-              <select name="check_receipt_location_id" defaultValue="" required>
+              <select name="check_receipt_location_id" defaultValue={initialCheckReceiptLocationId} required>
                 <option value="" disabled>{text.checkReceiptLocationPlaceholder}</option>
                 {checkReceiptLocations.map((location) => (
                   <option key={location.id} value={location.id}>{location.name}</option>
@@ -470,21 +491,34 @@ export default function ManualTransactionLegalEntityFields({
 
       {showReceiptEmailOption ? (
         <>
-          <input type="hidden" name="send_receipt_email" value="off" />
-          <label className="checkline span-2">
-            <input
-              type="checkbox"
-              name="send_receipt_email"
-              value="on"
-              checked={receiptEmailChecked}
-              onChange={(event) => {
-                receiptEmailTouchedRef.current = true;
-                setReceiptEmailChecked(event.currentTarget.checked);
-              }}
-            />
-            {isCheckPayment ? text.receiptEmailCheck : text.receiptEmailGeneric}
-          </label>
-          {isCheckPayment && receiptEmailChecked && checkEmailPreview ? (
+          {isCheckPayment && checkBatchPreviousCount > 0 ? (
+            <>
+              <input type="hidden" name="send_receipt_email" value="on" />
+              <div className="span-2 flash-info check-batch-email-notice">
+                <strong>{text.receiptEmailBatch}</strong>
+                <p>{text.repeatCheckHelp}</p>
+              </div>
+            </>
+          ) : (
+            <>
+              <input type="hidden" name="send_receipt_email" value="off" />
+              <label className="checkline span-2">
+                <input
+                  type="checkbox"
+                  name="send_receipt_email"
+                  value="on"
+                  checked={receiptEmailChecked}
+                  onChange={(event) => {
+                    receiptEmailTouchedRef.current = true;
+                    setReceiptEmailChecked(event.currentTarget.checked);
+                  }}
+                />
+                {isCheckPayment ? text.receiptEmailCheck : text.receiptEmailGeneric}
+              </label>
+              {isCheckPayment ? <p className="muted span-2 check-batch-help">{text.repeatCheckHelp}</p> : null}
+            </>
+          )}
+          {isCheckPayment && checkBatchPreviousCount === 0 && receiptEmailChecked && checkEmailPreview ? (
             <div className="span-2 flash-info">
               <strong>{text.emailPreviewTitle}</strong>
               <p>

@@ -1892,6 +1892,18 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const manualAmountRaw = readParam(searchParams, "manual_amount").trim().replace(",", ".");
   const manualVatRaw = readParam(searchParams, "manual_vat").trim().replace(",", ".");
   const manualDateRaw = readParam(searchParams, "manual_date").trim();
+  const manualRepeatStudentId = readParam(searchParams, "manual_student_id").trim();
+  const manualRepeatPaymentMethodCode = readParam(searchParams, "manual_payment_method_code").trim().toUpperCase();
+  const manualRepeatLegalEntityId = readParam(searchParams, "manual_legal_entity_id").trim();
+  const manualRepeatCheckReceiptLocationId = readParam(searchParams, "manual_check_receipt_location_id").trim();
+  const manualRepeatInvoiceNoteIds = readParam(searchParams, "manual_invoice_note_ids")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const manualCheckBatchIds = readParam(searchParams, "manual_check_batch_ids")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
   const paymentModalSource = readParam(searchParams, "payment_source").toUpperCase();
   const paymentModalId = readParam(searchParams, "payment_id");
   const invoiceNoteId = readParam(searchParams, "invoice_note_id");
@@ -6799,6 +6811,9 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               <input type="hidden" name="currency" value={client.preferred_currency || "EUR"} />
               <input type="hidden" name="transaction_type" value={manualTransactionTypeCode} />
               <input type="hidden" name="occurred_at" value={manualDateInputValue} />
+              {manualCheckBatchIds.map((transactionId) => (
+                <input key={transactionId} type="hidden" name="receipt_batch_transaction_ids" value={transactionId} />
+              ))}
               {manualIsCashFlow ? (
                 <>
                   {manualAmountInputValue ? (
@@ -6826,7 +6841,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               ) : null}
               <label>
                 {t("admin.client_detail.student_optional")}
-                <select name="student_id" defaultValue="">
+                <select name="student_id" defaultValue={manualRepeatStudentId}>
                   <option value="">{t("admin.client_detail.not_specified")}</option>
                   <option value={client.id}>{fullName || client.email}</option>
                   {family.links_as_adult.map((link) => (
@@ -6841,12 +6856,17 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   legalEntities={manualTransactionLegalEntities}
                   paymentMethods={manualTransactionPaymentMethods}
                   paymentMethodRequired
+                  initialPaymentMethodCode={manualRepeatPaymentMethodCode}
+                  initialLegalEntityId={manualRepeatLegalEntityId || null}
                   reconcilableInvoices={manualReconcilableInvoices}
+                  initialReconciledInvoiceNoteIds={manualRepeatInvoiceNoteIds}
                   showReconciliation
                   showReceiptEmailOption
                   clientDisplayName={fullName || visibleEmail || client.email}
                   language={language}
                   checkReceiptLocations={checkReceiptLocations}
+                  initialCheckReceiptLocationId={manualRepeatCheckReceiptLocationId}
+                  checkBatchPreviousCount={manualCheckBatchIds.length}
                 />
               ) : (
                 <ManualTransactionLegalEntityFields legalEntities={manualTransactionLegalEntities} language={language} />
@@ -6890,7 +6910,21 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 <Link className="reset-link" href={manualStepTwoBackHref}>
                   {t("common.previous")}
                 </Link>
-                <button type="submit">{manualTransactionSubmitLabel}</button>
+                <button
+                  type="submit"
+                  name="submit_intent"
+                  value="save_and_add_check"
+                  data-check-repeat-submit
+                  hidden
+                  className="secondary"
+                >
+                  {language === "en" ? "Save and enter the next check" : "Enregistrer et saisir le chèque suivant"}
+                </button>
+                <button type="submit" name="submit_intent" value="save">
+                  {manualCheckBatchIds.length > 0
+                    ? (language === "en" ? "Finish and send the summary" : "Terminer et envoyer le récapitulatif")
+                    : manualTransactionSubmitLabel}
+                </button>
               </div>
             </form>
           </article>

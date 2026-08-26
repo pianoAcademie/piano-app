@@ -6606,6 +6606,24 @@ export async function createAdminClientManualTransactionAction(formData: FormDat
   }
   const markReconciledInvoicesPaid = parseCheckboxFlag(formData, "mark_reconciled_invoices_paid", false);
   const sendReceiptEmail = parseCheckboxFlag(formData, "send_receipt_email", false);
+  const submitIntent = String(formData.get("submit_intent") ?? "save").trim();
+  const saveAndAddCheck = submitIntent === "save_and_add_check";
+  const receiptBatchTransactionIdsRaw = formData
+    .getAll("receipt_batch_transaction_ids")
+    .map((entry) => String(entry ?? "").trim())
+    .filter(Boolean);
+  const receiptBatchTransactionIds: string[] = [];
+  const seenReceiptBatchTransactionIds = new Set<string>();
+  for (const rawId of receiptBatchTransactionIdsRaw) {
+    const parsedId = parseUuid(rawId);
+    if (!parsedId) {
+      redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=paiements`, "error", "Le lot de chèques est invalide."));
+    }
+    if (!seenReceiptBatchTransactionIds.has(parsedId)) {
+      seenReceiptBatchTransactionIds.add(parsedId);
+      receiptBatchTransactionIds.push(parsedId);
+    }
+  }
   const rawCheckDepositLabel = optionalField(formData, "check_deposit_label");
   const checkDepositMonth = String(formData.get("check_deposit_month") ?? "").trim();
   const checkDepositYear = String(formData.get("check_deposit_year") ?? "").trim();
@@ -6641,6 +6659,9 @@ export async function createAdminClientManualTransactionAction(formData: FormDat
   if (paymentMethodCode === "CHECK" && (!checkReceiptLocationIdRaw || !checkReceiptLocationId)) {
     redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=paiements`, "error", "Le lieu de reception du cheque est obligatoire."));
   }
+  if (saveAndAddCheck && paymentMethodCode !== "CHECK") {
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=paiements`, "error", "La saisie successive est réservée aux paiements par chèque."));
+  }
 
   const result = await backendRequest<{ id: string }>(
     `/api/v1/admin/clients/${clientId}/manual-transactions`,
@@ -6661,7 +6682,8 @@ export async function createAdminClientManualTransactionAction(formData: FormDat
         currency: optionalField(formData, "currency"),
         reconciled_invoice_note_ids: reconciledInvoiceNoteIds,
         mark_reconciled_invoices_paid: markReconciledInvoicesPaid,
-        send_receipt_email: sendReceiptEmail,
+        send_receipt_email: saveAndAddCheck ? false : (sendReceiptEmail || receiptBatchTransactionIds.length > 0),
+        receipt_batch_transaction_ids: receiptBatchTransactionIds,
         check_deposit_label: checkDepositLabel,
         check_receipt_location_id: checkReceiptLocationId,
       }),
@@ -6674,6 +6696,28 @@ export async function createAdminClientManualTransactionAction(formData: FormDat
   }
 
   revalidatePath(`/admin/clients/${clientId}`);
+  if (saveAndAddCheck) {
+    const nextBatchIds = [...receiptBatchTransactionIds, result.data.id];
+    const repeatParams = new URLSearchParams({
+      tab: "paiements",
+      payment_modal: "manual",
+      manual_type: "payment",
+      manual_step: "2",
+      manual_amount: String(amountInclVat),
+      manual_vat: "0",
+      manual_date: occurredAtRaw,
+      manual_student_id: optionalField(formData, "student_id") ?? "",
+      manual_payment_method_code: "CHECK",
+      manual_legal_entity_id: legalEntityId ?? "",
+      manual_invoice_note_ids: reconciledInvoiceNoteIds.join(","),
+      manual_check_receipt_location_id: checkReceiptLocationId ?? "",
+      manual_check_batch_ids: nextBatchIds.join(","),
+      ok: language === "en"
+        ? `Check ${nextBatchIds.length} saved. Enter the next check.`
+        : `Chèque ${nextBatchIds.length} enregistré. Saisissez le chèque suivant.`,
+    });
+    redirect(`/admin/clients/${clientId}?${repeatParams.toString()}`);
+  }
   redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=paiements`, "ok", t("admin.client_action.manual_transaction_added")));
 }
 

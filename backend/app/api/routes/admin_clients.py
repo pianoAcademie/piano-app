@@ -2501,6 +2501,7 @@ def _send_check_received_notification_email(
     currency: str,
     received_at: datetime,
     check_deposit_label: str | None = None,
+    checks: list[tuple[Decimal, datetime, str | None]] | None = None,
 ) -> tuple[list[str], str | None, str | None]:
     billing_profile = resolve_billing_profile(db, client)
     try:
@@ -2511,28 +2512,65 @@ def _send_check_received_notification_email(
         return [], None, "Aucune adresse email destinataire"
 
     client_name = _display_name(billing_profile.first_name, billing_profile.last_name, client.email)
+    normalized_checks = checks or [(amount, received_at, check_deposit_label)]
+
+    def _amount_label(value: Decimal) -> str:
+        rendered = f"{value:.2f} {currency}"
+        if currency.upper() == "EUR":
+            rendered = f"{value:.2f}".replace(".", ",") + " €"
+        return rendered
+
     received_label = received_at.strftime("%d/%m/%Y")
-    amount_label = f"{amount:.2f} {currency}"
-    if currency.upper() == "EUR":
-        amount_label = f"{amount:.2f}".replace(".", ",") + " €"
+    amount_label = _amount_label(amount)
     normalized_deposit_label = _normalize_optional(check_deposit_label)
-    deposit_sentence = (
-        f"La réception de votre chèque ne vaut pas encore encaissement. Celui-ci interviendra lors de son dépôt en banque, prévu au cours du mois de {normalized_deposit_label}."
-        if normalized_deposit_label
-        else "La réception de votre chèque ne vaut pas encore encaissement. Celui-ci interviendra lors de son dépôt en banque."
-    )
-    rows = [("Montant du chèque", amount_label), ("Date de réception", received_label)]
-    if normalized_deposit_label:
-        rows.append(("Dépôt en banque prévu", normalized_deposit_label))
+    is_batch = len(normalized_checks) > 1
+    if is_batch:
+        batch_total = sum((item_amount for item_amount, _, _ in normalized_checks), Decimal("0.00"))
+        rows = []
+        for index, (item_amount, item_received_at, item_deposit_label) in enumerate(normalized_checks, start=1):
+            details = [
+                _amount_label(item_amount),
+                f"reçu le {item_received_at.strftime('%d/%m/%Y')}",
+            ]
+            normalized_item_deposit = _normalize_optional(item_deposit_label)
+            if normalized_item_deposit:
+                details.append(f"dépôt prévu en {normalized_item_deposit}")
+            rows.append((f"Chèque {index}", " · ".join(details)))
+        rows.append(("Montant total reçu", _amount_label(batch_total)))
+        deposit_sentence = (
+            "La réception de ces chèques ne vaut pas encore encaissement. "
+            "Chaque chèque sera encaissé lors de sa remise en banque à la période indiquée."
+        )
+    else:
+        deposit_sentence = (
+            f"La réception de votre chèque ne vaut pas encore encaissement. Celui-ci interviendra lors de son dépôt en banque, prévu au cours du mois de {normalized_deposit_label}."
+            if normalized_deposit_label
+            else "La réception de votre chèque ne vaut pas encore encaissement. Celui-ci interviendra lors de son dépôt en banque."
+        )
+        rows = [("Montant du chèque", amount_label), ("Date de réception", received_label)]
+        if normalized_deposit_label:
+            rows.append(("Dépôt en banque prévu", normalized_deposit_label))
 
     sender = resolve_sender_profile(db, sender_kind="STUDIO")
-    subject = f"Réception de votre chèque - {client_name}"
+    subject = (
+        f"Réception de vos {len(normalized_checks)} chèques - {client_name}"
+        if is_batch
+        else f"Réception de votre chèque - {client_name}"
+    )
     body = render_branded_email(
-        preview=f"Nous confirmons la réception de votre chèque de {amount_label}.",
+        preview=(
+            f"Nous confirmons la réception de vos {len(normalized_checks)} chèques."
+            if is_batch
+            else f"Nous confirmons la réception de votre chèque de {amount_label}."
+        ),
         eyebrow="PAIEMENT",
-        title="Chèque bien reçu",
+        title=f"{len(normalized_checks)} chèques bien reçus" if is_batch else "Chèque bien reçu",
         greeting=f"Bonjour {client_name},",
-        intro="Nous vous confirmons la bonne réception de votre chèque.",
+        intro=(
+            f"Nous vous confirmons la bonne réception de vos {len(normalized_checks)} chèques."
+            if is_batch
+            else "Nous vous confirmons la bonne réception de votre chèque."
+        ),
         rows=rows,
         message=deposit_sentence,
     )
@@ -2555,6 +2593,20 @@ def _send_check_received_notification_email(
     except Exception as exc:  # pragma: no cover - defensive safety for SMTP providers
         return recipients, None, str(exc).strip() or "Erreur technique d'envoi"
     return recipients, message_ids[0] if message_ids else None, None
+
+
+def _check_deposit_label_from_transaction(transaction: ClientManualTransaction) -> str | None:
+    for source in (transaction.description, transaction.label):
+        text_value = str(source or "").strip()
+        if not text_value:
+            continue
+        match = re.search(r"(?:à|a)\s+d[ée]poser\s+en\s+(.+?)(?:\n|$)", text_value, flags=re.IGNORECASE)
+        if match:
+            return _normalize_optional(match.group(1))
+        match = re.search(r"d[ée]p[oô]t\s+pr[ée]vu\s*:\s*(.+?)(?:\n|$)", text_value, flags=re.IGNORECASE)
+        if match:
+            return _normalize_optional(match.group(1))
+    return None
 
 
 def _build_range_invoice_email_defaults(
@@ -10634,6 +10686,61 @@ def create_admin_client_manual_transaction(
     receipt_send_error: str | None = None
     if payload.send_receipt_email:
         if payment_method_code == "CHECK":
+            batch_ids = list(dict.fromkeys(payload.receipt_batch_transaction_ids))
+            batch_checks: list[tuple[Decimal, datetime, str | None]] = []
+            if batch_ids:
+                batch_rows = list(
+                    db.scalars(
+                        select(ClientManualTransaction).where(
+                            ClientManualTransaction.id.in_(batch_ids),
+                            ClientManualTransaction.user_id == client.id,
+                        )
+                    ).all()
+                )
+                batch_by_id = {item.id: item for item in batch_rows}
+                if len(batch_by_id) != len(batch_ids):
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail="Un des chèques du lot est introuvable pour ce compte",
+                    )
+                for batch_id in batch_ids:
+                    batch_row = batch_by_id[batch_id]
+                    if (
+                        str(batch_row.transaction_type or "").strip().upper() != "PAYMENT"
+                        or _manual_payment_method_code(batch_row.reference) != "CHECK"
+                    ):
+                        raise HTTPException(
+                            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail="Le récapitulatif ne peut contenir que des paiements par chèque",
+                        )
+                    if str(batch_row.currency or "").strip().upper() != currency.upper():
+                        raise HTTPException(
+                            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail="Tous les chèques du lot doivent utiliser la même devise",
+                        )
+                    if str(batch_row.status or "").strip().upper() != "CHECK_RECEIVED":
+                        raise HTTPException(
+                            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail="Tous les chèques du lot doivent être en attente d'encaissement",
+                        )
+                    if batch_row.legal_entity_id != resolved_legal_entity_id:
+                        raise HTTPException(
+                            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail="Tous les chèques du lot doivent concerner la même entité juridique",
+                        )
+                    if batch_row.student_user_id != student_id:
+                        raise HTTPException(
+                            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail="Tous les chèques du lot doivent concerner le même élève",
+                        )
+                    batch_checks.append(
+                        (
+                            _quantize_money(Decimal(batch_row.total_incl_vat)),
+                            batch_row.occurred_at,
+                            _check_deposit_label_from_transaction(batch_row),
+                        )
+                    )
+            batch_checks.append((total_abs, occurred_at, payload.check_deposit_label))
             receipt_recipients, receipt_message_id, receipt_send_error = _send_check_received_notification_email(
                 db,
                 client=client,
@@ -10641,6 +10748,7 @@ def create_admin_client_manual_transaction(
                 currency=currency,
                 received_at=occurred_at,
                 check_deposit_label=payload.check_deposit_label,
+                checks=batch_checks,
             )
         else:
             billing_profile = resolve_billing_profile(db, client)
