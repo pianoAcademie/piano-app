@@ -35,6 +35,7 @@ from app.api.deps import get_admin_permission_map, get_db, require_admin_or_perm
 from app.models.catalog import (
     BOOKING_STATUSES_CONSUMING_CAPACITY,
     Booking,
+    BookingReorganizationLink,
     BookingStatus,
     CourseSession,
     CourseSessionProfessor,
@@ -57,9 +58,11 @@ from app.models.ops import (
 )
 from app.models.notification_engine import Notification
 from app.models.planning_simulation import PlanningSimulationTeacherAssignment
+from app.models.plan import ClientPlanSubscription, Plan, PlanKind
 from app.models.quote import Prospect, Quote, QuoteAcceptanceFollowup
 from app.models.user import ClientStatus, User, UserPresence, UserPresenceHour, UserRole
 from app.services.automation_triggers import schedule_trial_attended_triggers
+from app.services.booking_transfers import bookings_have_equivalent_financial_coverage
 from app.services.invoice_documents import normalize_billing_entity
 from app.services.notifications.application.orchestrator import (
     enqueue_notifications,
@@ -967,6 +970,15 @@ def _move_planning_reorganization_booking_occurrence(
         ) = target_price_snapshot
     if lock_price_snapshot:
         moved_booking.pricing_snapshot_locked = True
+
+    if moved_booking.id != booking.id:
+        db.add(
+            BookingReorganizationLink(
+                source_booking_id=booking.id,
+                target_booking_id=moved_booking.id,
+                financially_neutral=bookings_have_equivalent_financial_coverage(booking, moved_booking),
+            )
+        )
 
     if moved_booking.status == BookingStatus.BOOKED:
         _cancel_pending_notification_reminders_for_booking(
@@ -4264,13 +4276,6 @@ def _planning_reorganization_move_pairs(
         apply_scope="SERIES_FUTURE",
     )
     source_session_by_id = {session_obj.id: session_obj for session_obj in source_sessions}
-    target_by_day = {
-        _local_date_in_timezone(
-            session_obj.start_at_utc,
-            _normalize_session_timezone(session_obj.timezone),
-        ): session_obj
-        for session_obj in target_sessions
-    }
     recurring_bookings = db.scalars(
         select(Booking)
         .where(
@@ -4281,10 +4286,18 @@ def _planning_reorganization_move_pairs(
         .order_by(Booking.booked_at.asc())
         .with_for_update()
     ).all()
+    recurring_bookings.sort(
+        key=lambda booking: (
+            source_session_by_id[booking.session_id].start_at_utc,
+            booking.booked_at,
+            str(booking.id),
+        )
+    )
 
     pairs: list[tuple[Booking, CourseSession, CourseSession]] = []
     skipped_count = 0
     details: list[str] = []
+    unused_target_sessions = list(target_sessions)
     for booking in recurring_bookings:
         current_source_session = source_session_by_id.get(booking.session_id)
         if current_source_session is None:
@@ -4294,12 +4307,42 @@ def _planning_reorganization_move_pairs(
             current_source_session.start_at_utc,
             _normalize_session_timezone(current_source_session.timezone),
         )
-        current_target_session = target_by_day.get(source_day)
-        if current_target_session is None:
+        target_candidates = [
+            session_obj
+            for session_obj in unused_target_sessions
+            if abs(
+                (
+                    _local_date_in_timezone(
+                        session_obj.start_at_utc,
+                        _normalize_session_timezone(session_obj.timezone),
+                    )
+                    - source_day
+                ).days
+            )
+            <= 6
+        ]
+        if not target_candidates:
             skipped_count += 1
             if len(details) < 8:
-                details.append(f"Aucun creneau cible le {source_day.isoformat()}")
+                details.append(f"Aucun creneau cible dans la semaine du {source_day.isoformat()}")
             continue
+        current_target_session = min(
+            target_candidates,
+            key=lambda session_obj: (
+                abs(
+                    (
+                        _local_date_in_timezone(
+                            session_obj.start_at_utc,
+                            _normalize_session_timezone(session_obj.timezone),
+                        )
+                        - source_day
+                    ).days
+                ),
+                session_obj.start_at_utc,
+                str(session_obj.id),
+            ),
+        )
+        unused_target_sessions.remove(current_target_session)
         pairs.append((booking, current_source_session, current_target_session))
     return pairs, skipped_count, details
 
@@ -4340,6 +4383,21 @@ def _planning_reorganization_price_rows(
     pairs: list[tuple[Booking, CourseSession, CourseSession]],
     now: datetime,
 ) -> list[tuple[Booking, tuple[Decimal, Decimal, Decimal, Decimal, str], bool]]:
+    subscription_ids = {
+        booking.client_plan_subscription_id
+        for booking, _, _ in pairs
+        if booking.client_plan_subscription_id is not None
+    }
+    forfait_subscription_ids = set(
+        db.scalars(
+            select(ClientPlanSubscription.id)
+            .join(Plan, Plan.id == ClientPlanSubscription.plan_id)
+            .where(
+                ClientPlanSubscription.id.in_(subscription_ids),
+                Plan.kind == PlanKind.FORFAIT,
+            )
+        ).all()
+    ) if subscription_ids else set()
     rows: list[tuple[Booking, tuple[Decimal, Decimal, Decimal, Decimal, str], bool]] = []
     for booking, _, target_session in pairs:
         target_snapshot = _planning_reorganization_target_price_snapshot(
@@ -4348,10 +4406,22 @@ def _planning_reorganization_price_rows(
             target_session=target_session,
             now=now,
         )
+        same_forfait = booking.client_plan_subscription_id in forfait_subscription_ids
         price_changed = (
-            Decimal(booking.total_incl_vat_snapshot) != target_snapshot[3]
-            or str(booking.currency_snapshot).upper() != target_snapshot[4].upper()
+            not same_forfait
+            and (
+                Decimal(booking.total_incl_vat_snapshot) != target_snapshot[3]
+                or str(booking.currency_snapshot).upper() != target_snapshot[4].upper()
+            )
         )
+        if same_forfait:
+            target_snapshot = (
+                Decimal(booking.price_excl_vat_snapshot),
+                Decimal(booking.vat_rate_snapshot),
+                Decimal(booking.vat_amount_snapshot),
+                Decimal(booking.total_incl_vat_snapshot),
+                str(booking.currency_snapshot),
+            )
         rows.append((booking, target_snapshot, price_changed))
     return rows
 

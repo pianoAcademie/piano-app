@@ -562,6 +562,28 @@ class Booking(Base):
     makeup_override_applied: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
 
 
+class BookingReorganizationLink(Base):
+    __tablename__ = "booking_reorganization_links"
+
+    source_booking_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("bookings.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    target_booking_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("bookings.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    financially_neutral: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("now()"),
+    )
+
+
 class PlanningConfig(Base):
     __tablename__ = "planning_configs"
     __table_args__ = (

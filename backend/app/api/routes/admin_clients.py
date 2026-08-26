@@ -41,7 +41,7 @@ from app.models.client_record import (
     StudentQuoteChange,
 )
 from app.models.family import ClientFamilyBillingAllocation, ClientFamilyLink
-from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, CreditType, DeliveryMode, Location, Professor, SessionStatus
+from app.models.catalog import Booking, BookingReorganizationLink, BookingStatus, CourseSession, CourseType, CreditType, DeliveryMode, Location, Professor, SessionStatus
 from app.models.ops import (
     AppSetting,
     CommunicationChannel,
@@ -167,6 +167,10 @@ from app.services.client_password_email import (
 )
 from app.services.client_portal_access import send_client_portal_access_email
 from app.services.booking_confirmation_templates import render_booking_confirmation_email
+from app.services.booking_transfers import (
+    inherited_coverage_booking_id,
+    neutral_transfer_source_ids,
+)
 from app.services.client_email import (
     deliverable_client_email,
     is_generated_client_email,
@@ -9679,6 +9683,40 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
     refund_by_key = {(row.source.strip().upper(), row.source_payment_id): row for row in refunds}
     invoice_locks_by_payment_key = _active_invoice_lock_by_payment_key(db, client_id=client.id)
 
+    bookings_by_id = {booking.id: booking for booking, *_ in rows_bookings}
+    booking_ids = list(bookings_by_id)
+    reorganization_links = db.scalars(
+        select(BookingReorganizationLink).where(
+            or_(
+                BookingReorganizationLink.source_booking_id.in_(booking_ids),
+                BookingReorganizationLink.target_booking_id.in_(booking_ids),
+            )
+        )
+    ).all() if booking_ids else []
+    hidden_transferred_booking_ids = neutral_transfer_source_ids(reorganization_links)
+    directly_invoiced_booking_ids = {
+        booking_id
+        for booking_id in bookings_by_id
+        if _payment_key(source="BOOKING", payment_id=booking_id) in invoice_locks_by_payment_key
+    }
+    presentation_lock_by_booking_id: dict[
+        UUID,
+        tuple[str, str, UUID | None, str, UUID | None],
+    ] = {}
+    for booking in bookings_by_id.values():
+        coverage_booking_id = inherited_coverage_booking_id(
+            booking,
+            neutral_links=reorganization_links,
+            directly_covered_booking_ids=directly_invoiced_booking_ids,
+        )
+        if coverage_booking_id is None:
+            continue
+        lock = invoice_locks_by_payment_key.get(
+            _payment_key(source="BOOKING", payment_id=coverage_booking_id)
+        )
+        if lock is not None:
+            presentation_lock_by_booking_id[booking.id] = lock
+
     items: list[AdminClientPaymentOut] = []
     forfait_pricing_map = _forfait_activity_pricing_map(
         db,
@@ -9756,8 +9794,12 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
         )
 
     for booking, session_obj, course_type, location, forfait_subscription, plan in rows_bookings:
-        booking_key = _payment_key(source="BOOKING", payment_id=booking.id)
-        is_locked_booking = booking_key in invoice_locks_by_payment_key
+        if booking.id in hidden_transferred_booking_ids:
+            # Keep the immutable invoice history out of the operational account:
+            # the successor is the lesson that will actually be delivered.
+            continue
+        presentation_lock = presentation_lock_by_booking_id.get(booking.id)
+        is_locked_booking = presentation_lock is not None
         is_billable = True
         should_add_credit_note = False
         status_value = booking.status.value
@@ -9918,7 +9960,11 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
                 item.can_edit = False
                 item.can_cancel = False
 
-        lock = invoice_locks_by_payment_key.get(_payment_key(source=item.source, payment_id=item.id))
+        lock = (
+            presentation_lock_by_booking_id.get(item.id)
+            if item.source.strip().upper() == "BOOKING"
+            else invoice_locks_by_payment_key.get(_payment_key(source=item.source, payment_id=item.id))
+        )
         _apply_invoice_presentation_to_payment_item(item, lock=lock)
 
     for invoice in legacy_invoice_rows:

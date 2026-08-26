@@ -36,6 +36,7 @@ from app.models.catalog import (
     BOOKING_STATUSES_CONFIRMED,
     BOOKING_STATUSES_CONSUMING_CAPACITY,
     Booking,
+    BookingReorganizationLink,
     BookingStatus,
     CourseSession,
     CourseType,
@@ -117,6 +118,10 @@ from app.schemas.user import (
 )
 from app.services.family_billing import resolve_billing_profile
 from app.services.automation_triggers import schedule_plan_purchase_triggers
+from app.services.booking_transfers import (
+    inherited_coverage_booking_id,
+    neutral_transfer_source_ids,
+)
 from app.services.client_purchase_notifications import (
     plan_purchase_notification_label,
     send_client_payment_success_notifications,
@@ -3533,6 +3538,54 @@ def _build_client_payments(db: Session, current_user: User) -> list[ClientPaymen
     ).all()
 
     booking_ids = [booking.id for booking, *_ in rows_bookings]
+    bookings_by_id = {booking.id: booking for booking, *_ in rows_bookings}
+    reorganization_links = db.scalars(
+        select(BookingReorganizationLink).where(
+            or_(
+                BookingReorganizationLink.source_booking_id.in_(booking_ids),
+                BookingReorganizationLink.target_booking_id.in_(booking_ids),
+            )
+        )
+    ).all() if booking_ids else []
+    hidden_transferred_booking_ids = neutral_transfer_source_ids(reorganization_links)
+    direct_invoice_coverage_by_booking_id: dict[UUID, tuple[str, str]] = {}
+    if booking_ids:
+        invoice_line_rows = db.execute(
+            select(ClientInvoiceLine.source_payment_id, ClientNoteEntry)
+            .join(ClientNoteEntry, ClientNoteEntry.id == ClientInvoiceLine.note_id)
+            .where(
+                ClientInvoiceLine.source == "BOOKING",
+                ClientInvoiceLine.source_payment_id.in_(booking_ids),
+            )
+            .order_by(ClientInvoiceLine.created_at.desc())
+        ).all()
+        for booking_id, note in invoice_line_rows:
+            metadata = _parse_invoice_range_note_entry(note)
+            if metadata is None:
+                continue
+            invoice_status = str(metadata.get("invoice_status") or "ISSUED").strip().upper()
+            if invoice_status in {"CANCELLED", "CREDIT_NOTE"}:
+                continue
+            direct_invoice_coverage_by_booking_id.setdefault(
+                booking_id,
+                (
+                    invoice_status,
+                    str(metadata.get("invoice_number") or "").strip() or "-",
+                ),
+            )
+    directly_invoiced_booking_ids = set(direct_invoice_coverage_by_booking_id)
+    inherited_invoice_coverage_by_booking_id: dict[UUID, tuple[str, str]] = {}
+    for booking in bookings_by_id.values():
+        coverage_booking_id = inherited_coverage_booking_id(
+            booking,
+            neutral_links=reorganization_links,
+            directly_covered_booking_ids=directly_invoiced_booking_ids,
+        )
+        if coverage_booking_id is None:
+            continue
+        coverage = direct_invoice_coverage_by_booking_id.get(coverage_booking_id)
+        if coverage is not None:
+            inherited_invoice_coverage_by_booking_id[booking.id] = coverage
     completed_receipts_by_booking: dict[UUID, list[PaymentReceipt]] = defaultdict(list)
     if booking_ids:
         completed_receipts = db.scalars(
@@ -3663,7 +3716,10 @@ def _build_client_payments(db: Session, current_user: User) -> list[ClientPaymen
         )
 
     for booking, session_obj, course_type, location, owner, forfait_subscription, plan in rows_bookings:
+        if booking.id in hidden_transferred_booking_ids:
+            continue
         status_value = booking.status.value if hasattr(booking.status, "value") else str(booking.status)
+        inherited_invoice_coverage = inherited_invoice_coverage_by_booking_id.get(booking.id)
         retained_receipts = completed_receipts_by_booking.get(booking.id, [])
         retained_paid_total = sum((Decimal(row.amount_paid or 0) for row in retained_receipts), Decimal("0.00"))
         booking_total = Decimal(booking.total_incl_vat_snapshot or 0).quantize(Decimal("0.01"))
@@ -3694,7 +3750,7 @@ def _build_client_payments(db: Session, current_user: User) -> list[ClientPaymen
                 status_value = "NOT_BILLABLE"
             elif has_fully_paid_cancelled_booking:
                 status_value = "COMPLETED"
-            else:
+            elif not bool(booking.pricing_snapshot_locked):
                 billing_profile = resolve_billing_profile(db, owner)
                 computed = _booking_amounts_from_activity(
                     booking=booking,
@@ -3710,6 +3766,15 @@ def _build_client_payments(db: Session, current_user: User) -> list[ClientPaymen
                     amount_excl_vat, vat_rate, vat_amount, total_incl_vat, currency = computed
         elif booking.status == BookingStatus.EXCUSED_ABSENCE:
             is_billable = False
+        if inherited_invoice_coverage is not None and booking.status not in {
+            BookingStatus.CANCELLED,
+            BookingStatus.EXCUSED_ABSENCE,
+            BookingStatus.WAITLISTED,
+        }:
+            invoice_status, invoice_number = inherited_invoice_coverage
+            status_value = "PAID" if invoice_status == "PAID" else "INVOICED"
+        else:
+            invoice_number = None
         seller_legal_entity_id = session_obj.snapshot_seller_legal_entity_id or course_type.seller_legal_entity_id
         items.append(
             ClientPaymentOut(
@@ -3725,7 +3790,14 @@ def _build_client_payments(db: Session, current_user: User) -> list[ClientPaymen
                 vat_amount=Decimal("0.00") if not is_billable else vat_amount,
                 total_incl_vat=Decimal("0.00") if not is_billable else total_incl_vat,
                 currency=currency,
-                reference=(retained_receipts[-1].payment_transaction_reference if has_fully_paid_cancelled_booking else str(session_obj.id)),
+                reference=(
+                    invoice_number
+                    or (
+                        retained_receipts[-1].payment_transaction_reference
+                        if has_fully_paid_cancelled_booking
+                        else str(session_obj.id)
+                    )
+                ),
                 seller_legal_entity_id=seller_legal_entity_id,
                 billing_entity=_billing_entity_from_seller_id(
                     legal_entities_by_id=legal_entities_by_id,
