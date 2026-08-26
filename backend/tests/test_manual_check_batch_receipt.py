@@ -21,10 +21,13 @@ def test_check_deposit_label_is_recovered_from_saved_transaction() -> None:
 
 def test_batch_receipt_email_summarizes_every_check_once() -> None:
     client = SimpleNamespace(id=uuid4(), email="client@example.com")
+    # Saved PAYMENT transactions carry a negative ledger sign while the
+    # current form amount is still positive. The customer-facing receipt must
+    # normalize both representations.
     checks = [
-        (Decimal("320.75"), datetime(2026, 8, 26, tzinfo=timezone.utc), "septembre 2026"),
-        (Decimal("320.75"), datetime(2026, 8, 26, tzinfo=timezone.utc), "décembre 2026"),
-        (Decimal("320.75"), datetime(2026, 8, 26, tzinfo=timezone.utc), "février 2027"),
+        (Decimal("-320.75"), datetime(2026, 8, 26, tzinfo=timezone.utc), "septembre 2026"),
+        (Decimal("-320.75"), datetime(2026, 8, 26, tzinfo=timezone.utc), "décembre 2026"),
+        (Decimal("-320.75"), datetime(2026, 8, 26, tzinfo=timezone.utc), "février 2027"),
         (Decimal("320.75"), datetime(2026, 8, 26, tzinfo=timezone.utc), "avril 2027"),
     ]
     rendered: dict[str, object] = {}

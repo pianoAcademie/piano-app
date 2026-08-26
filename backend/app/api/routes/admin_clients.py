@@ -2516,7 +2516,14 @@ def _send_check_received_notification_email(
         return [], None, "Aucune adresse email destinataire"
 
     client_name = _display_name(billing_profile.first_name, billing_profile.last_name, client.email)
-    normalized_checks = checks or [(amount, received_at, check_deposit_label)]
+    raw_checks = checks or [(amount, received_at, check_deposit_label)]
+    # Payments are stored as negative accounting movements because they reduce
+    # the client's outstanding balance. A receipt must display the physical
+    # check amounts, never their internal ledger sign.
+    normalized_checks = [
+        (abs(Decimal(item_amount)), item_received_at, item_deposit_label)
+        for item_amount, item_received_at, item_deposit_label in raw_checks
+    ]
 
     def _amount_label(value: Decimal) -> str:
         rendered = f"{value:.2f} {currency}"
