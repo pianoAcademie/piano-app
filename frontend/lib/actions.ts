@@ -4727,6 +4727,7 @@ export async function sendAdminClientMessageAction(formData: FormData): Promise<
       }),
     },
     token,
+    120_000,
   );
 
   if (!result.ok) {

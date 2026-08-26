@@ -9334,11 +9334,13 @@ def send_admin_client_message_email(
     actor: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> AdminClientMessageEmailOut:
     client = _require_client(db, client_id)
+    resolved_client_id = client.id
     subject = _normalize_required(payload.subject, "subject")
     body = _normalize_required(payload.body, "body")
     body_format = "HTML" if str(payload.body_format or "TEXT").strip().upper() == "HTML" else "TEXT"
     source = _normalize_optional(payload.source) or "ADMIN_CLIENT_DIRECT_MESSAGE"
     sender = resolve_sender_profile(db, sender_kind="STUDIO")
+    actor_id = getattr(actor, "id", None)
     actor_label = _display_name(
         getattr(actor, "first_name", None),
         getattr(actor, "last_name", None),
@@ -9366,9 +9368,16 @@ def send_admin_client_message_email(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Aucune adresse email destinataire")
 
     client_email = (client.email or "").strip().lower()
+
+    # This endpoint only reads application data before contacting the SMTP
+    # provider. Release that read transaction first so send_email can open the
+    # short-lived configuration/journal sessions it needs even when the
+    # production connection pool is busy.
+    db.commit()
+
     message_ids: list[str] = []
     for recipient in recipients:
-        recipient_user_id = client.id if recipient.strip().lower() == client_email else None
+        recipient_user_id = resolved_client_id if recipient.strip().lower() == client_email else None
         message_ids.append(
             send_email(
                 to_email=recipient,
@@ -9380,7 +9389,7 @@ def send_admin_client_message_email(
                 from_name=sender.from_name,
                 reply_to=sender.reply_to,
                 subject_prefix=sender.subject_prefix,
-                sender_user_id=getattr(actor, "id", None),
+                sender_user_id=actor_id,
                 sender_label=actor_label,
                 sender_category=CommunicationSenderCategory.OTHER_USER,
                 recipient_user_id=recipient_user_id,
@@ -9389,7 +9398,7 @@ def send_admin_client_message_email(
         )
 
     return AdminClientMessageEmailOut(
-        client_id=client.id,
+        client_id=resolved_client_id,
         sent_at=_utcnow(),
         to_recipients=to_recipients,
         cc_recipients=cc_recipients,
