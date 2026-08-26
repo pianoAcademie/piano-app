@@ -9,6 +9,7 @@ from scripts.repair_prod_silas_piyatissa_booking_transfer import (
     BookingSession,
     _copy_price,
     _is_paid_target_invoice,
+    _negative_invoice_amounts,
     _nearest_target,
 )
 
@@ -91,4 +92,20 @@ def test_repair_only_accepts_the_paid_target_invoice() -> None:
     )
     assert not _is_paid_target_invoice(
         {"invoice_number": "PA26-9999", "invoice_status": "PAID"}
+    )
+
+
+def test_repair_credit_uses_the_exact_negative_invoice_amounts() -> None:
+    line = SimpleNamespace(
+        amount_excl_vat=Decimal("30.00"),
+        vat_rate=Decimal("20.000"),
+        vat_amount=Decimal("6.00"),
+        total_incl_vat=Decimal("36.00"),
+    )
+
+    assert _negative_invoice_amounts(line) == (
+        Decimal("-30.00"),
+        Decimal("20.00"),
+        Decimal("-6.00"),
+        Decimal("-36.00"),
     )

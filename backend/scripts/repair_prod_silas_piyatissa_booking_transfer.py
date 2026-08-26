@@ -21,7 +21,7 @@ from app.models.catalog import (
     BookingStatus,
     CourseSession,
 )
-from app.models.client_record import ClientInvoiceLine, ClientNoteEntry
+from app.models.client_record import ClientInvoiceLine, ClientManualTransaction, ClientNoteEntry
 from app.models.user import User, UserRole
 
 
@@ -29,6 +29,9 @@ SCRIPT_PREFIX = "PROD_REPAIR_SILAS_PIYATISSA_BOOKING_TRANSFER"
 TARGET_FIRST_NAME = "silas"
 TARGET_LAST_NAME = "piyatissa"
 TARGET_INVOICE_NUMBER = "PA26-0687"
+TRANSFER_CREDIT_OCCURRED_AT = datetime(2027, 6, 30, 10, 0, tzinfo=timezone.utc)
+TRANSFER_CREDIT_LABEL = "Avoir - Ajustement du forfait annuel 2026-2027 : 1 cours non dispensé"
+TRANSFER_CREDIT_CATEGORY = "Remise"
 SOURCE_WEEKDAY = 2  # Wednesday
 SOURCE_HOUR = 17
 TARGET_WEEKDAY = 5  # Saturday
@@ -69,6 +72,15 @@ def _copy_price(source: Booking, target: Booking) -> None:
     target.total_incl_vat_snapshot = source.total_incl_vat_snapshot
     target.currency_snapshot = source.currency_snapshot
     target.pricing_snapshot_locked = True
+
+
+def _negative_invoice_amounts(line: ClientInvoiceLine) -> tuple[Decimal, Decimal, Decimal, Decimal]:
+    return (
+        -abs(_money(line.amount_excl_vat)),
+        _money(line.vat_rate),
+        -abs(_money(line.vat_amount)),
+        -abs(_money(line.total_incl_vat)),
+    )
 
 
 def _is_paid_target_invoice(metadata: object) -> bool:
@@ -138,16 +150,16 @@ def main() -> None:
                 .with_for_update()
             ).all()
         ]
-        paid_invoice_booking_ids: set[UUID] = set()
+        paid_invoice_lines_by_booking_id: dict[UUID, ClientInvoiceLine] = {}
         invoice_rows = db.execute(
-            select(ClientInvoiceLine.source_payment_id, ClientNoteEntry.message)
+            select(ClientInvoiceLine, ClientNoteEntry.message)
             .join(ClientNoteEntry, ClientNoteEntry.id == ClientInvoiceLine.note_id)
             .where(
                     ClientInvoiceLine.source == "BOOKING",
                     ClientInvoiceLine.source_payment_id.in_([row.booking.id for row in rows]),
             )
         ).all()
-        for booking_id, note_message in invoice_rows:
+        for invoice_line, note_message in invoice_rows:
             marker = "INVOICE_RANGE::"
             marker_index = (note_message or "").find(marker)
             if marker_index < 0:
@@ -157,12 +169,12 @@ def main() -> None:
             except (TypeError, ValueError):
                 continue
             if _is_paid_target_invoice(metadata):
-                paid_invoice_booking_ids.add(booking_id)
+                paid_invoice_lines_by_booking_id[invoice_line.source_payment_id] = invoice_line
 
         sources = [
             row
             for row in rows
-            if row.booking.id in paid_invoice_booking_ids
+            if row.booking.id in paid_invoice_lines_by_booking_id
             and (
                 row.booking.status in ACTIVE_STATUSES
                 or (
@@ -229,15 +241,30 @@ def main() -> None:
             planned.append((source, target))
 
         # A fixed-price forfait can contain one more source occurrence than
-        # the destination series. Attach those absorbed occurrences to the
-        # nearest real lesson so they disappear from the operational account.
-        for source in unused_sources:
+        # the destination series. Attach those occurrences to the nearest
+        # real lesson for presentation, while retaining their financial value
+        # as an explicit client credit.
+        credit_sources = list(unused_sources)
+        for source in credit_sources:
             target = _nearest_target(source, targets)
             if target is None:
                 raise SystemExit(
                     f"[{SCRIPT_PREFIX}] no_target_for_source={source.booking.id}|date={_local_start(source).date()}"
                 )
             planned.append((source, target))
+
+        credit_rows: list[tuple[BookingSession, ClientInvoiceLine, str, ClientManualTransaction | None]] = []
+        for source in credit_sources:
+            invoice_line = paid_invoice_lines_by_booking_id.get(source.booking.id)
+            if invoice_line is None:
+                raise SystemExit(f"[{SCRIPT_PREFIX}] missing_invoice_line_for_credit={source.booking.id}")
+            if invoice_line.seller_legal_entity_id is None:
+                raise SystemExit(f"[{SCRIPT_PREFIX}] missing_legal_entity_for_credit={source.booking.id}")
+            reference = f"BOOKING_TRANSFER_CREDIT:{TARGET_INVOICE_NUMBER}:{source.booking.id}"
+            existing_credit = db.scalar(
+                select(ClientManualTransaction).where(ClientManualTransaction.reference == reference).limit(1)
+            )
+            credit_rows.append((source, invoice_line, reference, existing_credit))
 
         for source, target in planned:
             existing = existing_links.get(source.booking.id)
@@ -249,7 +276,8 @@ def main() -> None:
         print(f"[{SCRIPT_PREFIX}] mode={'apply' if args.apply else 'dry-run'}")
         print(
             f"[{SCRIPT_PREFIX}] student={student.id}|name={student.first_name} {student.last_name}|"
-            f"sources={len(sources)}|targets={len(targets)}|links={len(planned)}"
+            f"sources={len(sources)}|targets={len(targets)}|links={len(planned)}|"
+            f"credits={len(credit_rows)}"
         )
         for source, target in planned:
             print(
@@ -257,6 +285,13 @@ def main() -> None:
                 f"source={source.booking.id}|target={target.booking.id}|"
                 f"price={_money(source.booking.total_incl_vat_snapshot):.2f}->"
                 f"{_money(target.booking.total_incl_vat_snapshot):.2f}"
+            )
+        for source, invoice_line, reference, existing_credit in credit_rows:
+            print(
+                f"[{SCRIPT_PREFIX}] credit_source={source.booking.id}|"
+                f"date={TRANSFER_CREDIT_OCCURRED_AT.date()}|"
+                f"amount={-abs(_money(invoice_line.total_incl_vat)):.2f}|"
+                f"reference={reference}|existing={existing_credit is not None}"
             )
 
         if not args.apply:
@@ -284,10 +319,39 @@ def main() -> None:
             if primary_source is not None:
                 target.booking.client_plan_subscription_id = primary_source.booking.client_plan_subscription_id
                 _copy_price(primary_source.booking, target.booking)
+        created_credits = 0
+        for source, invoice_line, reference, existing_credit in credit_rows:
+            if existing_credit is not None:
+                continue
+            amount_excl_vat, vat_rate, vat_amount, total_incl_vat = _negative_invoice_amounts(invoice_line)
+            db.add(
+                ClientManualTransaction(
+                    user_id=invoice_line.user_id,
+                    student_user_id=student.id,
+                    actor_user_id=None,
+                    transaction_type="DISCOUNT",
+                    status="COMPLETED",
+                    label=TRANSFER_CREDIT_LABEL,
+                    description=(
+                        "Régularisation du transfert du cours du mercredi 17h vers le samedi 12h : "
+                        "32 cours facturés, 31 cours à dispenser."
+                    ),
+                    category=TRANSFER_CREDIT_CATEGORY,
+                    occurred_at=TRANSFER_CREDIT_OCCURRED_AT,
+                    amount_excl_vat=amount_excl_vat,
+                    vat_rate=vat_rate,
+                    vat_amount=vat_amount,
+                    total_incl_vat=total_incl_vat,
+                    currency=(invoice_line.currency or "EUR").upper(),
+                    reference=reference,
+                    legal_entity_id=invoice_line.seller_legal_entity_id,
+                )
+            )
+            created_credits += 1
         db.commit()
         print(
             f"[{SCRIPT_PREFIX}] committed=true|links={len(planned)}|"
-            f"updated_targets={len(primary_source_by_target)}"
+            f"updated_targets={len(primary_source_by_target)}|created_credits={created_credits}"
         )
 
 

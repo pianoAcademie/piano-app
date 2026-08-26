@@ -6337,9 +6337,9 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 <span className="badge">{t("admin.client_detail.balance_as_of", { date: formatDateInputLabel(selectedBalanceDate, language) })}</span>
                 {[...totalsByCurrency.entries()].map(([currency, total]) => (
                   <span key={currency} className="badge">
-                    {t("admin.client_detail.balance_currency", {
+                    {t(total < -0.005 ? "admin.client_detail.credit_currency" : "admin.client_detail.balance_currency", {
                       currency,
-                      amount: formatMoney(String(total), currency, language),
+                      amount: formatMoney(String(total < -0.005 ? Math.abs(total) : total), currency, language),
                     })}
                   </span>
                 ))}
