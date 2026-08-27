@@ -30,6 +30,7 @@ from app.api.routes.admin_clients import (
     _effective_pack_credits_for_plan,
     _forfait_period_bounds,
     _invoice_issued_at_for_date,
+    _invoice_referral_credit_tax_breakdown,
     _invoice_recipient_snapshot_for_client,
     _payment_billing_entity,
     _persist_invoice_lines_for_note,
@@ -72,6 +73,7 @@ from app.models.quote import (
     TermsTemplate,
     TermsTemplateVersion,
 )
+from app.models.referral import ReferralReward
 from app.models.typeform_intake import TypeformIntake
 from app.models.user import ClientKind, ClientStatus, User, UserRole
 from app.services.i18n import normalize_language
@@ -10518,15 +10520,84 @@ def _quote_annual_invoice_applied_deposit_payments(
     ]
 
 
+def _quote_annual_invoice_available_referral_credits(
+    db: Session,
+    *,
+    billing: User,
+) -> list[ClientManualTransaction]:
+    candidates = db.scalars(
+        select(ClientManualTransaction)
+        .join(
+            ReferralReward,
+            ReferralReward.credit_transaction_id == ClientManualTransaction.id,
+        )
+        .where(
+            ClientManualTransaction.user_id == billing.id,
+            ClientManualTransaction.transaction_type == "DISCOUNT",
+            ClientManualTransaction.status == "COMPLETED",
+            func.lower(func.coalesce(ClientManualTransaction.category, "")) == "parrainage",
+            ClientManualTransaction.total_incl_vat < 0,
+            ReferralReward.status == "CREDIT_GRANTED",
+        )
+        .order_by(ClientManualTransaction.occurred_at, ClientManualTransaction.id)
+        .with_for_update()
+    ).all()
+
+    available: list[ClientManualTransaction] = []
+    for candidate in candidates:
+        allocated_notes = db.scalars(
+            select(ClientNoteEntry)
+            .join(ClientInvoiceLine, ClientInvoiceLine.note_id == ClientNoteEntry.id)
+            .where(ClientInvoiceLine.source_payment_id == candidate.id)
+        ).all()
+        if any(
+            str((_parse_quote_invoice_range_note_entry(note) or {}).get("invoice_status") or "ISSUED")
+            .strip()
+            .upper()
+            != "CANCELLED"
+            for note in allocated_notes
+        ):
+            continue
+        available.append(candidate)
+    return available
+
+
+def _quote_annual_invoice_referral_credits_for_invoice(
+    credits: list[ClientManualTransaction],
+    *,
+    total_to_pay: dict[str, Decimal],
+) -> list[ClientManualTransaction]:
+    remaining_due = {currency: _q2(amount) for currency, amount in total_to_pay.items()}
+    selected: list[ClientManualTransaction] = []
+    for credit in credits:
+        currency = (credit.currency or "EUR").strip().upper() or "EUR"
+        credit_total = _q2(Decimal(credit.total_incl_vat or 0))
+        if credit_total >= 0:
+            continue
+        updated_due = _q2(remaining_due.get(currency, Decimal("0.00")) + credit_total)
+        if updated_due < 0:
+            continue
+        selected.append(credit)
+        remaining_due[currency] = updated_due
+    return selected
+
+
 def _quote_annual_invoice_amounts(
     payments: list[AdminClientPaymentOut],
     *,
     applied_payments: list[ClientManualTransaction],
+    referral_credits: list[ClientManualTransaction] | None = None,
 ) -> tuple[dict[str, Decimal], dict[str, Decimal], dict[str, Decimal]]:
     totals: dict[str, Decimal] = {}
     for payment in payments:
         currency = (payment.currency or "EUR").strip().upper() or "EUR"
         totals[currency] = _q2(totals.get(currency, Decimal("0.00")) + Decimal(payment.total_incl_vat or 0))
+
+    for credit in referral_credits or []:
+        currency = (credit.currency or "EUR").strip().upper() or "EUR"
+        credit_total = _q2(Decimal(credit.total_incl_vat or 0))
+        if credit_total < 0:
+            totals[currency] = _q2(totals.get(currency, Decimal("0.00")) + credit_total)
 
     applied: dict[str, Decimal] = {}
     for payment in applied_payments:
@@ -10539,6 +10610,45 @@ def _quote_annual_invoice_amounts(
     for currency in sorted(set(totals) | set(applied)):
         total_to_pay[currency] = _q2(totals.get(currency, Decimal("0.00")) + applied.get(currency, Decimal("0.00")))
     return totals, applied, total_to_pay
+
+
+def _persist_referral_credit_invoice_lines(
+    db: Session,
+    *,
+    note_id: UUID,
+    client_id: UUID,
+    credits: list[ClientManualTransaction],
+    billing_entity: str,
+    seller_legal_entity_id: UUID | None,
+    invoice_payments: list[AdminClientPaymentOut],
+) -> None:
+    if not credits:
+        return
+    lines: list[ClientInvoiceLine] = []
+    for credit in credits:
+        amount_excl_vat, vat_rate, vat_amount = _invoice_referral_credit_tax_breakdown(
+            total_incl_vat=Decimal(credit.total_incl_vat or 0),
+            currency=credit.currency,
+            invoice_payments=invoice_payments,
+        )
+        lines.append(
+            ClientInvoiceLine(
+                note_id=note_id,
+                user_id=client_id,
+                source="MANUAL",
+                source_payment_id=credit.id,
+                occurred_at=credit.occurred_at,
+                label=credit.label,
+                amount_excl_vat=amount_excl_vat,
+                vat_rate=vat_rate,
+                vat_amount=vat_amount,
+                total_incl_vat=_q2(Decimal(credit.total_incl_vat or 0)),
+                currency=(credit.currency or "EUR").strip().upper() or "EUR",
+                billing_entity=billing_entity,
+                seller_legal_entity_id=seller_legal_entity_id,
+            )
+        )
+    db.add_all(lines)
 
 
 def _create_followup_annual_invoices(
@@ -10592,6 +10702,10 @@ def _create_followup_annual_invoices(
         billing=billing,
         deposit_invoice_note_id=deposit_invoice_note_id,
     )
+    available_referral_credits = _quote_annual_invoice_available_referral_credits(
+        db,
+        billing=billing,
+    )
     ordered_seller_ids = sorted(payments_by_seller, key=lambda value: str(value or ""))
     deposit_seller_id = quote.legal_entity_id if quote.legal_entity_id in payments_by_seller else ordered_seller_ids[0]
     now = _utcnow()
@@ -10607,10 +10721,28 @@ def _create_followup_annual_invoices(
     for seller_id in ordered_seller_ids:
         invoice_payments = payments_by_seller[seller_id]
         invoice_applied_payments = applied_deposit_payments if seller_id == deposit_seller_id else []
-        totals, applied, total_to_pay = _quote_annual_invoice_amounts(
+        _gross_totals, _gross_applied, gross_total_to_pay = _quote_annual_invoice_amounts(
             invoice_payments,
             applied_payments=invoice_applied_payments,
         )
+        invoice_referral_credits = (
+            _quote_annual_invoice_referral_credits_for_invoice(
+                available_referral_credits,
+                total_to_pay=gross_total_to_pay,
+            )
+            if seller_id == deposit_seller_id
+            else []
+        )
+        totals, applied, total_to_pay = _quote_annual_invoice_amounts(
+            invoice_payments,
+            applied_payments=invoice_applied_payments,
+            referral_credits=invoice_referral_credits,
+        )
+        if invoice_referral_credits:
+            allocated_credit_ids = {credit.id for credit in invoice_referral_credits}
+            available_referral_credits = [
+                credit for credit in available_referral_credits if credit.id not in allocated_credit_ids
+            ]
         billing_entity = _payment_billing_entity(invoice_payments[0])
         invoice_number = _allocate_invoice_number_for_seller_entity(
             db,
@@ -10640,7 +10772,8 @@ def _create_followup_annual_invoices(
             "auto_include_previous_balance": False,
             "included_payment_keys": [
                 f"{(payment.source or '').strip().upper()}:{payment.id}" for payment in invoice_payments
-            ],
+            ]
+            + [f"MANUAL:{credit.id}" for credit in invoice_referral_credits],
             "totals_by_currency": {
                 currency: f"{amount:.2f}" for currency, amount in sorted(totals.items())
             },
@@ -10673,6 +10806,13 @@ def _create_followup_annual_invoices(
             metadata["applied_payment_totals_by_currency"] = {
                 currency: f"{amount:.2f}" for currency, amount in sorted(applied.items())
             }
+        if invoice_referral_credits:
+            metadata["referral_credit_transaction_ids"] = [
+                str(credit.id) for credit in invoice_referral_credits
+            ]
+            metadata["referral_credit_total_ttc"] = (
+                f"{sum((-_q2(Decimal(credit.total_incl_vat or 0)) for credit in invoice_referral_credits), Decimal('0.00')):.2f}"
+            )
 
         note = _create_client_note(
             db,
@@ -10687,6 +10827,15 @@ def _create_followup_annual_invoices(
             note_id=note.id,
             client_id=billing.id,
             payments=invoice_payments,
+        )
+        _persist_referral_credit_invoice_lines(
+            db,
+            note_id=note.id,
+            client_id=billing.id,
+            credits=invoice_referral_credits,
+            billing_entity=billing_entity,
+            seller_legal_entity_id=seller_id,
+            invoice_payments=invoice_payments,
         )
         created_invoice_note_ids.append(note.id)
         created_note_ids.append(note.id)

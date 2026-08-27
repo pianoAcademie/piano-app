@@ -10,16 +10,24 @@ from types import SimpleNamespace
 from unittest.mock import patch
 from uuid import uuid4
 
+from fastapi import HTTPException
+
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
+from app.api.routes.admin_clients import (
+    _invoice_payments_with_referral_credit_tax,
+    _invoice_referral_credit_tax_breakdown,
+)
 from app.api.routes.quotes import (
     QUOTE_ANNUAL_INVOICE_PERIOD_END,
     QUOTE_ANNUAL_INVOICE_PERIOD_START,
-    _quote_annual_invoice_amounts,
-    _quote_annual_invoice_selected_payments,
     _create_followup_annual_invoices,
+    _quote_annual_invoice_amounts,
+    _quote_annual_invoice_referral_credits_for_invoice,
+    _quote_annual_invoice_selected_payments,
     _quote_per_course_discounts_by_schedule_key,
 )
+from app.schemas.admin import AdminClientPaymentOut
 
 
 def _service(*, activity_id, quantity: str, amount: str, second: bool = False):
@@ -57,16 +65,23 @@ class QuoteIntegrationPricingTests(unittest.TestCase):
                 return []
 
         class _FakeSession:
+            def __init__(self):
+                self.added_rows = []
+
             def scalars(self, _statement):
                 return _FakeScalars()
 
             def flush(self):
                 return None
 
+            def add_all(self, rows):
+                self.added_rows.extend(rows)
+
         seller_id = uuid4()
         booking_id = uuid4()
         manual_id = uuid4()
         deposit_payment_id = uuid4()
+        referral_credit_ids = [uuid4(), uuid4()]
         note_id = uuid4()
         quote = SimpleNamespace(
             id=uuid4(),
@@ -83,6 +98,7 @@ class QuoteIntegrationPricingTests(unittest.TestCase):
                 source="BOOKING",
                 occurred_at=datetime(2026, 9, 3, 16, tzinfo=timezone.utc),
                 total_incl_vat=Decimal("1188.00"),
+                vat_rate=Decimal("20.000"),
                 currency="EUR",
                 seller_legal_entity_id=seller_id,
                 billing_entity="PIANO_ACADEMIE",
@@ -92,6 +108,7 @@ class QuoteIntegrationPricingTests(unittest.TestCase):
                 source="MANUAL",
                 occurred_at=datetime(2026, 8, 19, 12, tzinfo=timezone.utc),
                 total_incl_vat=Decimal("280.00"),
+                vat_rate=Decimal("20.000"),
                 currency="EUR",
                 seller_legal_entity_id=seller_id,
                 billing_entity="PIANO_ACADEMIE",
@@ -102,7 +119,19 @@ class QuoteIntegrationPricingTests(unittest.TestCase):
             currency="EUR",
             total_incl_vat=Decimal("-200.00"),
         )
+        referral_credits = [
+            SimpleNamespace(
+                id=credit_id,
+                user_id=billing.id,
+                occurred_at=datetime(2026, 8, 20 + index, 12, tzinfo=timezone.utc),
+                label=f"Avoir parrainage {index + 1}",
+                currency="EUR",
+                total_incl_vat=Decimal("-50.00"),
+            )
+            for index, credit_id in enumerate(referral_credit_ids)
+        ]
         captured_messages: list[str] = []
+        fake_session = _FakeSession()
 
         def create_note(*_args, **kwargs):
             captured_messages.append(kwargs["message"])
@@ -111,6 +140,9 @@ class QuoteIntegrationPricingTests(unittest.TestCase):
         with patch("app.api.routes.quotes._build_admin_client_payments", return_value=payments), patch(
             "app.api.routes.quotes._quote_annual_invoice_applied_deposit_payments",
             return_value=[deposit_payment],
+        ), patch(
+            "app.api.routes.quotes._quote_annual_invoice_available_referral_credits",
+            return_value=referral_credits,
         ), patch(
             "app.api.routes.quotes._invoice_recipient_snapshot_for_client",
             return_value={"client_name": "Parent Martin", "client_billing_address": "1 rue de Paris"},
@@ -128,7 +160,7 @@ class QuoteIntegrationPricingTests(unittest.TestCase):
         ) as persist_lines:
             created_invoice_note_ids: list[object] = []
             result = _create_followup_annual_invoices(
-                _FakeSession(),
+                fake_session,
                 quote=quote,
                 student=student,
                 billing=billing,
@@ -150,9 +182,17 @@ class QuoteIntegrationPricingTests(unittest.TestCase):
         self.assertEqual(metadata["end_date"], "2027-06-30")
         self.assertEqual(metadata["layout"], "COMPILED")
         self.assertEqual(metadata["auto_layout_style"], "CONDENSED")
-        self.assertEqual(metadata["totals_by_currency"], {"EUR": "1468.00"})
+        self.assertEqual(metadata["totals_by_currency"], {"EUR": "1368.00"})
         self.assertEqual(metadata["applied_payment_totals_by_currency"], {"EUR": "-200.00"})
-        self.assertEqual(metadata["total_to_pay_by_currency"], {"EUR": "1268.00"})
+        self.assertEqual(metadata["total_to_pay_by_currency"], {"EUR": "1168.00"})
+        self.assertEqual(metadata["referral_credit_transaction_ids"], [str(value) for value in referral_credit_ids])
+        self.assertEqual(metadata["referral_credit_total_ttc"], "100.00")
+        self.assertTrue(all(f"MANUAL:{value}" in metadata["included_payment_keys"] for value in referral_credit_ids))
+        self.assertEqual({row.source_payment_id for row in fake_session.added_rows}, set(referral_credit_ids))
+        self.assertTrue(all(row.amount_excl_vat == Decimal("-41.67") for row in fake_session.added_rows))
+        self.assertTrue(all(row.vat_rate == Decimal("20.000") for row in fake_session.added_rows))
+        self.assertTrue(all(row.vat_amount == Decimal("-8.33") for row in fake_session.added_rows))
+        self.assertTrue(all(row.total_incl_vat == Decimal("-50.00") for row in fake_session.added_rows))
         self.assertEqual(metadata["source_quote_id"], str(quote.id))
         self.assertTrue(metadata["annual_invoice_auto_generated"])
 
@@ -223,6 +263,120 @@ class QuoteIntegrationPricingTests(unittest.TestCase):
         self.assertEqual(totals, {"EUR": Decimal("1468.00")})
         self.assertEqual(applied, {"EUR": Decimal("-200.00")})
         self.assertEqual(total_to_pay, {"EUR": Decimal("1268.00")})
+
+    def test_annual_invoice_deducts_multiple_referral_credits_from_total_and_amount_due(self) -> None:
+        payments = [SimpleNamespace(currency="EUR", total_incl_vat=Decimal("1396.00"))]
+        credits = [
+            SimpleNamespace(currency="EUR", total_incl_vat=Decimal("-50.00")),
+            SimpleNamespace(currency="EUR", total_incl_vat=Decimal("-50.00")),
+        ]
+
+        totals, applied, total_to_pay = _quote_annual_invoice_amounts(
+            payments,
+            applied_payments=[],
+            referral_credits=credits,
+        )
+
+        self.assertEqual(totals, {"EUR": Decimal("1296.00")})
+        self.assertEqual(applied, {})
+        self.assertEqual(total_to_pay, {"EUR": Decimal("1296.00")})
+
+    def test_annual_invoice_keeps_credit_available_when_it_exceeds_amount_due(self) -> None:
+        credit = SimpleNamespace(currency="EUR", total_incl_vat=Decimal("-50.00"))
+
+        selected = _quote_annual_invoice_referral_credits_for_invoice(
+            [credit],
+            total_to_pay={"EUR": Decimal("40.00")},
+        )
+
+        self.assertEqual(selected, [])
+
+    def test_referral_credit_tax_is_derived_from_the_invoiced_purchase(self) -> None:
+        payment = SimpleNamespace(
+            source="BOOKING",
+            manual_transaction_type=None,
+            category=None,
+            currency="EUR",
+            total_incl_vat=Decimal("120.00"),
+            vat_rate=Decimal("20.000"),
+        )
+
+        amount_excl_vat, vat_rate, vat_amount = _invoice_referral_credit_tax_breakdown(
+            total_incl_vat=Decimal("-50.00"),
+            currency="EUR",
+            invoice_payments=[payment],
+        )
+
+        self.assertEqual(amount_excl_vat, Decimal("-41.67"))
+        self.assertEqual(vat_rate, Decimal("20.000"))
+        self.assertEqual(vat_amount, Decimal("-8.33"))
+
+    def test_referral_credit_tax_rejects_mixed_vat_rates(self) -> None:
+        payments = [
+            SimpleNamespace(
+                source="BOOKING",
+                manual_transaction_type=None,
+                category=None,
+                currency="EUR",
+                total_incl_vat=Decimal("120.00"),
+                vat_rate=Decimal("20.000"),
+            ),
+            SimpleNamespace(
+                source="MANUAL",
+                manual_transaction_type="CHARGE",
+                category="Produit",
+                currency="EUR",
+                total_incl_vat=Decimal("105.50"),
+                vat_rate=Decimal("5.500"),
+            ),
+        ]
+
+        with self.assertRaises(HTTPException) as raised:
+            _invoice_referral_credit_tax_breakdown(
+                total_incl_vat=Decimal("-50.00"),
+                currency="EUR",
+                invoice_payments=payments,
+            )
+
+        self.assertEqual(raised.exception.status_code, 422)
+
+    def test_manual_invoice_normalizes_referral_credit_without_changing_ttc(self) -> None:
+        purchase = AdminClientPaymentOut(
+            id=uuid4(),
+            source="BOOKING",
+            occurred_at=datetime(2026, 9, 1, tzinfo=timezone.utc),
+            label="Cours",
+            status="PENDING",
+            amount_excl_vat=Decimal("100.00"),
+            vat_rate=Decimal("20.000"),
+            vat_amount=Decimal("20.00"),
+            total_incl_vat=Decimal("120.00"),
+            currency="EUR",
+            reference=None,
+        )
+        credit = AdminClientPaymentOut(
+            id=uuid4(),
+            source="MANUAL",
+            occurred_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+            label="Avoir parrainage",
+            status="COMPLETED",
+            amount_excl_vat=Decimal("-50.00"),
+            vat_rate=Decimal("0.000"),
+            vat_amount=Decimal("0.00"),
+            total_incl_vat=Decimal("-50.00"),
+            currency="EUR",
+            reference="REFERRAL:test",
+            manual_transaction_type="DISCOUNT",
+            category="Parrainage",
+        )
+
+        normalized = _invoice_payments_with_referral_credit_tax([purchase, credit])
+
+        normalized_credit = normalized[1]
+        self.assertEqual(normalized_credit.amount_excl_vat, Decimal("-41.67"))
+        self.assertEqual(normalized_credit.vat_rate, Decimal("20.000"))
+        self.assertEqual(normalized_credit.vat_amount, Decimal("-8.33"))
+        self.assertEqual(normalized_credit.total_incl_vat, Decimal("-50.00"))
 
     def test_discounts_are_assigned_to_one_schedule_only(self) -> None:
         activity_id = uuid4()

@@ -4329,6 +4329,7 @@ def _persist_invoice_lines_for_note(
 ) -> None:
     if not payments:
         return
+    payments = _invoice_payments_with_referral_credit_tax(payments)
     db.add_all(
         [
             ClientInvoiceLine(
@@ -4349,6 +4350,76 @@ def _persist_invoice_lines_for_note(
             for row in payments
         ]
     )
+
+
+def _is_referral_credit_payment(payment: AdminClientPaymentOut) -> bool:
+    return (
+        (payment.source or "").strip().upper() == "MANUAL"
+        and (getattr(payment, "manual_transaction_type", None) or "").strip().upper() == "DISCOUNT"
+        and (getattr(payment, "category", None) or "").strip().casefold() == "parrainage"
+        and Decimal(payment.total_incl_vat or 0) < 0
+    )
+
+
+def _invoice_referral_credit_tax_breakdown(
+    *,
+    total_incl_vat: Decimal,
+    currency: str,
+    invoice_payments: list[AdminClientPaymentOut],
+) -> tuple[Decimal, Decimal, Decimal]:
+    normalized_currency = _normalize_currency(currency, fallback="EUR")
+    applicable_rates = {
+        Decimal(payment.vat_rate or 0).quantize(Decimal("0.001"))
+        for payment in invoice_payments
+        if not _is_referral_credit_payment(payment)
+        and _normalize_currency(payment.currency, fallback="EUR") == normalized_currency
+        and Decimal(payment.total_incl_vat or 0) > 0
+    }
+    if not applicable_rates:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Impossible d imputer l avoir de parrainage sans achat positif dans la meme devise",
+        )
+    if len(applicable_rates) != 1:
+        rates_label = ", ".join(f"{rate:.3f}%" for rate in sorted(applicable_rates))
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "Impossible d imputer automatiquement l avoir de parrainage sur plusieurs taux de TVA "
+                f"({rates_label})"
+            ),
+        )
+    vat_rate = next(iter(applicable_rates))
+    signed_total = _quantize_money(Decimal(total_incl_vat))
+    divisor = Decimal("1.00") + (vat_rate / Decimal("100.00"))
+    amount_excl_vat = _quantize_money(signed_total / divisor) if divisor > 0 else signed_total
+    vat_amount = _quantize_money(signed_total - amount_excl_vat)
+    return amount_excl_vat, vat_rate, vat_amount
+
+
+def _invoice_payments_with_referral_credit_tax(
+    payments: list[AdminClientPaymentOut],
+) -> list[AdminClientPaymentOut]:
+    normalized: list[AdminClientPaymentOut] = []
+    for payment in payments:
+        if not _is_referral_credit_payment(payment):
+            normalized.append(payment)
+            continue
+        amount_excl_vat, vat_rate, vat_amount = _invoice_referral_credit_tax_breakdown(
+            total_incl_vat=Decimal(payment.total_incl_vat),
+            currency=payment.currency,
+            invoice_payments=payments,
+        )
+        normalized.append(
+            payment.model_copy(
+                update={
+                    "amount_excl_vat": amount_excl_vat,
+                    "vat_rate": vat_rate,
+                    "vat_amount": vat_amount,
+                }
+            )
+        )
+    return normalized
 
 
 def _active_invoice_lock_by_payment_key(
@@ -13976,6 +14047,9 @@ def download_admin_client_range_invoice(
 
     if not payments:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No transactions for this period")
+
+    if not frozen_invoice_lines:
+        payments = _invoice_payments_with_referral_credit_tax(payments)
 
     routed_entities = sorted({_payment_billing_entity(row) for row in payments}, key=_billing_entity_sort_key)
     routed_seller_legal_entity_ids = {
