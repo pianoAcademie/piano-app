@@ -8444,6 +8444,7 @@ def _expected_activity_dates_from_snapshot(
     calendar_snapshot: dict[str, object] | None = None,
     expected_series_key: str | None = None,
     expected_weekday: int | None = None,
+    prefer_blocks: bool = False,
 ) -> list[date]:
     snapshot = _json_object(calendar_snapshot if calendar_snapshot is not None else quote.calendar_snapshot)
     normalized_expected_series_key = str(expected_series_key or "").strip()
@@ -8488,7 +8489,7 @@ def _expected_activity_dates_from_snapshot(
     session_dates = _collect_session_dates()
     if not session_dates and schedule_key and normalized_expected_series_key:
         session_dates = _collect_session_dates(allow_series_fallback=True)
-    if session_dates:
+    if session_dates and not prefer_blocks:
         return sorted(session_dates)
 
     def _collect_block_dates(*, allow_series_fallback: bool = False) -> set[date]:
@@ -8527,7 +8528,7 @@ def _expected_activity_dates_from_snapshot(
     out = _collect_block_dates()
     if not out and schedule_key and normalized_expected_series_key:
         out = _collect_block_dates(allow_series_fallback=True)
-    return sorted(out)
+    return sorted(out or session_dates)
 
 
 def _expected_activity_time_window_from_snapshot(
@@ -9077,6 +9078,26 @@ def _missing_dates_are_after_live_series_tail(
         return False
     last_live_date = max(live_dates)
     return all(missing_date > last_live_date for missing_date in missing_dates)
+
+
+def _validated_quote_transform_expected_dates(
+    expected_dates: list[date],
+    *,
+    session_limit: int | None,
+) -> list[date]:
+    if session_limit is None:
+        return expected_dates
+    limited_dates = expected_dates[:session_limit]
+    if len(limited_dates) != session_limit:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Transformation bloquee : le planning valide du devis contient "
+                f"{len(limited_dates)} creneau(x), alors que la ligne facturee en prevoit "
+                f"{session_limit}. Regenerer ou corriger le planning avant integration."
+            ),
+        )
+    return limited_dates
 
 
 def _serialize_uuid_list(values: list[UUID]) -> list[str]:
@@ -10761,7 +10782,10 @@ def _execute_quote_followup_transformation(
             if line_schedule_key:
                 service_lines_by_schedule_key.setdefault(line_schedule_key, []).append(line)
             service_lines_by_activity_id.setdefault(str(line.activity_id), []).append(line)
-        limit = _planning_session_limit_from_quote_line(line)
+        limit = _planning_session_limit_from_quote_line(
+            line,
+            allow_session_quantity=_quote_line_is_service_item(line),
+        )
         if limit is None:
             continue
         schedule_key = _quote_line_schedule_key(line, duplicate_service_activity_ids)
@@ -10770,12 +10794,16 @@ def _execute_quote_followup_transformation(
         if line.activity_id is not None:
             session_limit_by_key.setdefault(str(line.activity_id), limit)
 
+    # The client approved the dates stored in the quote snapshot. Refreshing this
+    # snapshot from the live planning at transformation time can silently replace
+    # the approved theoretical occurrences with the (possibly incomplete) series
+    # currently materialised in CourseSession. Keep the approved snapshot frozen;
+    # missing live occurrences are created explicitly below.
     calendar_snapshot_for_transform = _calendar_snapshot_with_line_recommendation_keys(
-        db,
+        None,
         _json_object(quote.calendar_snapshot),
         lines=quote_lines,
     )
-    calendar_snapshot_for_transform = _calendar_snapshot_with_planning_sessions(db, calendar_snapshot_for_transform)
 
     def _activity_id_from_schedule_key(raw: object) -> UUID | None:
         key = str(raw or "").strip()
@@ -10820,8 +10848,22 @@ def _execute_quote_followup_transformation(
             expected_weekday=selected_weekday,
         )
         session_limit = session_limit_by_key.get(schedule_key) or session_limit_by_key.get(str(activity_id))
-        if session_limit is not None:
-            expected_dates = expected_dates[:session_limit]
+        if session_limit is not None and len(expected_dates) < session_limit:
+            block_dates = _expected_activity_dates_from_snapshot(
+                quote,
+                activity_id=activity_id,
+                schedule_key=schedule_key,
+                calendar_snapshot=calendar_snapshot_for_transform,
+                expected_series_key=selected_series_key,
+                expected_weekday=selected_weekday,
+                prefer_blocks=True,
+            )
+            if len(block_dates) > len(expected_dates):
+                expected_dates = block_dates
+        expected_dates = _validated_quote_transform_expected_dates(
+            expected_dates,
+            session_limit=session_limit,
+        )
         if selected_session.status != SessionStatus.SCHEDULED:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Le creneau selectionne n'est plus reservable")
 
@@ -10868,7 +10910,10 @@ def _execute_quote_followup_transformation(
                     expected_dates=expected_dates,
                     live_sessions=live_sessions,
                 )
-        if _missing_dates_are_after_live_series_tail(missing_dates=missing_dates, live_sessions=live_sessions):
+        if session_limit is None and _missing_dates_are_after_live_series_tail(
+            missing_dates=missing_dates,
+            live_sessions=live_sessions,
+        ):
             missing_dates = []
         if missing_dates:
             displayed_dates = ", ".join(missing_date.strftime("%d/%m/%Y") for missing_date in missing_dates[:8])

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 import sys
 import unittest
 from types import SimpleNamespace
 from uuid import uuid4
+
+from fastapi import HTTPException
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
@@ -18,6 +20,7 @@ from app.api.routes.quotes import (
     _planning_session_limit_from_quote_line,
     _quote_line_schedule_key,
     _resolve_envelope_session_for_student_time,
+    _validated_quote_transform_expected_dates,
 )
 
 
@@ -154,6 +157,15 @@ class QuoteLiveSeriesMatchingTests(unittest.TestCase):
                 schedule_key=f"{activity_id}:main",
             ),
             [date(2026, 10, 7), date(2026, 10, 14), date(2026, 11, 4)],
+        )
+        self.assertEqual(
+            _expected_activity_dates_from_snapshot(
+                quote,
+                activity_id=activity_id,
+                schedule_key=f"{activity_id}:main",
+                prefer_blocks=True,
+            ),
+            [date(2026, 10, 7), date(2026, 10, 14), date(2026, 10, 21), date(2026, 10, 28), date(2026, 11, 4)],
         )
 
     def test_expected_dates_keep_selected_series_when_duplicate_keys_are_shared(self) -> None:
@@ -376,6 +388,18 @@ class QuoteLiveSeriesMatchingTests(unittest.TestCase):
         self.assertEqual(_planning_session_limit_from_quote_line(top_level_line), 10)
         self.assertEqual(_planning_session_limit_from_quote_line(template_line), 10)
         self.assertIsNone(_planning_session_limit_from_quote_line(invalid_line))
+
+    def test_planning_session_limit_can_use_the_approved_service_quantity(self) -> None:
+        line = SimpleNamespace(
+            meta={},
+            pricing_unit="session",
+            quantity="31.00",
+        )
+
+        self.assertEqual(
+            _planning_session_limit_from_quote_line(line, allow_session_quantity=True),
+            31,
+        )
 
     def test_detached_first_occurrence_recovers_full_series_from_expected_dates(self) -> None:
         course_type_id = uuid4()
@@ -738,6 +762,25 @@ class QuoteLiveSeriesMatchingTests(unittest.TestCase):
                 missing_dates=[date(2027, 4, 7), date(2027, 5, 4)],
                 live_sessions=[live_1, live_2],
             )
+        )
+
+    def test_transform_rejects_an_approved_snapshot_shorter_than_the_billed_quantity(self) -> None:
+        with self.assertRaises(HTTPException) as raised:
+            _validated_quote_transform_expected_dates(
+                [date(2026, 9, 14)] * 13,
+                session_limit=31,
+            )
+
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertIn("13 creneau(x)", str(raised.exception.detail))
+        self.assertIn("31", str(raised.exception.detail))
+
+    def test_transform_keeps_the_full_approved_session_quantity(self) -> None:
+        approved_dates = [date(2026, 9, 1) + timedelta(days=index * 7) for index in range(31)]
+
+        self.assertEqual(
+            _validated_quote_transform_expected_dates(approved_dates, session_limit=31),
+            approved_dates,
         )
 
     def test_deduplicates_live_sessions_with_same_local_slot(self) -> None:
