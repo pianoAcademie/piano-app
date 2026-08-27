@@ -3,6 +3,7 @@ import { headers } from "next/headers";
 
 import { forgotPasswordAction, loginAction, registerAction, resetPasswordAction } from "../../lib/actions";
 import AuthSignupFields from "../../components/auth-signup-fields";
+import PasswordResetRequestSubmitButton from "../../components/password-reset-request-submit-button";
 import PortalBrandLockup from "../../components/portal-brand-lockup";
 import { COUNTRY_OPTIONS, DEFAULT_COUNTRY } from "../../lib/reference-data";
 import { resolveAuthErrorMessage, resolveAuthOkMessage, type UiLanguage, uiText } from "../../lib/ui-i18n";
@@ -60,6 +61,18 @@ function resolveUiLanguage(rawLanguage: string, acceptLanguage: string): UiLangu
   return "fr";
 }
 
+function maskEmail(value: string): string {
+  const normalized = value.trim().toLowerCase();
+  const separator = normalized.lastIndexOf("@");
+  if (separator <= 0) {
+    return normalized;
+  }
+  const localPart = normalized.slice(0, separator);
+  const domain = normalized.slice(separator + 1);
+  const visiblePrefix = localPart.slice(0, Math.min(2, localPart.length));
+  return `${visiblePrefix}***@${domain}`;
+}
+
 export default function LoginPage({ searchParams }: { searchParams: SearchParams }): JSX.Element {
   const language = resolveUiLanguage(readParam(searchParams, "lang"), headers().get("accept-language") ?? "");
   const okMessage = resolveAuthOkMessage(readParam(searchParams, "ok"), readParam(searchParams, "ok_code"), language);
@@ -72,6 +85,7 @@ export default function LoginPage({ searchParams }: { searchParams: SearchParams
       ? null
       : resolveAuthErrorMessage(readParam(searchParams, "error"), errorCode, language);
   const resetToken = readParam(searchParams, "reset_token");
+  const resetRequestCooldownSeconds = readParam(searchParams, "reset_sent") === "1" ? 60 : 0;
   const emailHint = readParam(searchParams, "email");
   const purchaseContext = readParam(searchParams, "purchase_context");
   const returnTo = readParam(searchParams, "return_to");
@@ -161,6 +175,8 @@ export default function LoginPage({ searchParams }: { searchParams: SearchParams
                   <p className="muted">{uiText(language, "auth.reset_subtitle")}</p>
                   <form action={resetPasswordAction} className="grid auth-form">
                     <input type="hidden" name="token" value={resetToken} />
+                    <input type="hidden" name="portal" value={portal} />
+                    <input type="hidden" name="lang" value={language} />
                     <label>
                       {uiText(language, "common.new_password")}
                       <input type="password" name="password" required minLength={8} autoComplete="new-password" />
@@ -176,6 +192,9 @@ export default function LoginPage({ searchParams }: { searchParams: SearchParams
                 <>
                   <h2>{uiText(language, "auth.reset_title")}</h2>
                   <p className="muted">{uiText(language, "auth.reset_request_subtitle")}</p>
+                  {resetRequestCooldownSeconds > 0 && emailHint ? (
+                    <p className="muted">{uiText(language, "auth.reset_sent_to", { email: maskEmail(emailHint) })}</p>
+                  ) : null}
                   <form action={forgotPasswordAction} className="grid auth-form">
                     <input type="hidden" name="auth_mode" value="forgot" />
                     <input type="hidden" name="portal" value={portal} />
@@ -186,7 +205,12 @@ export default function LoginPage({ searchParams }: { searchParams: SearchParams
                       {uiText(language, "common.email")}
                       <input type="email" name="email" required autoComplete="email" defaultValue={emailHint} />
                     </label>
-                    <button type="submit">{uiText(language, "auth.send_link")}</button>
+                    <PasswordResetRequestSubmitButton
+                      label={uiText(language, "auth.send_link")}
+                      pendingLabel={uiText(language, "auth.send_link_pending")}
+                      cooldownTemplate={uiText(language, "auth.send_link_cooldown")}
+                      initialCooldownSeconds={resetRequestCooldownSeconds}
+                    />
                   </form>
                 </>
               )}

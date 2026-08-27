@@ -1627,13 +1627,17 @@ export async function forgotPasswordAction(formData: FormData): Promise<void> {
     redirect(`${forgotPathBase}&error=${encodeURIComponent(result.message)}`);
   }
 
-  redirect(`${forgotPathBase}&ok=${encodeURIComponent(result.data.message)}`);
+  redirect(`${forgotPathBase}&reset_sent=1&ok=${encodeURIComponent(result.data.message)}`);
 }
 
 export async function resetPasswordAction(formData: FormData): Promise<void> {
   const token = String(formData.get("token") ?? "").trim();
   const password = String(formData.get("password") ?? "");
   const passwordConfirm = String(formData.get("password_confirm") ?? "");
+  const portal = String(formData.get("portal") ?? "").trim().toLowerCase();
+  const language = normalizeUiLanguage(String(formData.get("lang") ?? ""));
+  const portalQuery = portal === "prof" || portal === "teacher" ? "&portal=prof" : "";
+  const languageQuery = language === "en" ? "&lang=en" : "";
 
   if (!token) {
     redirect("/login?error_code=reset_link_invalid");
@@ -1645,7 +1649,7 @@ export async function resetPasswordAction(formData: FormData): Promise<void> {
     redirect(`/login?mode=forgot&reset_token=${encodeURIComponent(token)}&error_code=reset_password_mismatch`);
   }
 
-  const result = await backendRequest<{ message: string }>("/api/v1/auth/reset-password", {
+  const result = await backendRequest<{ message: string; email?: string | null }>("/api/v1/auth/reset-password", {
     method: "POST",
     body: JSON.stringify({ token, password }),
   });
@@ -1654,7 +1658,8 @@ export async function resetPasswordAction(formData: FormData): Promise<void> {
     redirect(`/login?mode=forgot&reset_token=${encodeURIComponent(token)}&error=${encodeURIComponent(result.message)}`);
   }
 
-  redirect(`/login?mode=login&ok=${encodeURIComponent(result.data.message)}`);
+  const emailQuery = result.data.email ? `&email=${encodeURIComponent(result.data.email)}` : "";
+  redirect(`/login?mode=login${portalQuery}${languageQuery}${emailQuery}&ok_code=password_reset_success`);
 }
 
 export async function changePasswordAction(formData: FormData): Promise<void> {

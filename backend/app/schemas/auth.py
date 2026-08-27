@@ -95,6 +95,7 @@ class ChangePasswordRequest(BaseModel):
 
 class ResetPasswordResponse(BaseModel):
     message: str
+    email: str | None = None
 
 
 class EmailLookupRequest(BaseModel):

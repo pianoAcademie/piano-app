@@ -53,7 +53,7 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 MUSTACHE_PLACEHOLDER_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
 
-DEFAULT_FORGOT_PASSWORD_MESSAGE = "Si ce compte existe, un email de reinitialisation vient d etre envoye."
+DEFAULT_FORGOT_PASSWORD_MESSAGE = "Si ce compte existe, un e-mail de réinitialisation vient d’être envoyé."
 DEFAULT_PASSWORD_RESET_SUBJECT = "Reinitialisez votre mot de passe Piano Academie"
 DEFAULT_PASSWORD_RESET_BODY = (
     "Bonjour {first_name},\n\n"
@@ -67,6 +67,8 @@ DEFAULT_PASSWORD_RESET_BODY = (
     "L equipe Piano Academie"
 )
 AUTH_RATE_LIMIT_MESSAGE = "Trop de tentatives. Veuillez reessayer plus tard."
+PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS = 60
+PASSWORD_RESET_TOKEN_MAX_AGE_MINUTES = 30
 
 
 class _SafeTemplateContext(dict[str, str]):
@@ -646,28 +648,36 @@ def email_lookup(payload: EmailLookupRequest, request: Request, db: Session = De
 def forgot_password(payload: ForgotPasswordRequest, request: Request, db: Session = Depends(get_db)) -> ForgotPasswordResponse:
     normalized_email = payload.email.strip().lower()
     _enforce_forgot_password_rate_limits(request, normalized_email)
-    user = db.scalar(select(User).where(User.email == normalized_email))
+    user = db.scalar(select(User).where(User.email == normalized_email).with_for_update())
     if user is None or not user.is_active:
         return ForgotPasswordResponse(message=DEFAULT_FORGOT_PASSWORD_MESSAGE)
 
     now = datetime.now(timezone.utc)
     try:
-        db.execute(
-            update(PasswordResetToken)
+        recent_active_token = db.scalar(
+            select(PasswordResetToken)
             .where(
                 PasswordResetToken.user_id == user.id,
                 PasswordResetToken.used_at.is_(None),
                 PasswordResetToken.expires_at > now,
+                PasswordResetToken.created_at >= now - timedelta(seconds=PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS),
             )
-            .values(used_at=now)
+            .order_by(PasswordResetToken.created_at.desc())
+            .limit(1)
         )
+        if recent_active_token is not None:
+            return ForgotPasswordResponse(message=DEFAULT_FORGOT_PASSWORD_MESSAGE)
 
         raw_token = secrets.token_urlsafe(48)
+        token_lifetime_minutes = min(
+            max(1, settings.password_reset_token_expire_minutes),
+            PASSWORD_RESET_TOKEN_MAX_AGE_MINUTES,
+        )
         db.add(
             PasswordResetToken(
                 user_id=user.id,
                 token_hash=_hash_reset_token(raw_token),
-                expires_at=now + timedelta(minutes=settings.password_reset_token_expire_minutes),
+                expires_at=now + timedelta(minutes=token_lifetime_minutes),
             )
         )
 
@@ -760,7 +770,10 @@ def reset_password(payload: ResetPasswordRequest, request: Request, db: Session 
             detail=f"Database error: {exc.__class__.__name__}",
         ) from exc
 
-    return ResetPasswordResponse(message="Mot de passe mis a jour")
+    return ResetPasswordResponse(
+        message="Votre mot de passe a bien été modifié. Vous pouvez maintenant vous connecter.",
+        email=user.email,
+    )
 
 
 @router.post("/change-password", response_model=ResetPasswordResponse)
