@@ -16519,10 +16519,10 @@ button.danger:focus-visible {
   .client-mobile-header {
     display: flex;
     position: sticky;
-    top: 0;
+    top: calc(6px + env(safe-area-inset-top, 0px));
     z-index: 20;
     width: calc(100% - 32px);
-    margin: 12px auto 10px;
+    margin: calc(12px + env(safe-area-inset-top, 0px)) auto 10px;
     padding: 10px 12px;
     align-items: center;
     justify-content: space-between;
