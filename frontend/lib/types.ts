@@ -414,6 +414,20 @@ export type AdminClientOut = {
   updated_at: string;
 };
 
+export type AdminAdultCandidateOut = {
+  id: string;
+  display_name: string;
+  email: string;
+  mobile_phone_1: string | null;
+  mobile_phone_2: string | null;
+  home_phone: string | null;
+  address_line: string | null;
+  postal_code: string | null;
+  city: string | null;
+  address_country: string;
+  residence_country: string;
+};
+
 export type AdminOnlinePresenceOut = {
   generated_at: string;
   active_window_seconds: number;

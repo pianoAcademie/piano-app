@@ -6627,6 +6627,7 @@ def _format_session_datetime(session_obj: CourseSession, timezone_preference: st
 def _filtered_clients_stmt(
     *,
     search: str | None,
+    client_kind: ClientKind | None,
     client_status: ClientStatus | None,
     student_site: StudentSite | None,
     group_id: UUID | None,
@@ -6634,6 +6635,9 @@ def _filtered_clients_stmt(
     active_only: bool,
 ):
     stmt = select(User).where(User.role == UserRole.CLIENT)
+
+    if client_kind is not None:
+        stmt = stmt.where(User.client_kind == client_kind)
 
     if active_only:
         stmt = stmt.where(User.client_status == ClientStatus.ACTIVE)
@@ -6687,6 +6691,7 @@ def _client_ids_with_paid_invoices(db: Session, client_ids: set[UUID]) -> set[UU
 @router.get("", response_model=list[AdminClientOut])
 def list_admin_clients(
     search: str | None = Query(default=None, min_length=1, max_length=255),
+    client_kind: ClientKind | None = None,
     client_status: ClientStatus | None = None,
     student_site: StudentSite | None = None,
     group_id: UUID | None = None,
@@ -6700,6 +6705,7 @@ def list_admin_clients(
 ) -> list[AdminClientOut]:
     stmt = _filtered_clients_stmt(
         search=search,
+        client_kind=client_kind,
         client_status=client_status,
         student_site=student_site,
         group_id=group_id,
@@ -7002,6 +7008,7 @@ def bulk_admin_clients(
     if payload.selection_scope == AdminClientSelectionScope.FILTERED:
         filtered_stmt = _filtered_clients_stmt(
             search=payload.filter_search,
+            client_kind=None,
             client_status=payload.filter_status,
             student_site=payload.filter_student_site,
             group_id=payload.filter_group_id,

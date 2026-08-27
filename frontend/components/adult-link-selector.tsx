@@ -1,33 +1,23 @@
 "use client";
 
 import { useSearchParams } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import type { AdminAdultCandidateOut } from "../lib/types";
 import { normalizeUiLanguage, uiText } from "../lib/ui-i18n";
 
-type AdultCandidate = {
-  id: string;
-  display_name: string;
-  email: string;
-  mobile_phone_1: string | null;
-  mobile_phone_2: string | null;
-  home_phone: string | null;
-  address_line: string | null;
-  postal_code: string | null;
-  city: string | null;
-  address_country: string;
-  residence_country: string;
-};
-
 type Props = {
-  adults: AdultCandidate[];
+  adults?: AdminAdultCandidateOut[];
   language?: "fr" | "en";
 };
 
-export default function AdultLinkSelector({ adults, language }: Props): JSX.Element {
+export default function AdultLinkSelector({ adults = [], language }: Props): JSX.Element {
   const searchParams = useSearchParams();
   const resolvedLanguage = language ?? normalizeUiLanguage(searchParams?.get("lang"));
   const [selectedId, setSelectedId] = useState<string>("");
   const [query, setQuery] = useState<string>("");
+  const [knownAdults, setKnownAdults] = useState<AdminAdultCandidateOut[]>(adults);
+  const [isSearching, setIsSearching] = useState(false);
+  const [searchFailed, setSearchFailed] = useState(false);
   const t = (key: string, values?: Record<string, string | number>) => uiText(resolvedLanguage, key, values);
   const normalize = (value: string | null | undefined) =>
     (value ?? "")
@@ -37,11 +27,56 @@ export default function AdultLinkSelector({ adults, language }: Props): JSX.Elem
       .trim();
   const sortedAdults = useMemo(
     () =>
-      [...adults].sort((left, right) =>
+      [...knownAdults].sort((left, right) =>
         left.display_name.localeCompare(right.display_name, resolvedLanguage, { sensitivity: "base" }),
       ),
-    [adults, resolvedLanguage],
+    [knownAdults, resolvedLanguage],
   );
+
+  useEffect(() => {
+    const needle = query.trim();
+    if (!needle) {
+      setIsSearching(false);
+      setSearchFailed(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(async () => {
+      setIsSearching(true);
+      setSearchFailed(false);
+      try {
+        const response = await fetch(`/api/admin/clients/adult-candidates?q=${encodeURIComponent(needle)}`, {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          throw new Error(`Adult search failed (${response.status})`);
+        }
+        const matches = (await response.json()) as AdminAdultCandidateOut[];
+        setKnownAdults((current) => {
+          const merged = new Map(current.map((adult) => [adult.id, adult]));
+          for (const adult of matches) {
+            merged.set(adult.id, adult);
+          }
+          return [...merged.values()];
+        });
+      } catch (error) {
+        if (!(error instanceof DOMException && error.name === "AbortError")) {
+          setSearchFailed(true);
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          setIsSearching(false);
+        }
+      }
+    }, 250);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+      controller.abort();
+    };
+  }, [query]);
   const filteredAdults = useMemo(() => {
     const needle = normalize(query);
     if (!needle) {
@@ -74,6 +109,15 @@ export default function AdultLinkSelector({ adults, language }: Props): JSX.Elem
     }
     return [selected, ...filteredAdults];
   }, [filteredAdults, selected]);
+  const statusMessage = !query.trim()
+    ? t("admin.clients.existing_adult_search_prompt")
+    : isSearching
+      ? t("admin.clients.existing_adult_searching")
+      : searchFailed
+        ? t("admin.clients.existing_adult_search_error")
+        : filteredAdults.length > 0
+          ? t("admin.clients.existing_adult_matches", { count: filteredAdults.length })
+          : t("admin.clients.no_existing_adult_match");
 
   return (
     <div className="grid">
@@ -98,11 +142,7 @@ export default function AdultLinkSelector({ adults, language }: Props): JSX.Elem
           ))}
         </select>
       </label>
-      <p className="muted">
-        {filteredAdults.length > 0
-          ? t("admin.clients.existing_adult_matches", { count: filteredAdults.length })
-          : t("admin.clients.no_existing_adult_match")}
-      </p>
+      <p className="muted">{statusMessage}</p>
 
       {selected ? (
         <article className="item">

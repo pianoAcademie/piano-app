@@ -272,11 +272,6 @@ function sortIndicator(currentSortBy: SortColumn, currentSortDir: SortDirection,
   return currentSortDir === "asc" ? "↑" : "↓";
 }
 
-function displayAdultName(client: AdminClientOut): string {
-  const fullName = `${client.first_name ?? ""} ${client.last_name ?? ""}`.trim();
-  return fullName || client.email;
-}
-
 export default async function AdminClientsPage({ searchParams }: { searchParams: SearchParams }): Promise<JSX.Element> {
   const token = cookies().get("admin_access_token")?.value ?? cookies().get("access_token")?.value;
   if (!token) {
@@ -320,11 +315,10 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
     clientsQuery.set("group_id", selectedGroupId);
   }
 
-  const [clientsResult, allClientsResult, groupsResult, adultCandidatesResult, mmsImportStatusResult, emailTemplatesResult] = await Promise.all([
+  const [clientsResult, allClientsResult, groupsResult, mmsImportStatusResult, emailTemplatesResult] = await Promise.all([
     backendRequest<AdminClientOut[]>(`/api/v1/admin/clients?${clientsQuery.toString()}`, {}, token),
     backendRequest<AdminClientOut[]>("/api/v1/admin/clients?limit=1000&include_archived=true", {}, token),
     backendRequest<AdminClientGroupOut[]>("/api/v1/admin/clients/groups?include_inactive=true", {}, token),
-    backendRequest<AdminClientOut[]>("/api/v1/admin/clients?limit=1000&include_archived=false&sort_by=last_name&sort_dir=asc", {}, token),
     backendRequest<MyMusicStaffImportStatus>("/api/v1/admin/clients/imports/my-music-staff-2025-2026/status", {}, token),
     backendRequest<AdminMessagingTemplateOut[]>(
       "/api/v1/admin/config/messaging-templates?channel=EMAIL&kind=CUSTOM&active_only=true",
@@ -338,10 +332,6 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
   const groups = groupsResult.ok ? groupsResult.data : [];
   const emailTemplates = emailTemplatesResult.ok ? emailTemplatesResult.data : [];
   const mmsImportStatus = mmsImportStatusResult.ok ? mmsImportStatusResult.data : null;
-  const adultCandidates = adultCandidatesResult.ok
-    ? adultCandidatesResult.data.filter((client) => client.client_kind === "ADULT")
-    : [];
-
   const counts = countByStatus(allClients);
 
   const okMessage = readParam(searchParams, "ok");
@@ -375,20 +365,6 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
     page: currentPage,
     perPage,
   });
-
-  const adultPreviewCandidates = adultCandidates.map((adult) => ({
-    id: adult.id,
-    display_name: displayAdultName(adult),
-    email: adult.email,
-    mobile_phone_1: adult.mobile_phone_1,
-    mobile_phone_2: adult.mobile_phone_2,
-    home_phone: adult.home_phone,
-    address_line: adult.address_line,
-    postal_code: adult.postal_code,
-    city: adult.city,
-    address_country: adult.address_country,
-    residence_country: adult.residence_country,
-  }));
 
   return (
     <section className="admin-page-grid">
@@ -1093,7 +1069,7 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
                 <article className="item span-3">
                   <h3>{t("admin.clients.family_option_title")}</h3>
                   <div className="grid cols-2">
-                    <AdultLinkSelector adults={adultPreviewCandidates} language={language} />
+                    <AdultLinkSelector language={language} />
                     <label className="checkline">
                       <input type="checkbox" name="existing_adult_billing_recipient" defaultChecked />
                       {t("admin.clients.existing_adult_billing_recipient")}

@@ -8,6 +8,7 @@ from app.api.routes.admin_subscriptions import list_admin_subscriptions
 from app.api.routes.admin_to_process import list_admin_to_process_messages
 from app.api.routes.quotes import list_prospects
 from app.api.routes.typeform_intakes import list_typeform_intakes
+from app.models.user import ClientKind
 
 
 class _Rows:
@@ -45,6 +46,7 @@ class AdminFullNameSearchTests(unittest.TestCase):
     def test_clients_require_every_full_name_token(self) -> None:
         statement = _filtered_clients_stmt(
             search=" Maxine   Lafon ",
+            client_kind=None,
             client_status=None,
             student_site=None,
             group_id=None,
@@ -52,6 +54,19 @@ class AdminFullNameSearchTests(unittest.TestCase):
             active_only=False,
         )
         self.assert_full_name_tokens(statement)
+
+    def test_clients_can_limit_search_to_adults(self) -> None:
+        statement = _filtered_clients_stmt(
+            search="Gest",
+            client_kind=ClientKind.ADULT,
+            client_status=None,
+            student_site=None,
+            group_id=None,
+            include_archived=False,
+            active_only=False,
+        )
+
+        self.assertIn(ClientKind.ADULT, _parameter_values(statement))
 
     def test_collaborators_require_every_full_name_token(self) -> None:
         db = _CaptureDb()
