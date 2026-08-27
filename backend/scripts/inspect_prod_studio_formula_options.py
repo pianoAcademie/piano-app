@@ -2,203 +2,27 @@ from __future__ import annotations
 
 import os
 import sys
-import json
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 from sqlalchemy import false, func, or_, select
 
-from app.api.routes.admin_clients import _parse_invoice_range_note_entry
 from app.api.routes.clients import _active_formula_options_for_course_type, _session_purchase_catalog
 from app.db.session import SessionLocal
 from app.models.catalog import CourseSession, CourseType, CreditType, Location
-from app.models.client_record import ClientInvoiceLine, ClientManualTransaction, ClientNoteEntry
 from app.models.plan import Plan, PlanCreditGrant, PlanEntitlement, PlanKind
-from app.models.quote import Quote, QuoteAcceptanceFollowup, QuoteLine
-from app.models.referral import ReferralReward
 from app.services.session_audience import resolve_session_booking_scopes
 
-SCRIPT_PREFIX = "PROD_PIERSON_INVOICE_AUDIT_20260827"
-QUOTE_NUMBER = "DV-20260824133038-3F67"
+SCRIPT_PREFIX = "PROD_STUDIO_FORMULA_INSPECT"
 
 
 def _print(line: str) -> None:
     print(f"[{SCRIPT_PREFIX}] {line}")
 
 
-def _money(value: object) -> str:
-    return f"{Decimal(str(value or 0)).quantize(Decimal('0.01')):.2f}"
-
-
-def _object(value: object) -> dict[str, object]:
-    return dict(value) if isinstance(value, dict) else {}
-
-
-def _uuid_texts(value: object) -> list[str]:
-    return [str(item) for item in value] if isinstance(value, list) else []
-
-
 def main() -> None:
     with SessionLocal() as db:
-        quote = db.scalar(select(Quote).where(Quote.quote_number == QUOTE_NUMBER))
-        if quote is None:
-            raise RuntimeError(f"quote_not_found={QUOTE_NUMBER}")
-        followup = db.scalar(
-            select(QuoteAcceptanceFollowup)
-            .where(QuoteAcceptanceFollowup.quote_id == quote.id)
-            .order_by(QuoteAcceptanceFollowup.created_at.desc())
-            .limit(1)
-        )
-        payload = _object(followup.payload if followup is not None else {})
-        execution = _object(payload.get("quote_to_enrollment_execution"))
-        billing_id = execution.get("billing_client_id")
-        if not billing_id:
-            raise RuntimeError("billing_client_id_missing")
-
-        quote_lines = list(
-            db.scalars(
-                select(QuoteLine)
-                .where(QuoteLine.quote_id == quote.id)
-                .order_by(QuoteLine.sort_order, QuoteLine.created_at, QuoteLine.id)
-            ).all()
-        )
-        notes = list(
-            db.scalars(
-                select(ClientNoteEntry)
-                .where(ClientNoteEntry.user_id == billing_id)
-                .order_by(ClientNoteEntry.created_at, ClientNoteEntry.id)
-            ).all()
-        )
-        invoice_rows: list[dict[str, object]] = []
-        for note in notes:
-            metadata = _parse_invoice_range_note_entry(note)
-            if metadata is None:
-                continue
-            number = str(metadata.get("invoice_number") or "")
-            if not number.startswith("PA26-07") and str(metadata.get("source_quote_number") or "") != QUOTE_NUMBER:
-                continue
-            lines = list(
-                db.scalars(
-                    select(ClientInvoiceLine)
-                    .where(ClientInvoiceLine.note_id == note.id)
-                    .order_by(ClientInvoiceLine.occurred_at, ClientInvoiceLine.id)
-                ).all()
-            )
-            invoice_rows.append(
-                {
-                    "note_id": str(note.id),
-                    "created_at": note.created_at.isoformat(),
-                    "number": number,
-                    "status": metadata.get("invoice_status"),
-                    "document_type": metadata.get("document_type"),
-                    "emailed_at": metadata.get("emailed_at"),
-                    "source_quote_number": metadata.get("source_quote_number"),
-                    "original_invoice_number": metadata.get("original_invoice_number"),
-                    "credit_note_number": metadata.get("credit_note_number"),
-                    "totals": metadata.get("totals_by_currency"),
-                    "due": metadata.get("total_to_pay_by_currency"),
-                    "included_payment_keys": metadata.get("included_payment_keys"),
-                    "referral_credit_ids": metadata.get("referral_credit_transaction_ids"),
-                    "line_total": _money(sum((Decimal(line.total_incl_vat or 0) for line in lines), Decimal("0"))),
-                    "lines": [
-                        {
-                            "source": line.source,
-                            "source_payment_id": str(line.source_payment_id),
-                            "label": line.label,
-                            "occurred_at": line.occurred_at.isoformat(),
-                            "ht": _money(line.amount_excl_vat),
-                            "vat_rate": str(line.vat_rate),
-                            "vat": _money(line.vat_amount),
-                            "ttc": _money(line.total_incl_vat),
-                            "seller": str(line.seller_legal_entity_id or ""),
-                        }
-                        for line in lines
-                    ],
-                }
-            )
-
-        referral_rows = db.execute(
-            select(ReferralReward, ClientManualTransaction)
-            .join(ClientManualTransaction, ClientManualTransaction.id == ReferralReward.credit_transaction_id)
-            .where(ClientManualTransaction.user_id == billing_id)
-            .order_by(ClientManualTransaction.occurred_at, ClientManualTransaction.id)
-        ).all()
-        referral_credits = []
-        for reward, transaction in referral_rows:
-            allocations = list(
-                db.execute(
-                    select(ClientInvoiceLine.note_id, ClientNoteEntry.message)
-                    .join(ClientNoteEntry, ClientNoteEntry.id == ClientInvoiceLine.note_id)
-                    .where(
-                        ClientInvoiceLine.source == "MANUAL",
-                        ClientInvoiceLine.source_payment_id == transaction.id,
-                    )
-                ).all()
-            )
-            referral_credits.append(
-                {
-                    "reward_id": str(reward.id),
-                    "reward_status": reward.status,
-                    "transaction_id": str(transaction.id),
-                    "transaction_status": transaction.status,
-                    "label": transaction.label,
-                    "category": transaction.category,
-                    "ttc": _money(transaction.total_incl_vat),
-                    "allocations": [
-                        {
-                            "note_id": str(note_id),
-                            "invoice": (_parse_invoice_range_note_entry(ClientNoteEntry(message=message)) or {}).get(
-                                "invoice_number"
-                            ),
-                            "status": (_parse_invoice_range_note_entry(ClientNoteEntry(message=message)) or {}).get(
-                                "invoice_status"
-                            ),
-                        }
-                        for note_id, message in allocations
-                    ],
-                }
-            )
-
-        result = {
-            "quote": {
-                "id": str(quote.id),
-                "number": quote.quote_number,
-                "status": quote.status,
-                "total_ht": _money(sum((Decimal(line.amount_ht or 0) for line in quote_lines), Decimal("0"))),
-                "total_vat": _money(sum((Decimal(line.amount_vat or 0) for line in quote_lines), Decimal("0"))),
-                "total_ttc": _money(quote.total_ttc),
-                "lines": [
-                    {
-                        "id": str(line.id),
-                        "title": line.title,
-                        "category": line.line_category,
-                        "quantity": str(line.quantity),
-                        "ht": _money(line.amount_ht),
-                        "vat_rate": str(line.vat_rate),
-                        "vat": _money(line.amount_vat),
-                        "ttc": _money(line.amount_ttc),
-                    }
-                    for line in quote_lines
-                ],
-            },
-            "execution": {
-                "billing_client_id": str(billing_id),
-                "student_client_id": execution.get("student_client_id"),
-                "created_booking_ids": len(_uuid_texts(execution.get("created_booking_ids"))),
-                "created_transaction_ids": _uuid_texts(execution.get("created_transaction_ids")),
-                "created_annual_invoice_note_ids": _uuid_texts(
-                    execution.get("created_annual_invoice_note_ids")
-                ),
-                "created_invoice_note_ids": _uuid_texts(execution.get("created_invoice_note_ids")),
-            },
-            "invoices": invoice_rows,
-            "referral_credits": referral_credits,
-        }
-        print(json.dumps(result, indent=2, ensure_ascii=False))
-        return
-
         studio_course_types = db.execute(
             select(
                 CourseType.id,
