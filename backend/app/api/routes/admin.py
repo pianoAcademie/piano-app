@@ -56,7 +56,6 @@ from app.models.ops import (
     CommunicationChannel,
     CommunicationSenderCategory,
 )
-from app.models.notification_engine import Notification
 from app.models.planning_simulation import PlanningSimulationTeacherAssignment
 from app.models.plan import ClientPlanSubscription, Plan, PlanKind
 from app.models.quote import Prospect, Quote, QuoteAcceptanceFollowup
@@ -65,18 +64,12 @@ from app.services.automation_triggers import schedule_trial_attended_triggers
 from app.services.booking_transfers import bookings_have_equivalent_financial_coverage
 from app.services.invoice_documents import normalize_billing_entity
 from app.services.notifications.application.orchestrator import (
+    cancel_pending_booking_reminder_notifications,
     enqueue_notifications,
     schedule_slot_cancelled_notifications,
     schedule_waitlist_joined_notification,
 )
-from app.services.notifications.domain.constants import (
-    NOTIFICATION_STATUS_CANCELLED,
-    NOTIFICATION_STATUS_PENDING,
-    NOTIFICATION_STATUS_QUEUED,
-    NOTIFICATION_TYPE_REMINDER_EMAIL,
-    NOTIFICATION_TYPE_REMINDER_SMS,
-    SOURCE_ADMIN_BO,
-)
+from app.services.notifications.domain.constants import SOURCE_ADMIN_BO
 from app.services.payment_receipts import (
     FINAL_INVOICE_ELIGIBLE_BOOKING_STATUSES,
     generate_final_invoice_for_booking,
@@ -772,35 +765,6 @@ def _copy_booking_payload(source: Booking, target: Booking) -> None:
     target.internal_note = source.internal_note
 
 
-def _cancel_pending_notification_reminders_for_booking(
-    db: Session,
-    *,
-    booking_id: UUID,
-    reason: str,
-    now: datetime,
-) -> int:
-    notifications = db.scalars(
-        select(Notification).where(
-            Notification.booking_id == booking_id,
-            Notification.notification_type.in_(
-                [
-                    NOTIFICATION_TYPE_REMINDER_EMAIL,
-                    NOTIFICATION_TYPE_REMINDER_SMS,
-                ]
-            ),
-            Notification.status.in_([NOTIFICATION_STATUS_PENDING, NOTIFICATION_STATUS_QUEUED]),
-        )
-    ).all()
-
-    for notification in notifications:
-        notification.status = NOTIFICATION_STATUS_CANCELLED
-        notification.skipped_at = now
-        notification.failure_reason = reason
-        notification.updated_at = now
-
-    return len(notifications)
-
-
 def _cancel_booking_for_cancelled_session(
     db: Session,
     *,
@@ -839,7 +803,7 @@ def _cancel_booking_for_cancelled_session(
         reason="Session cancelled by admin",
         now=now,
     )
-    _cancel_pending_notification_reminders_for_booking(
+    cancel_pending_booking_reminder_notifications(
         db,
         booking_id=booking.id,
         reason="Session cancelled by admin",

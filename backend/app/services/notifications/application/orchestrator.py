@@ -44,6 +44,7 @@ from app.services.notifications.domain.constants import (
     EVENT_BOOKING_REMINDER_DUE,
     EVENT_SLOT_CANCELLED,
     EVENT_SLOT_AUTO_CANCELLED_LOW_ATTENDANCE,
+    NOTIFICATION_STATUS_CANCELLED,
     NOTIFICATION_STATUS_PENDING,
     NOTIFICATION_STATUS_QUEUED,
     NOTIFICATION_STATUS_SKIPPED,
@@ -513,6 +514,35 @@ def _notification_already_exists(db: Session, *, idempotency_key: str) -> bool:
 def enqueue_notifications(notifications: list[OrchestratedNotification]) -> None:
     for row in notifications:
         queue_push(row.queue_name, {"notification_id": str(row.notification_id)})
+
+
+def cancel_pending_booking_reminder_notifications(
+    db: Session,
+    *,
+    booking_id: UUID,
+    reason: str,
+    now: datetime,
+) -> int:
+    notifications = db.scalars(
+        select(Notification).where(
+            Notification.booking_id == booking_id,
+            Notification.notification_type.in_(
+                [
+                    NOTIFICATION_TYPE_REMINDER_EMAIL,
+                    NOTIFICATION_TYPE_REMINDER_SMS,
+                ]
+            ),
+            Notification.status.in_([NOTIFICATION_STATUS_PENDING, NOTIFICATION_STATUS_QUEUED]),
+        )
+    ).all()
+
+    for notification in notifications:
+        notification.status = NOTIFICATION_STATUS_CANCELLED
+        notification.skipped_at = now
+        notification.failure_reason = reason
+        notification.updated_at = now
+
+    return len(notifications)
 
 
 def schedule_booking_created_notifications(

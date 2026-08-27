@@ -49,6 +49,7 @@ from app.services.makeup_passes import (
 from app.services.automation_triggers import schedule_booking_created_triggers
 from app.services.family_billing import resolve_billing_profile
 from app.services.notifications.application.orchestrator import (
+    cancel_pending_booking_reminder_notifications,
     enqueue_notifications,
     schedule_booking_cancelled_notifications,
     schedule_booking_created_notifications,
@@ -1727,6 +1728,12 @@ def cancel_booking(
     booking.cancellation_reason = "CLIENT_CANCELLED"
 
     skip_pending_reminders_for_booking(
+        db,
+        booking_id=booking.id,
+        reason="Booking cancelled by client",
+        now=now,
+    )
+    cancel_pending_booking_reminder_notifications(
         db,
         booking_id=booking.id,
         reason="Booking cancelled by client",

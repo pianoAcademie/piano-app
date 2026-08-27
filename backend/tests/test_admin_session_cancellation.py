@@ -30,7 +30,7 @@ def test_admin_session_cancellation_closes_booking_restores_credit_and_stops_rem
     ) as restore_credit, patch(
         "app.api.routes.admin.skip_pending_reminders_for_booking",
     ) as skip_legacy_reminders, patch(
-        "app.api.routes.admin._cancel_pending_notification_reminders_for_booking",
+        "app.api.routes.admin.cancel_pending_booking_reminder_notifications",
     ) as cancel_engine_reminders:
         restored = _cancel_booking_for_cancelled_session(
             db,
@@ -61,7 +61,7 @@ def test_admin_session_cancellation_does_not_credit_waitlist_booking() -> None:
     ) as restore_credit, patch(
         "app.api.routes.admin.skip_pending_reminders_for_booking",
     ), patch(
-        "app.api.routes.admin._cancel_pending_notification_reminders_for_booking",
+        "app.api.routes.admin.cancel_pending_booking_reminder_notifications",
     ):
         restored = _cancel_booking_for_cancelled_session(
             db,
@@ -89,7 +89,7 @@ def test_admin_session_cancellation_expires_pending_payment_receipt() -> None:
     ) as restore_credit, patch(
         "app.api.routes.admin.skip_pending_reminders_for_booking",
     ), patch(
-        "app.api.routes.admin._cancel_pending_notification_reminders_for_booking",
+        "app.api.routes.admin.cancel_pending_booking_reminder_notifications",
     ):
         restored = _cancel_booking_for_cancelled_session(
             db,
@@ -103,4 +103,3 @@ def test_admin_session_cancellation_expires_pending_payment_receipt() -> None:
     assert receipt.status == "EXPIRED"
     assert receipt.updated_at == now
     restore_credit.assert_not_called()
-

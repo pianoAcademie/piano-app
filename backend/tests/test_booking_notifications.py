@@ -5,16 +5,18 @@ from pathlib import Path
 from types import SimpleNamespace
 import sys
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from app.models.catalog import DeliveryMode
+from app.api.routes.bookings import cancel_booking
+from app.models.catalog import BookingStatus, DeliveryMode
 from app.services.notifications.application.orchestrator import (
     _body_for_booking_notification,
     _build_lesson_reminder_email,
     _refresh_pending_email_reminder,
+    cancel_pending_booking_reminder_notifications,
     schedule_booking_created_notifications,
     schedule_reminder_notifications_for_booking,
     schedule_waitlist_joined_notification,
@@ -22,7 +24,9 @@ from app.services.notifications.application.orchestrator import (
 )
 from app.services.notifications.application.recipients import ResolvedRecipient
 from app.services.notifications.domain.constants import (
+    NOTIFICATION_STATUS_CANCELLED,
     NOTIFICATION_STATUS_PENDING,
+    NOTIFICATION_STATUS_QUEUED,
     NOTIFICATION_TYPE_REMINDER_EMAIL,
     NOTIFICATION_TYPE_TEACHER_BOOKING_CONFIRMATION,
     NOTIFICATION_TYPE_CLIENT_WAITLIST_JOINED,
@@ -47,6 +51,91 @@ class _FakeSession:
 
 
 class BookingNotificationTests(unittest.TestCase):
+    def test_client_cancellation_stops_legacy_and_engine_reminders(self) -> None:
+        booking_id = uuid4()
+        user_id = uuid4()
+        session_id = uuid4()
+        booking = SimpleNamespace(
+            id=booking_id,
+            user_id=user_id,
+            session_id=session_id,
+            status=BookingStatus.BOOKED,
+            cancelled_at=None,
+            cancellation_reason=None,
+        )
+        session_obj = SimpleNamespace(
+            id=session_id,
+            start_at_utc=datetime.now(timezone.utc) + timedelta(days=2),
+        )
+        current_user = SimpleNamespace(id=user_id, preferred_language="fr")
+        db = MagicMock()
+        db.scalar.side_effect = [booking, session_obj]
+
+        with patch(
+            "app.api.routes.bookings._can_manage_booking_owner",
+            return_value=True,
+        ), patch(
+            "app.api.routes.bookings._effective_session_booking_rules",
+            return_value=(1, 1, False),
+        ), patch(
+            "app.api.routes.bookings.active_restricted_forfait_for_booking",
+            return_value=None,
+        ), patch(
+            "app.api.routes.bookings.restore_cancelled_booking_credit",
+        ), patch(
+            "app.api.routes.bookings.skip_pending_reminders_for_booking",
+        ) as skip_legacy, patch(
+            "app.api.routes.bookings.cancel_pending_booking_reminder_notifications",
+        ) as cancel_engine, patch(
+            "app.api.routes.bookings.schedule_booking_cancelled_notifications",
+            return_value=[],
+        ), patch(
+            "app.api.routes.bookings._promote_waitlist_if_possible",
+            return_value=[],
+        ):
+            response = cancel_booking(booking_id, db=db, current_user=current_user)
+
+        self.assertEqual(response.status_code, 204)
+        self.assertEqual(booking.status, BookingStatus.CANCELLED)
+        skip_legacy.assert_called_once()
+        cancel_engine.assert_called_once_with(
+            db,
+            booking_id=booking_id,
+            reason="Booking cancelled by client",
+            now=booking.cancelled_at,
+        )
+
+    def test_cancelling_a_booking_cancels_pending_engine_reminders(self) -> None:
+        now = datetime(2026, 8, 25, 19, 49, tzinfo=timezone.utc)
+        pending_email = SimpleNamespace(
+            status=NOTIFICATION_STATUS_PENDING,
+            skipped_at=None,
+            failure_reason=None,
+            updated_at=None,
+        )
+        queued_sms = SimpleNamespace(
+            status=NOTIFICATION_STATUS_QUEUED,
+            skipped_at=None,
+            failure_reason=None,
+            updated_at=None,
+        )
+        db = MagicMock()
+        db.scalars.return_value.all.return_value = [pending_email, queued_sms]
+
+        cancelled = cancel_pending_booking_reminder_notifications(
+            db,
+            booking_id=uuid4(),
+            reason="Booking cancelled by client",
+            now=now,
+        )
+
+        self.assertEqual(cancelled, 2)
+        for notification in (pending_email, queued_sms):
+            self.assertEqual(notification.status, NOTIFICATION_STATUS_CANCELLED)
+            self.assertEqual(notification.skipped_at, now)
+            self.assertEqual(notification.failure_reason, "Booking cancelled by client")
+            self.assertEqual(notification.updated_at, now)
+
     def test_cancellation_uses_local_time_instead_of_utc(self) -> None:
         _, body = _body_for_booking_notification(
             is_cancellation=True,
