@@ -32,6 +32,18 @@ TARGET_QUANTITIES = {
     9: 87,
     10: 12,
 }
+EXPECTED_TITLES = {
+    1: "partition degre 1",
+    2: "partition degre 2 mon 1er piano",
+    3: "partition degre 3",
+    4: "partition degre 4 bami",
+    5: "partition degre 5",
+    6: "partition degre 6",
+    7: "partition degre 7",
+    8: "partition degre 8",
+    9: "partition degre 9",
+    10: "partition degre 10",
+}
 
 
 def _normalize(value: str | None) -> str:
@@ -54,17 +66,12 @@ def _degree_from_title(title: str) -> int | None:
 
 
 def _is_partition_candidate(product: CatalogProduct, category: ProductCategory | None) -> bool:
-    title_token = _normalize(product.title)
-    category_token = _normalize(" ".join(filter(None, (category.name if category else None, category.code if category else None))))
-    has_partition_scope = any(
-        marker in f" {title_token} {category_token} "
-        for marker in (" partition", " methode", " repertoire", " initiation")
-    )
+    degree = _degree_from_title(product.title)
     return (
         product.active
         and not product.is_virtual
-        and _degree_from_title(product.title) in TARGET_QUANTITIES
-        and has_partition_scope
+        and degree in EXPECTED_TITLES
+        and _normalize(product.title) == EXPECTED_TITLES[degree]
     )
 
 
