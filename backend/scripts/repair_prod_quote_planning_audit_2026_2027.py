@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import sys
+
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 from sqlalchemy import func, select
 
