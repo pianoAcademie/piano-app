@@ -44,16 +44,21 @@ function firstParam(params: SearchParams, key: string): string {
 }
 
 function isoDate(value: Date): string {
-  return value.toISOString().slice(0, 10);
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Paris",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(value);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
 }
 
 function defaultDates(): { from: string; to: string } {
   const today = new Date();
-  const from = new Date(today);
   const to = new Date(today);
-  from.setDate(from.getDate() - 90);
   to.setDate(to.getDate() + 30);
-  return { from: isoDate(from), to: isoDate(to) };
+  return { from: isoDate(today), to: isoDate(to) };
 }
 
 function reportQuery(values: Record<string, string>): string {
@@ -79,25 +84,83 @@ function localDateTime(value: string, timezone: string, language: UiLanguage): {
   }
 }
 
+function localDay(value: string, timezone: string, language: UiLanguage): { key: string; label: string } {
+  const parsed = new Date(value);
+  const safeTimezone = timezone || "Europe/Paris";
+  try {
+    const keyParts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: safeTimezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(parsed);
+    const keyValues = Object.fromEntries(keyParts.map((part) => [part.type, part.value]));
+    return {
+      key: `${keyValues.year}-${keyValues.month}-${keyValues.day}`,
+      label: new Intl.DateTimeFormat(localeForUiLanguage(language), {
+        timeZone: safeTimezone,
+        weekday: "long",
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+      }).format(parsed),
+    };
+  } catch {
+    return localDay(value, "Europe/Paris", language);
+  }
+}
+
+function groupRowsByDay(rows: TrialCourseReportRow[], language: UiLanguage): Array<{
+  key: string;
+  label: string;
+  rows: TrialCourseReportRow[];
+}> {
+  const groups = new Map<string, { key: string; label: string; rows: TrialCourseReportRow[] }>();
+  for (const row of [...rows].sort((left, right) => (
+    new Date(left.session_start_at).getTime() - new Date(right.session_start_at).getTime()
+  ))) {
+    const day = localDay(row.session_start_at, row.session_timezone, language);
+    const group = groups.get(day.key) ?? { ...day, rows: [] };
+    group.rows.push(row);
+    groups.set(day.key, group);
+  }
+  return [...groups.values()];
+}
+
+function attendanceClass(status: string): string {
+  const normalized = status.trim().toUpperCase();
+  if (normalized === "ATTENDED") {
+    return "status-ok";
+  }
+  if (["CANCELLED", "NO_SHOW", "WAITLISTED"].includes(normalized)) {
+    return "status-off";
+  }
+  return "status-warn";
+}
+
 const LABELS = {
   fr: {
-    title: "Suivi des cours d'essai",
-    subtitle: "Tous les essais, quel que soit le type de cours, avec présence et avancement commercial.",
+    title: "Essais à venir",
+    subtitle: "Tous les cours d'essai planifiés, regroupés par jour, quel que soit le type de cours.",
     back: "Retour au reporting",
     from: "Du",
     to: "Au",
     professor: "Professeur",
     location: "Lieu",
-    all: "Tous",
+    allProfessors: "Tous les professeurs",
+    allLocations: "Tous les lieux",
+    includeInactive: "Afficher aussi les réservations annulées et les listes d'attente",
     apply: "Appliquer",
     reset: "Réinitialiser",
     export: "Exporter en Excel",
-    total: "Cours d'essai",
-    attended: "Présents",
-    intakes: "Intakes remplis",
-    registered: "Inscriptions finales",
-    rate: "Taux de conversion",
-    dateTime: "Date et heure",
+    total: "Essais à venir",
+    days: "Jours concernés",
+    locationsCount: "Lieux concernés",
+    professorsCount: "Professeurs concernés",
+    trial: "essai",
+    trials: "essais",
+    slot: "Créneau",
+    openSlot: "Ouvrir le créneau",
     course: "Cours",
     student: "Élève",
     note: "Note interne professeur",
@@ -106,23 +169,27 @@ const LABELS = {
     noRows: "Aucun cours d'essai ne correspond à ces filtres.",
   },
   en: {
-    title: "Trial lesson tracking",
-    subtitle: "All trial lessons, across every course type, with attendance and commercial progress.",
+    title: "Upcoming trial lessons",
+    subtitle: "All scheduled trial lessons, grouped by day, across every course type.",
     back: "Back to reporting",
     from: "From",
     to: "To",
     professor: "Teacher",
     location: "Location",
-    all: "All",
+    allProfessors: "All teachers",
+    allLocations: "All locations",
+    includeInactive: "Also show cancelled bookings and waiting lists",
     apply: "Apply",
     reset: "Reset",
     export: "Export to Excel",
-    total: "Trial lessons",
-    attended: "Attended",
-    intakes: "Completed intakes",
-    registered: "Final registrations",
-    rate: "Conversion rate",
-    dateTime: "Date and time",
+    total: "Upcoming trials",
+    days: "Scheduled days",
+    locationsCount: "Locations",
+    professorsCount: "Teachers",
+    trial: "trial",
+    trials: "trials",
+    slot: "Time slot",
+    openSlot: "Open time slot",
     course: "Course",
     student: "Student",
     note: "Internal teacher note",
@@ -148,7 +215,14 @@ export default async function TrialCoursesReportPage({ searchParams }: { searchP
   const dateTo = firstParam(searchParams, "date_to") || defaults.to;
   const professorId = firstParam(searchParams, "professor_id");
   const locationId = firstParam(searchParams, "location_id");
-  const query = reportQuery({ date_from: dateFrom, date_to: dateTo, professor_id: professorId, location_id: locationId });
+  const includeInactive = ["1", "true", "on"].includes(firstParam(searchParams, "include_inactive").toLowerCase());
+  const query = reportQuery({
+    date_from: dateFrom,
+    date_to: dateTo,
+    professor_id: professorId,
+    location_id: locationId,
+    include_inactive: includeInactive ? "true" : "false",
+  });
 
   const [rowsResult, professorsResult, locationsResult] = await Promise.all([
     backendRequest<TrialCourseReportRow[]>(`/api/v1/admin/reports/trial-courses?${query}`, {}, token),
@@ -158,10 +232,9 @@ export default async function TrialCoursesReportPage({ searchParams }: { searchP
   const rows = rowsResult.ok ? rowsResult.data : [];
   const professors = professorsResult.ok ? professorsResult.data : [];
   const locations = locationsResult.ok ? locationsResult.data : [];
-  const attended = rows.filter((row) => row.attendance_status === "ATTENDED").length;
-  const intakes = rows.filter((row) => row.has_intake).length;
-  const registered = rows.filter((row) => row.is_registered).length;
-  const conversionRate = rows.length > 0 ? registered / rows.length : 0;
+  const dayGroups = groupRowsByDay(rows, language);
+  const locationCount = new Set(rows.map((row) => row.location_id)).size;
+  const professorCount = new Set(rows.map((row) => row.professor_id).filter(Boolean)).size;
 
   return (
     <section className="admin-page-grid">
@@ -191,7 +264,7 @@ export default async function TrialCoursesReportPage({ searchParams }: { searchP
           <label>
             {labels.professor}
             <select name="professor_id" defaultValue={professorId}>
-              <option value="">{labels.all}</option>
+              <option value="">{labels.allProfessors}</option>
               {professors.map((professor) => (
                 <option key={professor.id} value={professor.id}>{professor.first_name} {professor.last_name}</option>
               ))}
@@ -200,11 +273,15 @@ export default async function TrialCoursesReportPage({ searchParams }: { searchP
           <label>
             {labels.location}
             <select name="location_id" defaultValue={locationId}>
-              <option value="">{labels.all}</option>
+              <option value="">{labels.allLocations}</option>
               {locations.map((location) => (
                 <option key={location.id} value={location.id}>{location.name}</option>
               ))}
             </select>
+          </label>
+          <label className="checkbox span-4 trial-report-inactive-filter">
+            <input type="checkbox" name="include_inactive" value="true" defaultChecked={includeInactive} />
+            <span>{labels.includeInactive}</span>
           </label>
           <div className="form-actions span-4">
             <Link className="button-link" href="/admin/reporting/trial-courses">{labels.reset}</Link>
@@ -217,9 +294,9 @@ export default async function TrialCoursesReportPage({ searchParams }: { searchP
       <section className="grid cols-4">
         {[
           [labels.total, String(rows.length)],
-          [labels.attended, String(attended)],
-          [labels.intakes, String(intakes)],
-          [labels.registered, `${registered} · ${new Intl.NumberFormat(localeForUiLanguage(language), { style: "percent", maximumFractionDigits: 1 }).format(conversionRate)}`],
+          [labels.days, String(dayGroups.length)],
+          [labels.locationsCount, String(locationCount)],
+          [labels.professorsCount, String(professorCount)],
         ].map(([label, value]) => (
           <article className="card" key={label}>
             <p className="muted">{label}</p>
@@ -228,47 +305,71 @@ export default async function TrialCoursesReportPage({ searchParams }: { searchP
         ))}
       </section>
 
-      <section className="card">
-        {rows.length > 0 ? (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>{labels.dateTime}</th>
-                  <th>{labels.course}</th>
-                  <th>{labels.professor}</th>
-                  <th>{labels.student}</th>
-                  <th>{labels.note}</th>
-                  <th>{labels.attendance}</th>
-                  <th>{labels.status}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((row) => {
-                  const when = localDateTime(row.session_start_at, row.session_timezone, language);
-                  return (
-                    <tr key={row.booking_id}>
-                      <td><strong>{when.date}</strong><br /><span className="muted">{when.time}</span></td>
-                      <td><strong>{row.course_type_name}</strong><br /><span className="muted">{row.course_format === "PARTICULIER" ? "Particulier" : "Collectif"} · {row.location_name}</span></td>
-                      <td>{row.professor_name}</td>
-                      <td>
-                        <Link href={`/admin/clients/${encodeURIComponent(row.student_id)}`}><strong>{row.student_first_name || ""} {row.student_last_name || ""}</strong></Link>
-                        <br /><span className="muted">{row.parent_email || row.student_email}</span>
-                      </td>
-                      <td style={{ whiteSpace: "pre-wrap", minWidth: 240 }}>{row.internal_note || "-"}</td>
-                      <td><span className="status-pill">{row.attendance_label}</span></td>
-                      <td>
-                        <strong>{row.conversion_status}</strong>
-                        <br /><span className="muted">Intake: {row.has_intake ? "oui" : "non"}{row.quote_status ? ` · Devis: ${row.quote_status}` : ""}</span>
-                      </td>
+      {dayGroups.length > 0 ? (
+        <section className="trial-report-day-list">
+          {dayGroups.map((group) => (
+            <section className="card trial-report-day-card" key={group.key}>
+              <div className="trial-report-day-header">
+                <h3>{group.label}</h3>
+                <span className="status-pill status-warn">
+                  {group.rows.length} {group.rows.length > 1 ? labels.trials : labels.trial}
+                </span>
+              </div>
+              <div className="table-wrap">
+                <table className="data-table trial-report-table">
+                  <thead>
+                    <tr>
+                      <th>{labels.slot}</th>
+                      <th>{labels.student}</th>
+                      <th>{labels.course}</th>
+                      <th>{labels.professor}</th>
+                      <th>{labels.location}</th>
+                      <th>{labels.attendance}</th>
+                      <th>{labels.status}</th>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        ) : <p className="muted">{labels.noRows}</p>}
-      </section>
+                  </thead>
+                  <tbody>
+                    {group.rows.map((row) => {
+                      const startsAt = localDateTime(row.session_start_at, row.session_timezone, language);
+                      const endsAt = localDateTime(row.session_end_at, row.session_timezone, language);
+                      return (
+                        <tr key={row.booking_id}>
+                          <td>
+                            <Link className="trial-report-slot-link" href={`/admin?session_id=${encodeURIComponent(row.session_id)}`}>
+                              <strong>{startsAt.time} – {endsAt.time}</strong>
+                              <small className="muted">{labels.openSlot}</small>
+                            </Link>
+                          </td>
+                          <td>
+                            <Link href={`/admin/clients/${encodeURIComponent(row.student_id)}`}>
+                              <strong>{row.student_first_name || ""} {row.student_last_name || ""}</strong>
+                            </Link>
+                            <br /><small className="muted">{row.parent_email || row.student_email}</small>
+                          </td>
+                          <td>
+                            <strong>{row.course_type_name}</strong>
+                            <br /><small className="muted">{row.course_format === "PARTICULIER" ? "Particulier" : "Collectif"}</small>
+                            {row.internal_note ? <small className="trial-report-course-note">{row.internal_note}</small> : null}
+                          </td>
+                          <td>{row.professor_name}</td>
+                          <td><strong>{row.location_name}</strong></td>
+                          <td><span className={`status-pill ${attendanceClass(row.attendance_status)}`}>{row.attendance_label}</span></td>
+                          <td>
+                            <strong>{row.conversion_status}</strong>
+                            <br /><small className="muted">Intake: {row.has_intake ? "oui" : "non"}{row.quote_status ? ` · Devis: ${row.quote_status}` : ""}</small>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          ))}
+        </section>
+      ) : (
+        <section className="card"><p className="muted">{labels.noRows}</p></section>
+      )}
     </section>
   );
 }

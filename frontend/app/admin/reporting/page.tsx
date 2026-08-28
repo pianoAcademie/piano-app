@@ -79,8 +79,8 @@ const REPORT_DEFINITIONS: ReportDefinition[] = [
   },
   {
     type: "trial-courses",
-    label: "Suivi des cours d'essai",
-    description: "Essais collectifs et particuliers, presence, notes professeurs et conversion commerciale.",
+    label: "Essais a venir",
+    description: "Tous les essais collectifs et particuliers regroupes par jour, avec eleve, professeur, lieu et creneau.",
     filterHint: "Periode, professeur et lieu. Consultation detaillee et export Excel.",
   },
   {
@@ -385,7 +385,7 @@ export default async function AdminReportingPage({ searchParams }: ReportingPage
               ) : reportDefinition.type === "trial-courses" ? (
                 <div className="grid cols-2 config-form-grid">
                   <p className="muted span-2">
-                    Ouvrez le suivi pour filtrer les cours d'essai par date, professeur et lieu, puis exporter le resultat en Excel.
+                    Ouvrez la liste des essais a venir, regroupes par jour, puis filtrez-la par date, professeur ou lieu.
                   </p>
                   <div className="form-actions span-2">
                     <Link className="button-link" href={withParams({ create: "1" })}>Retour</Link>

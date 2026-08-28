@@ -2629,6 +2629,7 @@ def _load_trial_course_report_rows(
     date_to: date | None,
     professor_id: UUID | None,
     location_id: UUID | None,
+    include_inactive: bool,
     limit: int,
     now: datetime | None = None,
 ) -> list[TrialCourseReportRow]:
@@ -2654,9 +2655,11 @@ def _load_trial_course_report_rows(
         stmt = stmt.where(func.coalesce(CourseSession.substitute_teacher_id, CourseSession.professor_id) == professor_id)
     if location_id is not None:
         stmt = stmt.where(CourseSession.location_id == location_id)
+    if not include_inactive:
+        stmt = stmt.where(Booking.status.notin_([BookingStatus.CANCELLED, BookingStatus.WAITLISTED]))
 
     raw_rows = db.execute(
-        stmt.order_by(CourseSession.start_at_utc.desc(), Booking.booked_at.desc()).limit(limit * 5)
+        stmt.order_by(CourseSession.start_at_utc.asc(), Booking.booked_at.asc()).limit(limit * 5)
     ).all()
     trial_rows = [
         (session, course_type, location, professor, booking, student, source)
@@ -2837,6 +2840,7 @@ def report_trial_courses(
     date_to: date | None = None,
     professor_id: UUID | None = None,
     location_id: UUID | None = None,
+    include_inactive: bool = False,
     limit: int = Query(default=2000, ge=1, le=5000),
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
@@ -2847,6 +2851,7 @@ def report_trial_courses(
         date_to=date_to,
         professor_id=professor_id,
         location_id=location_id,
+        include_inactive=include_inactive,
         limit=limit,
     )
 
@@ -2962,6 +2967,7 @@ def export_trial_courses_xlsx(
     date_to: date | None = None,
     professor_id: UUID | None = None,
     location_id: UUID | None = None,
+    include_inactive: bool = False,
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> Response:
@@ -2971,6 +2977,7 @@ def export_trial_courses_xlsx(
         date_to=date_to,
         professor_id=professor_id,
         location_id=location_id,
+        include_inactive=include_inactive,
         limit=5000,
     )
     content = _trial_courses_xlsx(rows)

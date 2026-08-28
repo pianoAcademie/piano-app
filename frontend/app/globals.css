@@ -25131,3 +25131,68 @@ button.client-danger-button:hover {
     display: none;
   }
 }
+
+.trial-report-inactive-filter {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 9px;
+}
+
+.trial-report-inactive-filter input {
+  width: auto;
+  margin: 0;
+}
+
+.trial-report-day-list {
+  display: grid;
+  gap: 16px;
+}
+
+.trial-report-day-card {
+  padding: 0;
+  overflow: hidden;
+}
+
+.trial-report-day-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  background: #fff8ec;
+}
+
+.trial-report-day-header h3 {
+  margin: 0;
+  text-transform: capitalize;
+}
+
+.trial-report-day-card .table-wrap {
+  margin: 0;
+}
+
+.trial-report-table {
+  min-width: 980px;
+}
+
+.trial-report-slot-link {
+  display: inline-grid;
+  gap: 2px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.trial-report-slot-link:hover strong {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.trial-report-course-note {
+  display: block;
+  max-width: 300px;
+  margin-top: 6px;
+  color: var(--muted);
+  white-space: pre-wrap;
+}
