@@ -26,6 +26,7 @@ const NAV_SECTIONS: NavSection[] = [
     title: { fr: "Operations", en: "Operations" },
     items: [
       { href: "/admin", label: { fr: "Planning", en: "Schedule" }, icon: "📅", permission: "can_view_planning" },
+      { href: "/admin/reporting/trial-courses", label: { fr: "Essais à venir", en: "Upcoming trials" }, icon: "🧪" },
       { href: "/admin/tasks", label: { fr: "Tâches", en: "Tasks" }, icon: "📋", permission: "can_manage_tasks" },
       { href: "/admin/events", label: { fr: "Événements", en: "Events" }, icon: "🎟️", permission: "can_manage_events" },
       { href: "/admin/planning-reorganization", label: { fr: "Reorganisation saison", en: "Season reorg" }, icon: "🧩", permission: "can_edit_planning" },
@@ -84,6 +85,9 @@ type AdminNavProps = {
 function isLinkActive(pathname: string, href: string): boolean {
   if (href === "/admin") {
     return pathname === "/admin";
+  }
+  if (href === "/admin/reporting" && pathname.startsWith("/admin/reporting/trial-courses")) {
+    return false;
   }
   return pathname === href || pathname.startsWith(`${href}/`);
 }
