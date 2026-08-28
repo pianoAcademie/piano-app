@@ -143,16 +143,18 @@ def main(argv: list[str] | None = None) -> int:
         ]
         if len(active_anchor_candidates) != 1:
             _abort(f"expected_one_active_empty_anchor_duplicate_found_{len(active_anchor_candidates)}")
-        target_anchor = active_anchor_candidates[0]
-        if target_anchor.recurrence_group_id is None or target_anchor.recurrence_group_id == source_group_id:
-            _abort("invalid_target_recurrence_group")
 
-        target_group_id = target_anchor.recurrence_group_id
+        source_starts = [session_obj.start_at_utc for session_obj in source_sessions]
+        source_ids = [session_obj.id for session_obj in source_sessions]
         target_sessions = db.scalars(
             select(CourseSession)
             .where(
-                CourseSession.recurrence_group_id == target_group_id,
-                CourseSession.start_at_utc >= anchor.start_at_utc,
+                CourseSession.start_at_utc.in_(source_starts),
+                CourseSession.location_id == anchor.location_id,
+                CourseSession.course_type_id == anchor.course_type_id,
+                CourseSession.title == anchor.title,
+                CourseSession.id.not_in(source_ids),
+                CourseSession.status == SessionStatus.SCHEDULED,
             )
             .order_by(CourseSession.start_at_utc.asc(), CourseSession.id.asc())
             .with_for_update()
@@ -171,14 +173,22 @@ def main(argv: list[str] | None = None) -> int:
 
         source_by_start = {session_obj.start_at_utc: session_obj for session_obj in source_sessions}
         target_by_start = {session_obj.start_at_utc: session_obj for session_obj in target_sessions}
-        if len(source_by_start) != len(source_sessions) or len(target_by_start) != len(target_sessions):
-            _abort("duplicate_timestamp_inside_recurrence_group")
+        if len(source_by_start) != len(source_sessions):
+            _abort("duplicate_timestamp_inside_source_recurrence_group")
+        if len(target_by_start) != len(target_sessions):
+            _abort("multiple_active_duplicate_sessions_at_same_timestamp")
         missing_target_dates = sorted(set(source_by_start) - set(target_by_start))
         if missing_target_dates:
             _abort(f"target_series_missing_{len(missing_target_dates)}_source_dates")
 
-        source_ids = [session_obj.id for session_obj in source_sessions]
         target_ids = [target_by_start[session_obj.start_at_utc].id for session_obj in source_sessions]
+        target_group_ids = sorted(
+            {
+                str(session_obj.recurrence_group_id)
+                for session_obj in target_sessions
+                if session_obj.recurrence_group_id is not None
+            }
+        )
         target_booking_count = int(
             db.scalar(select(func.count(Booking.id)).where(Booking.session_id.in_(target_ids))) or 0
         )
@@ -222,7 +232,8 @@ def main(argv: list[str] | None = None) -> int:
             status = _enum_value(session_obj.status)
             status_counts[status] = status_counts.get(status, 0) + 1
         print(
-            f"{SCRIPT_PREFIX}|audit|source_group={source_group_id}|target_group={target_group_id}|"
+            f"{SCRIPT_PREFIX}|audit|source_group={source_group_id}|"
+            f"target_groups={','.join(target_group_ids) if target_group_ids else 'none'}|"
             f"source_sessions={len(source_sessions)}|target_sessions={len(target_sessions)}|"
             f"moved_bookings={len(source_booking_rows)}|student={_student_label(student)}|"
             f"source_statuses={status_counts}|target_existing_bookings={target_booking_count}"
@@ -271,7 +282,7 @@ def main(argv: list[str] | None = None) -> int:
                 occurred_at=now,
                 payload_json={
                     "source_recurrence_group_id": str(source_group_id),
-                    "target_recurrence_group_id": str(target_group_id),
+                    "target_recurrence_group_ids": target_group_ids,
                     "removed_duplicate_session_ids": [str(session_id) for session_id in source_ids],
                     "moved_booking_ids": [str(booking.id) for booking, _ in source_booking_rows],
                     "student_id": str(next(iter(student_ids))),
