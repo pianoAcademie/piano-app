@@ -1346,6 +1346,69 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
 
         self.assertNotIn("planning_session_limit", hydrated["blocks"][0])
 
+    def test_live_planning_removes_stale_limit_when_line_has_no_contractual_limit(self) -> None:
+        activity_id = uuid4()
+        line = SimpleNamespace(
+            id=uuid4(),
+            activity_id=activity_id,
+            line_category="service",
+            pricing_unit="session",
+            quantity=Decimal("32.00"),
+            sort_order=0,
+            created_at=datetime(2026, 8, 28, 9, 46, tzinfo=timezone.utc),
+            meta={},
+        )
+        snapshot = {
+            "blocks": [
+                {
+                    "source": "live_planning",
+                    "activity_id": str(activity_id),
+                    "start_date": "2026-09-09",
+                    "end_date": "2027-06-09",
+                    "sessions_count": 32,
+                    "planning_session_limit": 31,
+                }
+            ],
+            "sessions": [],
+        }
+
+        hydrated = _calendar_snapshot_with_line_recommendation_keys(
+            None,
+            snapshot,
+            lines=[line],
+        )
+
+        self.assertNotIn("planning_session_limit", hydrated["blocks"][0])
+
+    def test_live_planning_preserves_explicit_contractual_line_limit(self) -> None:
+        activity_id = uuid4()
+        line = SimpleNamespace(
+            id=uuid4(),
+            activity_id=activity_id,
+            line_category="service",
+            pricing_unit="session",
+            quantity=Decimal("10.00"),
+            sort_order=0,
+            created_at=datetime(2026, 8, 28, 9, 46, tzinfo=timezone.utc),
+            meta={"planning_session_limit": 10},
+        )
+        snapshot = {
+            "blocks": [
+                {
+                    "source": "live_planning",
+                    "activity_id": str(activity_id),
+                    "start_date": "2026-09-09",
+                    "end_date": "2027-06-16",
+                    "planning_session_limit": 10,
+                }
+            ],
+            "sessions": [],
+        }
+
+        hydrated = _calendar_snapshot_with_line_recommendation_keys(None, snapshot, lines=[line])
+
+        self.assertEqual(hydrated["blocks"][0]["planning_session_limit"], 10)
+
     def test_line_recommendation_keys_repair_stale_duplicate_activity_line_keys(self) -> None:
         activity_id = uuid4()
         first_line_id = uuid4()

@@ -2413,6 +2413,40 @@ def _planning_session_limit_from_quote_line_meta(
     return inferred_limit if inferred_limit > 1 else None
 
 
+def _planning_block_with_quote_line_session_limit(
+    block: dict[str, Any],
+    line: QuoteLine | None,
+    *,
+    allow_session_quantity: bool,
+) -> tuple[dict[str, Any], bool]:
+    """Synchronize contractual limits without truncating an authoritative live series.
+
+    Session quantities can help pair duplicate activity lines with their planning
+    blocks, but they are derived from the calendar and must not become a limit on
+    a live series. Only an explicit line/template limit is authoritative there.
+    """
+    explicit_limit = _planning_session_limit_from_quote_line_meta(line)
+    if explicit_limit is not None:
+        if _planning_session_limit_from_block(block) == explicit_limit:
+            return block, False
+        return {**block, "planning_session_limit": explicit_limit}, True
+
+    if _planning_block_is_live(block):
+        if _planning_session_limit_from_block(block) is not None:
+            normalized = dict(block)
+            normalized.pop("planning_session_limit", None)
+            return normalized, True
+        return block, False
+
+    inferred_limit = _planning_session_limit_from_quote_line_meta(
+        line,
+        allow_session_quantity=allow_session_quantity,
+    )
+    if inferred_limit is None or _planning_session_limit_from_block(block) == inferred_limit:
+        return block, False
+    return {**block, "planning_session_limit": inferred_limit}, True
+
+
 def _planning_session_limit_from_block(block: dict[str, Any]) -> int | None:
     if _planning_block_has_custom_period(block):
         return None
@@ -2475,6 +2509,13 @@ def _calendar_snapshot_with_line_recommendation_keys(
         or any(str(_json_object(getattr(line, "meta", None)).get("typeform_automatic_line") or "").strip() for line in activity_lines)
         or any(_planning_session_limit_from_quote_line_meta(line) is not None for line in activity_lines)
     }
+    target_activity_ids.update(
+        str(block.get("activity_id") or "").strip()
+        for block in blocks
+        if _planning_block_is_live(block)
+        and _planning_session_limit_from_block(block) is not None
+        and str(block.get("activity_id") or "").strip()
+    )
     if not target_activity_ids:
         normalized_blocks: list[dict[str, Any]] = []
         changed_blocks = False
@@ -2512,13 +2553,12 @@ def _calendar_snapshot_with_line_recommendation_keys(
         )
         if existing_key and existing_key != activity_id and not should_reassign_duplicate_line_key:
             matching_line = lines_by_recommendation_key.get(existing_key)
-            limit = _planning_session_limit_from_quote_line_meta(
+            block, limit_changed = _planning_block_with_quote_line_session_limit(
+                block,
                 matching_line,
                 allow_session_quantity=len(activity_lines) > 1,
             )
-            if limit is not None and _planning_session_limit_from_block(block) != limit:
-                block = {**block, "planning_session_limit": limit}
-                changed_blocks = True
+            changed_blocks = changed_blocks or limit_changed
             normalized_blocks.append(block)
             continue
 
@@ -2533,13 +2573,12 @@ def _calendar_snapshot_with_line_recommendation_keys(
         if recommendation_key and recommendation_key != existing_key:
             block = {**block, "recommendation_key": recommendation_key}
             changed_blocks = True
-        limit = _planning_session_limit_from_quote_line_meta(
+        block, limit_changed = _planning_block_with_quote_line_session_limit(
+            block,
             line,
             allow_session_quantity=len(activity_lines) > 1,
         )
-        if limit is not None and _planning_session_limit_from_block(block) != limit:
-            block = {**block, "planning_session_limit": limit}
-            changed_blocks = True
+        changed_blocks = changed_blocks or limit_changed
         normalized_blocks.append(block)
 
     if not changed_blocks:

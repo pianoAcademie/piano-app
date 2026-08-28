@@ -14289,6 +14289,11 @@ function normalizePlanningBlockSessionLimit(
   }
   const inferred = inferPlanningSessionLimitForBlock(block, quoteLines);
   if (inferred <= 0) {
+    if (String(block.source ?? "").trim().toLowerCase() === "live_planning") {
+      return positiveInt(block.planning_session_limit) > 0
+        ? { ...block, planning_session_limit: null }
+        : block;
+    }
     return positiveInt(block.planning_session_limit) <= 1
       ? { ...block, planning_session_limit: null }
       : block;
