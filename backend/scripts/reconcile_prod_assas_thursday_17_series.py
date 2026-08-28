@@ -99,7 +99,7 @@ def main(argv: list[str] | None = None) -> int:
             _abort("unexpected_anchor_title")
 
         source_group_id = anchor.recurrence_group_id
-        source_sessions = db.scalars(
+        grouped_sessions = db.scalars(
             select(CourseSession)
             .where(
                 CourseSession.recurrence_group_id == source_group_id,
@@ -108,78 +108,62 @@ def main(argv: list[str] | None = None) -> int:
             .order_by(CourseSession.start_at_utc.asc(), CourseSession.id.asc())
             .with_for_update()
         ).all()
-        if not source_sessions:
+        if not grouped_sessions:
             _abort("source_series_empty")
         if any(
             session_obj.location_id != anchor.location_id
             or session_obj.course_type_id != anchor.course_type_id
             or (session_obj.title or "").strip() != (anchor.title or "").strip()
-            for session_obj in source_sessions
+            for session_obj in grouped_sessions
         ):
             _abort("source_series_signature_mismatch")
         if any(
             session_obj.status not in (SessionStatus.SCHEDULED, SessionStatus.CANCELLED)
-            for session_obj in source_sessions
+            for session_obj in grouped_sessions
         ):
             _abort("source_series_has_non_future_status")
 
-        active_anchor_candidates = db.scalars(
-            select(CourseSession)
-            .where(
-                CourseSession.start_at_utc == anchor.start_at_utc,
-                CourseSession.location_id == anchor.location_id,
-                CourseSession.course_type_id == anchor.course_type_id,
-                CourseSession.title == anchor.title,
-                CourseSession.id != anchor.id,
-                CourseSession.status == SessionStatus.SCHEDULED,
-            )
-            .order_by(CourseSession.id.asc())
-            .with_for_update()
-        ).all()
-        active_anchor_candidates = [
-            session_obj
-            for session_obj in active_anchor_candidates
-            if int(db.scalar(select(func.count(Booking.id)).where(Booking.session_id == session_obj.id)) or 0) == 0
-        ]
-        if len(active_anchor_candidates) != 1:
-            _abort(f"expected_one_active_empty_anchor_duplicate_found_{len(active_anchor_candidates)}")
+        grouped_ids = [session_obj.id for session_obj in grouped_sessions]
+        booking_counts = {
+            session_id: int(count)
+            for session_id, count in db.execute(
+                select(Booking.session_id, func.count(Booking.id))
+                .where(Booking.session_id.in_(grouped_ids))
+                .group_by(Booking.session_id)
+            ).all()
+        }
+        sessions_by_start: dict[datetime, list[CourseSession]] = {}
+        for session_obj in grouped_sessions:
+            sessions_by_start.setdefault(session_obj.start_at_utc, []).append(session_obj)
 
-        source_starts = [session_obj.start_at_utc for session_obj in source_sessions]
+        source_by_start: dict[datetime, CourseSession] = {}
+        target_by_start: dict[datetime, CourseSession] = {}
+        for start_at, pair in sessions_by_start.items():
+            if len(pair) != 2:
+                _abort(f"expected_two_occurrences_at_{start_at.isoformat()}_found_{len(pair)}")
+            empty_scheduled = [
+                session_obj
+                for session_obj in pair
+                if session_obj.status == SessionStatus.SCHEDULED
+                and booking_counts.get(session_obj.id, 0) == 0
+            ]
+            if len(empty_scheduled) != 1:
+                _abort(
+                    f"expected_one_active_empty_occurrence_at_{start_at.isoformat()}_found_{len(empty_scheduled)}"
+                )
+            target_session = empty_scheduled[0]
+            source_session = next(session_obj for session_obj in pair if session_obj.id != target_session.id)
+            if (
+                target_session.end_at_utc != source_session.end_at_utc
+                or target_session.capacity_max != source_session.capacity_max
+            ):
+                _abort(f"source_target_shape_mismatch_at_{start_at.isoformat()}")
+            source_by_start[start_at] = source_session
+            target_by_start[start_at] = target_session
+
+        source_sessions = [source_by_start[start_at] for start_at in sorted(source_by_start)]
+        target_sessions = [target_by_start[start_at] for start_at in sorted(target_by_start)]
         source_ids = [session_obj.id for session_obj in source_sessions]
-        target_sessions = db.scalars(
-            select(CourseSession)
-            .where(
-                CourseSession.start_at_utc.in_(source_starts),
-                CourseSession.location_id == anchor.location_id,
-                CourseSession.course_type_id == anchor.course_type_id,
-                CourseSession.title == anchor.title,
-                CourseSession.id.not_in(source_ids),
-                CourseSession.status == SessionStatus.SCHEDULED,
-            )
-            .order_by(CourseSession.start_at_utc.asc(), CourseSession.id.asc())
-            .with_for_update()
-        ).all()
-        if not target_sessions:
-            _abort("target_series_empty")
-        if any(session_obj.status != SessionStatus.SCHEDULED for session_obj in target_sessions):
-            _abort("target_series_has_non_scheduled_session")
-        if any(
-            session_obj.location_id != anchor.location_id
-            or session_obj.course_type_id != anchor.course_type_id
-            or (session_obj.title or "").strip() != (anchor.title or "").strip()
-            for session_obj in target_sessions
-        ):
-            _abort("target_series_signature_mismatch")
-
-        source_by_start = {session_obj.start_at_utc: session_obj for session_obj in source_sessions}
-        target_by_start = {session_obj.start_at_utc: session_obj for session_obj in target_sessions}
-        if len(source_by_start) != len(source_sessions):
-            _abort("duplicate_timestamp_inside_source_recurrence_group")
-        if len(target_by_start) != len(target_sessions):
-            _abort("multiple_active_duplicate_sessions_at_same_timestamp")
-        missing_target_dates = sorted(set(source_by_start) - set(target_by_start))
-        if missing_target_dates:
-            _abort(f"target_series_missing_{len(missing_target_dates)}_source_dates")
 
         target_ids = [target_by_start[session_obj.start_at_utc].id for session_obj in source_sessions]
         target_group_ids = sorted(
