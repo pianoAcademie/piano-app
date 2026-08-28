@@ -148,12 +148,33 @@ def main(argv: list[str] | None = None) -> int:
             .order_by(CourseSession.id.asc())
             .with_for_update()
         ).all()
-        candidates = [
+        matching_sessions = [
             (session_obj, location)
             for session_obj, location in rows
             if EXPECTED_LOCATION_FRAGMENT in (location.name or "").strip().lower()
             and EXPECTED_TITLE_FRAGMENT in (session_obj.title or "").strip().lower()
         ]
+        cancelled_candidates = [
+            (session_obj, location)
+            for session_obj, location in matching_sessions
+            if session_obj.status == SessionStatus.CANCELLED
+        ]
+        candidates = cancelled_candidates
+        if not candidates:
+            repaired_session_ids = set(
+                db.scalars(
+                    select(DomainEvent.related_entity_id).where(
+                        DomainEvent.event_type == REPAIR_EVENT_TYPE,
+                        DomainEvent.related_entity_type == "slot",
+                        DomainEvent.related_entity_id.in_([session_obj.id for session_obj, _ in matching_sessions]),
+                    )
+                ).all()
+            )
+            candidates = [
+                (session_obj, location)
+                for session_obj, location in matching_sessions
+                if session_obj.id in repaired_session_ids
+            ]
         if not candidates and args.allow_missing:
             db.rollback()
             print(
@@ -162,6 +183,16 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 0
         if len(candidates) != 1:
+            for candidate_session, candidate_location in matching_sessions:
+                booking_count = len(
+                    db.scalars(select(Booking.id).where(Booking.session_id == candidate_session.id)).all()
+                )
+                print(
+                    f"{SCRIPT_PREFIX}|candidate|session_id={candidate_session.id}|"
+                    f"title={candidate_session.title}|location={candidate_location.name}|"
+                    f"status={_enum_value(candidate_session.status)}|reason={candidate_session.cancel_reason or '-'}|"
+                    f"recurrence_group_id={candidate_session.recurrence_group_id or '-'}|bookings={booking_count}"
+                )
             raise SystemExit(
                 f"{SCRIPT_PREFIX}|abort|reason=expected_one_session|found={len(candidates)}|"
                 f"all_at_time={len(rows)}|start_utc={TARGET_START_UTC.isoformat()}"
