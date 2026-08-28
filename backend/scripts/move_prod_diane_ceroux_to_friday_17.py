@@ -14,7 +14,11 @@ sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 from sqlalchemy import func, select
 
-from app.api.routes.admin import BOOKING_STATUSES_ACTIVE, _move_planning_reorganization_booking_occurrence
+from app.api.routes.admin import (
+    BOOKING_STATUSES_ACTIVE,
+    _move_planning_reorganization_booking_occurrence,
+    _session_client_kind_allowed,
+)
 from app.db.session import SessionLocal
 from app.models.catalog import Booking, CourseSession, CourseType, Location, SessionStatus
 from app.models.notification_engine import DomainEvent
@@ -114,6 +118,12 @@ def _rows_by_signature(rows: list[BookingRow]) -> dict[tuple[UUID, UUID, int, ti
     for row in rows:
         grouped.setdefault(_signature(row.session), []).append(row)
     return grouped
+
+
+def _target_series_key(session_obj: CourseSession) -> str:
+    if session_obj.recurrence_group_id is not None:
+        return f"recurrence:{session_obj.recurrence_group_id}"
+    return f"standalone:{session_obj.id}"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -240,15 +250,40 @@ def main(argv: list[str] | None = None) -> int:
             .order_by(CourseSession.start_at_utc.asc(), CourseSession.id.asc())
             .with_for_update()
         ).all()
-        friday_rows = [
+        raw_friday_rows = [
             row
             for row in target_candidates
             if _local_start(row[0]).weekday() == TARGET_WEEKDAY
             and _local_start(row[0]).timetz().replace(tzinfo=None, second=0, microsecond=0) == TARGET_TIME
         ]
-        targets_by_week: dict[date, list[CourseSession]] = {}
+        friday_rows = [
+            row for row in raw_friday_rows if _session_client_kind_allowed(row[0], student.client_kind)
+        ]
+        target_active_counts: dict[UUID, int] = {}
+        target_series_by_week: dict[str, dict[date, list[CourseSession]]] = {}
+        for session_obj, _, _ in raw_friday_rows:
+            active_count = int(
+                db.scalar(
+                    select(func.count(Booking.id)).where(
+                        Booking.session_id == session_obj.id,
+                        Booking.status.in_(BOOKING_STATUSES_ACTIVE),
+                    )
+                )
+                or 0
+            )
+            target_active_counts[session_obj.id] = active_count
+            print(
+                f"{SCRIPT_PREFIX}|target_candidate|session_id={session_obj.id}|"
+                f"week={_week_start(_local_start(session_obj)).isoformat()}|"
+                f"series={_target_series_key(session_obj)}|active_bookings={active_count}|"
+                f"child_enabled={bool(session_obj.child_bookings_enabled)}|"
+                f"adult_enabled={bool(session_obj.adult_bookings_enabled)}|"
+                f"student_kind_allowed={_session_client_kind_allowed(session_obj, student.client_kind)}"
+            )
         for session_obj, _, _ in friday_rows:
-            targets_by_week.setdefault(_week_start(_local_start(session_obj)), []).append(session_obj)
+            target_series_by_week.setdefault(_target_series_key(session_obj), {}).setdefault(
+                _week_start(_local_start(session_obj)), []
+            ).append(session_obj)
 
         source_by_week: dict[date, BookingRow] = {}
         for row in source_rows:
@@ -256,6 +291,46 @@ def main(argv: list[str] | None = None) -> int:
             if week in source_by_week:
                 _abort(f"multiple_source_bookings_in_week_{week.isoformat()}")
             source_by_week[week] = row
+
+        valid_target_series: list[str] = []
+        for series_key, sessions_by_week in sorted(target_series_by_week.items()):
+            covered_weeks = sum(
+                1 for week in source_by_week if len(sessions_by_week.get(week, [])) == 1
+            )
+            active_bookings = sum(
+                target_active_counts.get(session_obj.id, 0)
+                for sessions in sessions_by_week.values()
+                for session_obj in sessions
+            )
+            print(
+                f"{SCRIPT_PREFIX}|target_series|series={series_key}|"
+                f"covered_source_weeks={covered_weeks}/{len(source_by_week)}|"
+                f"active_bookings={active_bookings}"
+            )
+            if covered_weeks == len(source_by_week):
+                valid_target_series.append(series_key)
+
+        if len(valid_target_series) > 1:
+            active_by_series = {
+                series_key: sum(
+                    target_active_counts.get(session_obj.id, 0)
+                    for sessions in target_series_by_week[series_key].values()
+                    for session_obj in sessions
+                )
+                for series_key in valid_target_series
+            }
+            highest_active = max(active_by_series.values())
+            highest_series = [
+                series_key
+                for series_key, active_count in active_by_series.items()
+                if active_count == highest_active
+            ]
+            if highest_active > 0 and len(highest_series) == 1:
+                valid_target_series = highest_series
+        if len(valid_target_series) != 1:
+            _abort(f"expected_one_coherent_friday_17_series_found_{len(valid_target_series)}")
+        selected_target_series = valid_target_series[0]
+        targets_by_week = target_series_by_week[selected_target_series]
 
         pairs: list[tuple[BookingRow, CourseSession]] = []
         for week, source_row in sorted(source_by_week.items()):
@@ -290,6 +365,7 @@ def main(argv: list[str] | None = None) -> int:
             f"location={sample_source.location.name}|source_weekday={source_weekday}|"
             f"source_time={source_time.strftime('%H:%M')}|target_weekday={TARGET_WEEKDAY}|"
             f"target_time={TARGET_TIME.strftime('%H:%M')}|"
+            f"target_series={selected_target_series}|"
             f"first_target={_local_start(sample_target).isoformat()}|price_policy=keep_source"
         )
 
