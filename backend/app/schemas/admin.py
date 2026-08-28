@@ -2732,6 +2732,7 @@ class AdminSessionOperationNotificationRequest(BaseModel):
 
 class AdminSessionCancelOperationRequest(BaseModel):
     cancel_reason: str | None = Field(default="ADMIN_CANCELLED", max_length=255)
+    series_cancellation_confirmed: bool = False
     notifications: AdminSessionOperationNotificationRequest | None = None
 
 

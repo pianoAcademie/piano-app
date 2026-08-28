@@ -3606,6 +3606,7 @@ export async function cancelAdminSessionAction(formData: FormData): Promise<void
 
   const session_id = String(formData.get("session_id") ?? "").trim();
   const apply_scope = parseApplyScope(String(formData.get("apply_scope") ?? "ONE"));
+  const series_cancellation_confirmed = checkboxField(formData, "series_cancellation_confirmed");
   const notify_students = checkboxField(formData, "notify_students");
   const notify_professor = checkboxField(formData, "notify_professor");
   const professor_same_as_students = checkboxField(formData, "professor_same_as_students");
@@ -3621,6 +3622,7 @@ export async function cancelAdminSessionAction(formData: FormData): Promise<void
 
   const payload: Record<string, unknown> = {
     cancel_reason: "ADMIN_CANCELLED",
+    series_cancellation_confirmed,
   };
   if (notify_students || notify_professor) {
     payload.notifications = {

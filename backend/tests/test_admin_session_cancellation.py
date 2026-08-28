@@ -3,7 +3,13 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
-from app.api.routes.admin import _cancel_booking_for_cancelled_session
+import pytest
+from fastapi import HTTPException
+
+from app.api.routes.admin import (
+    _cancel_booking_for_cancelled_session,
+    _require_series_cancellation_confirmation,
+)
 from app.models.catalog import BookingStatus
 
 
@@ -103,3 +109,36 @@ def test_admin_session_cancellation_expires_pending_payment_receipt() -> None:
     assert receipt.status == "EXPIRED"
     assert receipt.updated_at == now
     restore_credit.assert_not_called()
+
+
+def test_recurring_series_cancellation_requires_second_confirmation() -> None:
+    session_obj = SimpleNamespace(recurrence_group_id=uuid4())
+
+    with pytest.raises(HTTPException) as exc_info:
+        _require_series_cancellation_confirmation(
+            session_obj=session_obj,
+            apply_scope="SERIES_FUTURE",
+            confirmed=False,
+        )
+
+    assert exc_info.value.status_code == 422
+
+
+def test_single_occurrence_cancellation_does_not_require_second_confirmation() -> None:
+    session_obj = SimpleNamespace(recurrence_group_id=uuid4())
+
+    _require_series_cancellation_confirmation(
+        session_obj=session_obj,
+        apply_scope="ONE",
+        confirmed=False,
+    )
+
+
+def test_recurring_series_cancellation_accepts_explicit_confirmation() -> None:
+    session_obj = SimpleNamespace(recurrence_group_id=uuid4())
+
+    _require_series_cancellation_confirmation(
+        session_obj=session_obj,
+        apply_scope="SERIES_ALL",
+        confirmed=True,
+    )

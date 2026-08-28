@@ -31,6 +31,7 @@ import PresenceButtonsGroup from "../../components/presence-buttons-group";
 import AttendanceInternalNoteField from "../../components/attendance-internal-note-field";
 import DayEventsDrawer from "../../components/planning/day-events-drawer";
 import SessionEditModalBridge from "../../components/planning/session-edit-modal-bridge";
+import SeriesCancellationSubmitButton from "../../components/series-cancellation-submit-button";
 import MonthDayCard from "../../components/planning/month-day-card";
 import SessionCreateMainFields from "../../components/planning/session-create-main-fields";
 import SessionCreateSubmitButton from "../../components/planning/session-create-submit-button";
@@ -4017,7 +4018,11 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                 : (isEnglish ? "The slot will remain visible in the calendar with status CANCELLED. You can notify booked students and the teacher." : "Le creneau restera visible au calendrier avec le statut CANCELLED. Vous pouvez notifier les eleves inscrits et le professeur.")}
             </p>
 
-            <form action={confirmAction === "delete" ? deleteAdminSessionAction : cancelAdminSessionAction} className="grid">
+            <form
+              id="admin-session-confirm-operation-form"
+              action={confirmAction === "delete" ? deleteAdminSessionAction : cancelAdminSessionAction}
+              className="grid"
+            >
               <input type="hidden" name="session_id" value={selectedSession.id} />
               <input type="hidden" name="return_to" value={modalHref} />
               {confirmAction === "delete" && selectedSession.recurrence_group_id ? (
@@ -4031,7 +4036,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
               ) : (
                 <label>
                   {isEnglish ? "Scope" : "Portee"}
-                  <select name="apply_scope" defaultValue={defaultApplyScope(selectedSession)}>
+                  <select name="apply_scope" defaultValue={confirmAction === "cancel" ? "ONE" : defaultApplyScope(selectedSession)}>
                     <option value="ONE">{isEnglish ? "This slot" : "Ce creneau"}</option>
                     {selectedSession.recurrence_group_id ? <option value="SERIES_FUTURE">{isEnglish ? "Future series" : "Serie future"}</option> : null}
                     {selectedSession.recurrence_group_id ? <option value="SERIES_ALL">{isEnglish ? "Whole series" : "Toute la serie"}</option> : null}
@@ -4107,9 +4112,16 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
               </label>
 
               <div className="row quick-actions-row">
-                <button className="danger" type="submit">
-                  {confirmAction === "delete" ? (isEnglish ? "Confirm deletion" : "Confirmer la suppression") : (isEnglish ? "Confirm cancellation" : "Confirmer l'annulation")}
-                </button>
+                {confirmAction === "cancel" ? (
+                  <SeriesCancellationSubmitButton
+                    formId="admin-session-confirm-operation-form"
+                    language={language}
+                  />
+                ) : (
+                  <button className="danger" type="submit">
+                    {isEnglish ? "Confirm deletion" : "Confirmer la suppression"}
+                  </button>
+                )}
                 <a className="reset-link" href={confirmCloseHref}>
                   {isEnglish ? "Back" : "Retour"}
                 </a>

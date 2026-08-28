@@ -2139,6 +2139,19 @@ def _target_sessions_for_scope(
     return rows
 
 
+def _require_series_cancellation_confirmation(
+    *,
+    session_obj: CourseSession,
+    apply_scope: ApplyScope,
+    confirmed: bool,
+) -> None:
+    if session_obj.recurrence_group_id is not None and apply_scope != "ONE" and not confirmed:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Une seconde confirmation explicite est obligatoire pour annuler une serie recurrente.",
+        )
+
+
 def _target_sessions_for_admin_booking(
     db: Session,
     *,
@@ -6894,6 +6907,12 @@ def cancel_session_operation(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
 
     _validate_operation_notifications(payload.notifications)
+
+    _require_series_cancellation_confirmation(
+        session_obj=session_obj,
+        apply_scope=apply_scope,
+        confirmed=payload.series_cancellation_confirmed,
+    )
 
     targets = _target_sessions_for_scope(db, session_obj=session_obj, apply_scope=apply_scope)
     now = _utcnow()
