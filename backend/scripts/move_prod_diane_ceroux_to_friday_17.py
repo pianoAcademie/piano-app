@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import unicodedata
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
@@ -49,6 +50,12 @@ def _safe_zoneinfo(value: str | None) -> ZoneInfo:
         return ZoneInfo("Europe/Paris")
 
 
+def _identity_key(value: str | None) -> str:
+    decomposed = unicodedata.normalize("NFKD", value or "")
+    unaccented = "".join(character for character in decomposed if not unicodedata.combining(character))
+    return " ".join("".join(character if character.isalnum() else " " for character in unaccented).casefold().split())
+
+
 def _local_start(session_obj: CourseSession) -> datetime:
     return session_obj.start_at_utc.astimezone(_safe_zoneinfo(session_obj.timezone))
 
@@ -93,19 +100,33 @@ def main(argv: list[str] | None = None) -> int:
     end_utc = SEASON_END_LOCAL.astimezone(timezone.utc)
 
     with SessionLocal() as db:
-        students = db.scalars(
+        candidates = db.scalars(
             select(User)
             .where(
                 User.role == UserRole.CLIENT,
-                func.lower(func.coalesce(User.first_name, "")) == FIRST_NAME,
-                func.lower(func.coalesce(User.last_name, "")) == LAST_NAME,
+                (
+                    func.lower(func.coalesce(User.first_name, "")).contains(FIRST_NAME)
+                    | func.lower(func.coalesce(User.last_name, "")).contains("roux")
+                ),
             )
             .order_by(User.created_at.asc(), User.id.asc())
             .with_for_update()
         ).all()
+        expected_identity = f"{FIRST_NAME} {LAST_NAME}"
+        students = [
+            candidate
+            for candidate in candidates
+            if _identity_key(f"{candidate.first_name or ''} {candidate.last_name or ''}") == expected_identity
+        ]
         if not students and args.allow_missing:
             db.rollback()
-            print(f"{SCRIPT_PREFIX}|summary|result=student_missing_noop|applied={args.apply}")
+            candidate_names = [
+                f"{candidate.first_name or ''} {candidate.last_name or ''}".strip() for candidate in candidates
+            ]
+            print(
+                f"{SCRIPT_PREFIX}|summary|result=student_missing_noop|"
+                f"candidates={candidate_names}|applied={args.apply}"
+            )
             return 0
         if len(students) != 1:
             _abort(f"expected_one_student_found_{len(students)}")
