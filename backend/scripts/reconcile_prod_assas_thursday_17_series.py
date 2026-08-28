@@ -138,9 +138,13 @@ def main(argv: list[str] | None = None) -> int:
 
         source_by_start: dict[datetime, CourseSession] = {}
         target_by_start: dict[datetime, CourseSession] = {}
+        standalone_sessions: list[CourseSession] = []
         for start_at, pair in sessions_by_start.items():
+            if len(pair) == 1:
+                standalone_sessions.append(pair[0])
+                continue
             if len(pair) != 2:
-                _abort(f"expected_two_occurrences_at_{start_at.isoformat()}_found_{len(pair)}")
+                _abort(f"expected_at_most_two_occurrences_at_{start_at.isoformat()}_found_{len(pair)}")
             empty_scheduled = [
                 session_obj
                 for session_obj in pair
@@ -179,29 +183,46 @@ def main(argv: list[str] | None = None) -> int:
         if target_booking_count != 0:
             _abort(f"target_series_not_empty_booking_count_{target_booking_count}")
 
-        source_booking_rows = db.execute(
+        standalone_booked_ids = [
+            session_obj.id
+            for session_obj in standalone_sessions
+            if booking_counts.get(session_obj.id, 0) > 0
+        ]
+        relevant_session_ids = source_ids + standalone_booked_ids
+        relevant_booking_rows = db.execute(
             select(Booking, User)
             .join(User, User.id == Booking.user_id)
-            .where(Booking.session_id.in_(source_ids))
+            .where(Booking.session_id.in_(relevant_session_ids))
             .order_by(Booking.booked_at.asc(), Booking.id.asc())
             .with_for_update()
         ).all()
-        if not source_booking_rows:
+        if not relevant_booking_rows:
             _abort("source_series_has_no_booking")
-        student_ids = {booking.user_id for booking, _ in source_booking_rows}
+        student_ids = {booking.user_id for booking, _ in relevant_booking_rows}
         if len(student_ids) != 1:
             _abort(f"source_series_has_{len(student_ids)}_students")
-        student = source_booking_rows[0][1]
+        student = relevant_booking_rows[0][1]
         if EXPECTED_STUDENT_FRAGMENT not in _student_label(student).strip().lower():
             _abort("unexpected_source_student")
-        if any(booking.status != BookingStatus.BOOKED for booking, _ in source_booking_rows):
-            statuses = sorted({_enum_value(booking.status) for booking, _ in source_booking_rows})
+        if any(booking.status != BookingStatus.BOOKED for booking, _ in relevant_booking_rows):
+            statuses = sorted({_enum_value(booking.status) for booking, _ in relevant_booking_rows})
             _abort(f"source_booking_statuses_{','.join(statuses)}")
         booking_counts_by_session: dict[UUID, int] = {}
-        for booking, _ in source_booking_rows:
+        for booking, _ in relevant_booking_rows:
             booking_counts_by_session[booking.session_id] = booking_counts_by_session.get(booking.session_id, 0) + 1
         if any(count != 1 for count in booking_counts_by_session.values()):
             _abort("multiple_bookings_on_source_occurrence")
+        source_id_set = set(source_ids)
+        source_booking_rows = [
+            (booking, user)
+            for booking, user in relevant_booking_rows
+            if booking.session_id in source_id_set
+        ]
+        standalone_booking_rows = [
+            (booking, user)
+            for booking, user in relevant_booking_rows
+            if booking.session_id in set(standalone_booked_ids)
+        ]
 
         # Future cancelled duplicates must not already have attendance, payout,
         # professor-message or makeup activity. Professor assignments themselves
@@ -220,7 +241,8 @@ def main(argv: list[str] | None = None) -> int:
             f"target_groups={','.join(target_group_ids) if target_group_ids else 'none'}|"
             f"source_sessions={len(source_sessions)}|target_sessions={len(target_sessions)}|"
             f"moved_bookings={len(source_booking_rows)}|student={_student_label(student)}|"
-            f"source_statuses={status_counts}|target_existing_bookings={target_booking_count}"
+            f"source_statuses={status_counts}|standalone_sessions={len(standalone_sessions)}|"
+            f"standalone_booked={len(standalone_booking_rows)}|target_existing_bookings={target_booking_count}"
         )
 
         for booking, _ in source_booking_rows:
@@ -235,6 +257,17 @@ def main(argv: list[str] | None = None) -> int:
                 _abort("source_target_occurrence_shape_mismatch")
             booking.session_id = target_session.id
             ensure_booking_reminder(db, booking=booking, session_obj=target_session, now=now)
+
+        reactivated_standalone_ids: list[str] = []
+        standalone_by_id = {session_obj.id: session_obj for session_obj in standalone_sessions}
+        for booking, _ in standalone_booking_rows:
+            session_obj = standalone_by_id[booking.session_id]
+            if session_obj.status == SessionStatus.CANCELLED:
+                session_obj.status = SessionStatus.SCHEDULED
+                session_obj.cancel_reason = None
+                session_obj.updated_at = now
+                reactivated_standalone_ids.append(str(session_obj.id))
+            ensure_booking_reminder(db, booking=booking, session_obj=session_obj, now=now)
 
         db.flush()
         remaining_source_bookings = int(
@@ -269,6 +302,7 @@ def main(argv: list[str] | None = None) -> int:
                     "target_recurrence_group_ids": target_group_ids,
                     "removed_duplicate_session_ids": [str(session_id) for session_id in source_ids],
                     "moved_booking_ids": [str(booking.id) for booking, _ in source_booking_rows],
+                    "reactivated_standalone_session_ids": reactivated_standalone_ids,
                     "student_id": str(next(iter(student_ids))),
                     "credit_changes": [],
                 },
@@ -283,6 +317,7 @@ def main(argv: list[str] | None = None) -> int:
         print(
             f"{SCRIPT_PREFIX}|summary|result=reconciled|removed_sessions={len(source_ids)}|"
             f"moved_bookings={len(source_booking_rows)}|student={_student_label(student)}|"
+            f"reactivated_standalone={len(reactivated_standalone_ids)}|"
             f"credit_changes=none|applied={args.apply}"
         )
     return 0
