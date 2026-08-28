@@ -293,10 +293,18 @@ def main(argv: list[str] | None = None) -> int:
             source_by_week[week] = row
 
         valid_target_series: list[str] = []
+        first_source_week = min(source_by_week)
+        last_source_week = max(source_by_week)
         for series_key, sessions_by_week in sorted(target_series_by_week.items()):
             covered_weeks = sum(
                 1 for week in source_by_week if len(sessions_by_week.get(week, [])) == 1
             )
+            window_sessions = [
+                session_obj
+                for week, sessions in sessions_by_week.items()
+                if first_source_week <= week <= last_source_week
+                for session_obj in sessions
+            ]
             active_bookings = sum(
                 target_active_counts.get(session_obj.id, 0)
                 for sessions in sessions_by_week.values()
@@ -305,9 +313,10 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 f"{SCRIPT_PREFIX}|target_series|series={series_key}|"
                 f"covered_source_weeks={covered_weeks}/{len(source_by_week)}|"
+                f"sessions_in_source_period={len(window_sessions)}/{len(source_rows)}|"
                 f"active_bookings={active_bookings}"
             )
-            if covered_weeks == len(source_by_week):
+            if len(window_sessions) == len(source_rows):
                 valid_target_series.append(series_key)
 
         if len(valid_target_series) > 1:
@@ -330,14 +339,18 @@ def main(argv: list[str] | None = None) -> int:
         if len(valid_target_series) != 1:
             _abort(f"expected_one_coherent_friday_17_series_found_{len(valid_target_series)}")
         selected_target_series = valid_target_series[0]
-        targets_by_week = target_series_by_week[selected_target_series]
+        selected_targets = sorted(
+            (
+                session_obj
+                for week, sessions in target_series_by_week[selected_target_series].items()
+                if first_source_week <= week <= last_source_week
+                for session_obj in sessions
+            ),
+            key=lambda session_obj: (session_obj.start_at_utc, session_obj.id),
+        )
 
         pairs: list[tuple[BookingRow, CourseSession]] = []
-        for week, source_row in sorted(source_by_week.items()):
-            week_targets = targets_by_week.get(week, [])
-            if len(week_targets) != 1:
-                _abort(f"expected_one_friday_17_target_in_week_{week.isoformat()}_found_{len(week_targets)}")
-            target_session = week_targets[0]
+        for source_row, target_session in zip(source_rows, selected_targets, strict=True):
             existing = db.scalar(
                 select(Booking).where(
                     Booking.user_id == student.id,
@@ -345,7 +358,7 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
             if existing is not None and existing.id != source_row.booking.id:
-                _abort(f"student_already_has_target_booking_in_week_{week.isoformat()}")
+                _abort(f"student_already_has_target_booking_{target_session.id}")
             pairs.append((source_row, target_session))
 
         if len(pairs) != len(source_rows):
