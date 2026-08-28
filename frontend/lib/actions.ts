@@ -7906,7 +7906,6 @@ export async function bulkAdminClientsAction(formData: FormData): Promise<void> 
   const selectionScopeRaw = String(formData.get("selection_scope") ?? "PAGE").trim().toUpperCase();
   const selectionScope = selectionScopeRaw === "FILTERED" ? "FILTERED" : "PAGE";
   const clientIds = parseStringList(formData.getAll("client_ids"));
-  const filteredClientIds = parseStringList(formData.getAll("filtered_client_ids"));
   const targetStatus = String(formData.get("target_status") ?? "").trim().toUpperCase();
   const groupId = String(formData.get("group_id") ?? "").trim();
   const filterSearch = optionalField(formData, "filter_search");
@@ -7927,13 +7926,22 @@ export async function bulkAdminClientsAction(formData: FormData): Promise<void> 
   }
 
   if (action === "EXPORT") {
-    const exportIds = selectionScope === "FILTERED" ? filteredClientIds : clientIds;
-    if (exportIds.length === 0) {
+    if (selectionScope === "PAGE" && clientIds.length === 0) {
       redirect(appendQueryMessage(returnTo, "error", t("admin.clients.bulk_export_selection_required")));
     }
     const query = new URLSearchParams();
-    for (const clientId of exportIds) {
-      query.append("client_ids", clientId);
+    if (selectionScope === "FILTERED") {
+      query.set("selection_scope", "FILTERED");
+      if (filterSearch) query.set("search", filterSearch);
+      if (filterStatus) query.set("client_status", filterStatus);
+      if (filterStudentSite) query.set("student_site", filterStudentSite);
+      if (filterGroupId) query.set("group_id", filterGroupId);
+      query.set("include_archived", filterIncludeArchived ? "true" : "false");
+      query.set("active_only", filterActiveOnly ? "true" : "false");
+    } else {
+      for (const clientId of clientIds) {
+        query.append("client_ids", clientId);
+      }
     }
     redirect(`/admin/clients/export?${query.toString()}`);
   }

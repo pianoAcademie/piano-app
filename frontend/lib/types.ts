@@ -414,6 +414,11 @@ export type AdminClientOut = {
   updated_at: string;
 };
 
+export type AdminClientStatsOut = {
+  total: number;
+  by_status: Record<string, number>;
+};
+
 export type AdminAdultCandidateOut = {
   id: string;
   display_name: string;

@@ -863,6 +863,11 @@ class AdminClientOut(BaseModel):
     updated_at: datetime
 
 
+class AdminClientStatsOut(BaseModel):
+    total: int = 0
+    by_status: dict[str, int] = Field(default_factory=dict)
+
+
 class AdminOnlinePresenceUserOut(BaseModel):
     user_id: UUID
     display_name: str

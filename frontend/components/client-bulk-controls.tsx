@@ -45,12 +45,6 @@ function checkedClientIds(form: HTMLFormElement): string[] {
     .filter((value) => value.length > 0);
 }
 
-function filteredClientIds(form: HTMLFormElement): string[] {
-  return Array.from(form.querySelectorAll<HTMLInputElement>('input[name="filtered_client_ids"]'))
-    .map((field) => field.value)
-    .filter((value) => value.length > 0);
-}
-
 function setPageChecked(form: HTMLFormElement, checked: boolean): void {
   for (const box of allPageCheckboxes(form)) {
     box.checked = checked;
@@ -392,15 +386,13 @@ export default function ClientBulkControls({ groups, emailTemplates, pageCount, 
             }
 
             const selectedIds = checkedClientIds(form);
-            const selectedFilteredIds = filteredClientIds(form);
-
             if (selectionScope === "PAGE" && selectedIds.length === 0) {
               event.preventDefault();
               window.alert(text.pageSelectionRequired);
               return;
             }
 
-            if (selectionScope === "FILTERED" && selectedFilteredIds.length === 0) {
+            if (selectionScope === "FILTERED" && filteredCount === 0) {
               event.preventDefault();
               window.alert(text.noFilteredClient);
               return;
@@ -435,7 +427,7 @@ export default function ClientBulkControls({ groups, emailTemplates, pageCount, 
             if (action === "DELETE") {
               const total =
                 selectionScope === "FILTERED"
-                  ? selectedFilteredIds.length
+                  ? filteredCount
                   : selectedIds.length;
               const confirmed = window.confirm(text.deleteConfirm(total));
               if (!confirmed) {
@@ -444,7 +436,7 @@ export default function ClientBulkControls({ groups, emailTemplates, pageCount, 
             }
 
             if (action === "EMAIL_CLIENTS_OPERATIONAL") {
-              const total = selectionScope === "FILTERED" ? selectedFilteredIds.length : selectedIds.length;
+              const total = selectionScope === "FILTERED" ? filteredCount : selectedIds.length;
               if (!window.confirm(text.operationalConfirm(total))) {
                 event.preventDefault();
               }

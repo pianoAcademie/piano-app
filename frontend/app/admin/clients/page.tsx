@@ -21,7 +21,7 @@ import {
   DEFAULT_TIMEZONE,
   TIMEZONE_OPTIONS,
 } from "../../../lib/reference-data";
-import type { AdminClientGroupOut, AdminClientOut, AdminMessagingTemplateOut, UserOut } from "../../../lib/types";
+import type { AdminClientGroupOut, AdminClientOut, AdminClientStatsOut, AdminMessagingTemplateOut, UserOut } from "../../../lib/types";
 import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../lib/ui-i18n";
 
 type SearchParams = Record<string, string | string[] | undefined>;
@@ -217,26 +217,6 @@ function closeModalHref(params: {
   return buildClientsHref(params);
 }
 
-function countByStatus(clients: AdminClientOut[]): Record<string, number> {
-  const counts: Record<string, number> = {
-    ACTIVE: 0,
-    RESPONSABLE: 0,
-    TRIAL: 0,
-    PENDING: 0,
-    INACTIVE: 0,
-    ARCHIVED: 0,
-  };
-
-  for (const client of clients) {
-    const status = (client.client_status || "").toUpperCase();
-    if (status in counts) {
-      counts[status] += 1;
-    }
-  }
-
-  return counts;
-}
-
 function sortHref(params: {
   currentSortBy: SortColumn;
   currentSortDir: SortDirection;
@@ -298,7 +278,9 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
 
   const includeArchived = selectedStatus === "ARCHIVED";
   const clientsQuery = new URLSearchParams();
-  clientsQuery.set("limit", "1000");
+  clientsQuery.set("limit", String(perPage));
+  clientsQuery.set("offset", String((requestedPage - 1) * perPage));
+  clientsQuery.set("paginate", "true");
   clientsQuery.set("sort_by", sortBy);
   clientsQuery.set("sort_dir", sortDir);
   clientsQuery.set("include_archived", includeArchived ? "true" : "false");
@@ -315,33 +297,67 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
     clientsQuery.set("group_id", selectedGroupId);
   }
 
-  const [clientsResult, allClientsResult, groupsResult, mmsImportStatusResult, emailTemplatesResult] = await Promise.all([
-    backendRequest<AdminClientOut[]>(`/api/v1/admin/clients?${clientsQuery.toString()}`, {}, token),
-    backendRequest<AdminClientOut[]>("/api/v1/admin/clients?limit=1000&include_archived=true", {}, token),
+  const statsQuery = new URLSearchParams(clientsQuery);
+  statsQuery.delete("limit");
+  statsQuery.delete("offset");
+  statsQuery.delete("paginate");
+  statsQuery.delete("sort_by");
+  statsQuery.delete("sort_dir");
+
+  const [clientsResult, statsResult, groupsResult, mmsImportStatusResult, emailTemplatesResult] = await Promise.all([
+    view === "students"
+      ? backendRequest<AdminClientOut[]>(`/api/v1/admin/clients?${clientsQuery.toString()}`, {}, token)
+      : Promise.resolve({ ok: true as const, status: 200, data: [] as AdminClientOut[] }),
+    view === "students"
+      ? backendRequest<AdminClientStatsOut>(`/api/v1/admin/clients/stats?${statsQuery.toString()}`, {}, token)
+      : Promise.resolve({ ok: true as const, status: 200, data: { total: 0, by_status: {} } as AdminClientStatsOut }),
     backendRequest<AdminClientGroupOut[]>("/api/v1/admin/clients/groups?include_inactive=true", {}, token),
-    backendRequest<MyMusicStaffImportStatus>("/api/v1/admin/clients/imports/my-music-staff-2025-2026/status", {}, token),
-    backendRequest<AdminMessagingTemplateOut[]>(
-      "/api/v1/admin/config/messaging-templates?channel=EMAIL&kind=CUSTOM&active_only=true",
-      {},
-      token,
-    ),
+    view === "groups"
+      ? backendRequest<MyMusicStaffImportStatus>("/api/v1/admin/clients/imports/my-music-staff-2025-2026/status", {}, token)
+      : Promise.resolve({ ok: true as const, status: 200, data: null as MyMusicStaffImportStatus | null }),
+    view === "students"
+      ? backendRequest<AdminMessagingTemplateOut[]>(
+          "/api/v1/admin/config/messaging-templates?channel=EMAIL&kind=CUSTOM&active_only=true",
+          {},
+          token,
+        )
+      : Promise.resolve({ ok: true as const, status: 200, data: [] as AdminMessagingTemplateOut[] }),
   ]);
 
   const listedClientsRaw = clientsResult.ok ? clientsResult.data : [];
-  const allClients = allClientsResult.ok ? allClientsResult.data : [];
   const groups = groupsResult.ok ? groupsResult.data : [];
   const emailTemplates = emailTemplatesResult.ok ? emailTemplatesResult.data : [];
   const mmsImportStatus = mmsImportStatusResult.ok ? mmsImportStatusResult.data : null;
-  const counts = countByStatus(allClients);
+  const counts = {
+    ACTIVE: statsResult.ok ? statsResult.data.by_status.ACTIVE ?? 0 : 0,
+    RESPONSABLE: statsResult.ok ? statsResult.data.by_status.RESPONSABLE ?? 0 : 0,
+    TRIAL: statsResult.ok ? statsResult.data.by_status.TRIAL ?? 0 : 0,
+    PENDING: statsResult.ok ? statsResult.data.by_status.PENDING ?? 0 : 0,
+    INACTIVE: statsResult.ok ? statsResult.data.by_status.INACTIVE ?? 0 : 0,
+    ARCHIVED: statsResult.ok ? statsResult.data.by_status.ARCHIVED ?? 0 : 0,
+  };
 
   const okMessage = readParam(searchParams, "ok");
   const errorMessage = readParam(searchParams, "error");
 
-  const totalFiltered = listedClientsRaw.length;
+  const totalFiltered = statsResult.ok ? statsResult.data.total : listedClientsRaw.length;
   const totalPages = Math.max(1, Math.ceil(totalFiltered / perPage));
   const currentPage = Math.min(requestedPage, totalPages);
   const pageStart = (currentPage - 1) * perPage;
-  const listedClients = listedClientsRaw.slice(pageStart, pageStart + perPage);
+  if (requestedPage !== currentPage) {
+    redirect(buildClientsHref({
+      search,
+      status: selectedStatus,
+      site: selectedSite,
+      groupId: selectedGroupId,
+      sortBy,
+      sortDir,
+      view,
+      page: currentPage,
+      perPage,
+    }));
+  }
+  const listedClients = listedClientsRaw;
 
   const baseHref = buildClientsHref({
     search,
@@ -523,10 +539,6 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
             <input type="hidden" name="filter_group_id" value={selectedGroupId} />
             <input type="hidden" name="filter_include_archived" value={includeArchived ? "true" : "false"} />
             <input type="hidden" name="filter_active_only" value="false" />
-            {listedClientsRaw.map((client) => (
-              <input key={`filtered-${client.id}`} type="hidden" name="filtered_client_ids" value={client.id} />
-            ))}
-
             <section className="card">
               <ClientBulkControls
                 groups={groups.filter((group) => group.active).map((group) => ({ id: group.id, name: group.name }))}

@@ -20,7 +20,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Qu
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 import jwt
 from jwt import PyJWTError
-from sqlalchemy import and_, delete, func, or_, select, update
+from sqlalchemy import and_, case, delete, func, or_, select, update
 from sqlalchemy.orm import Session, aliased
 
 from app.api.deps import get_admin_permission_map, get_db, require_admin_or_permissions, require_roles
@@ -91,6 +91,7 @@ from app.schemas.admin import (
     AdminClientMessageEmailRequest,
     AdminClientMessageOut,
     AdminClientOut,
+    AdminClientStatsOut,
     AdminClientPasswordEmailTemplateOut,
     AdminClientPasswordEmailTemplateUpdateRequest,
     AdminClientPortalAccessOut,
@@ -6759,6 +6760,71 @@ def _client_ids_with_paid_invoices(db: Session, client_ids: set[UUID]) -> set[UU
     return out
 
 
+def _paginated_client_order(sort_by: str, sort_dir: str, now: datetime):
+    normalized_sort_by = (sort_by or "").strip().lower()
+    descending = (sort_dir or "").strip().lower() != "asc"
+    empty = ""
+    last_name = func.lower(func.coalesce(User.last_name, empty))
+    first_name = func.lower(func.coalesce(User.first_name, empty))
+    email = func.lower(User.email)
+    status_rank = case(
+        (User.client_status == ClientStatus.ACTIVE, 0),
+        (User.client_status == ClientStatus.RESPONSABLE, 1),
+        (User.client_status == ClientStatus.TRIAL, 2),
+        (User.client_status == ClientStatus.PENDING, 3),
+        (User.client_status == ClientStatus.INACTIVE, 4),
+        (User.client_status == ClientStatus.ARCHIVED, 5),
+        else_=99,
+    )
+    next_session = (
+        select(func.min(CourseSession.start_at_utc))
+        .select_from(Booking)
+        .join(CourseSession, CourseSession.id == Booking.session_id)
+        .where(
+            Booking.user_id == User.id,
+            Booking.status.in_([BookingStatus.BOOKED, BookingStatus.WAITLISTED]),
+            CourseSession.start_at_utc >= now,
+        )
+        .correlate(User)
+        .scalar_subquery()
+    )
+    billing_adult = aliased(User)
+    child_family_name = (
+        select(func.coalesce(billing_adult.last_name, billing_adult.first_name, billing_adult.email))
+        .select_from(ClientFamilyLink)
+        .join(billing_adult, billing_adult.id == ClientFamilyLink.adult_user_id)
+        .where(ClientFamilyLink.child_user_id == User.id)
+        .order_by(ClientFamilyLink.is_billing_recipient.desc(), ClientFamilyLink.created_at.asc())
+        .limit(1)
+        .correlate(User)
+        .scalar_subquery()
+    )
+    family_name = func.lower(
+        case(
+            (User.client_kind == ClientKind.CHILD, func.coalesce(child_family_name, User.last_name, empty)),
+            else_=func.coalesce(User.last_name, empty),
+        )
+    )
+    expressions = {
+        "last_name": [last_name, first_name, email],
+        "first_name": [first_name, last_name, email],
+        "family_name": [family_name, last_name, first_name, email],
+        "client_status": [status_rank, last_name, first_name, email],
+        "client_kind": [User.client_kind, last_name, first_name, email],
+        "student_site": [User.student_site, last_name, first_name, email],
+        "next_session": [next_session, last_name, first_name, email],
+        "created_at": [User.created_at, last_name, first_name, email],
+    }.get(normalized_sort_by, [User.created_at, last_name, first_name, email])
+
+    ordered = []
+    for index, expression in enumerate(expressions):
+        value = expression.desc() if descending else expression.asc()
+        if normalized_sort_by == "next_session" and index == 0:
+            value = value.nulls_first() if descending else value.nulls_last()
+        ordered.append(value)
+    return ordered
+
+
 @router.get("", response_model=list[AdminClientOut])
 def list_admin_clients(
     search: str | None = Query(default=None, min_length=1, max_length=255),
@@ -6771,6 +6837,8 @@ def list_admin_clients(
     sort_dir: str = Query(default="desc"),
     active_only: bool = False,
     limit: int = Query(default=200, ge=1, le=5000),
+    offset: int = Query(default=0, ge=0),
+    paginate: bool = False,
     db: Session = Depends(get_db),
     _: User = Depends(require_admin_or_permissions("can_view_clients")),
 ) -> list[AdminClientOut]:
@@ -6784,11 +6852,15 @@ def list_admin_clients(
         active_only=active_only,
     )
 
-    clients = db.scalars(stmt.order_by(User.created_at.desc()).limit(limit)).all()
+    now = _utcnow()
+    if paginate:
+        stmt = stmt.order_by(*_paginated_client_order(sort_by, sort_dir, now)).offset(offset).limit(limit)
+    else:
+        stmt = stmt.order_by(User.created_at.desc()).limit(limit)
+    clients = db.scalars(stmt).all()
     if not clients:
         return []
 
-    now = _utcnow()
     client_ids = [client.id for client in clients]
     rows = db.execute(
         select(Booking.user_id, CourseSession.start_at_utc)
@@ -6891,8 +6963,40 @@ def list_admin_clients(
         }
         return mapping.get(normalized_sort_by, mapping["created_at"])
 
-    items.sort(key=sort_key, reverse=descending)
+    if not paginate:
+        items.sort(key=sort_key, reverse=descending)
     return items
+
+
+@router.get("/stats", response_model=AdminClientStatsOut)
+def get_admin_client_stats(
+    search: str | None = Query(default=None, min_length=1, max_length=255),
+    client_kind: ClientKind | None = None,
+    client_status: ClientStatus | None = None,
+    student_site: StudentSite | None = None,
+    group_id: UUID | None = None,
+    include_archived: bool = False,
+    active_only: bool = False,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin_or_permissions("can_view_clients")),
+) -> AdminClientStatsOut:
+    filtered = _filtered_clients_stmt(
+        search=search,
+        client_kind=client_kind,
+        client_status=client_status,
+        student_site=student_site,
+        group_id=group_id,
+        include_archived=include_archived,
+        active_only=active_only,
+    )
+    total = int(db.scalar(select(func.count()).select_from(filtered.order_by(None).subquery())) or 0)
+    status_rows = db.execute(
+        select(User.client_status, func.count(User.id))
+        .where(User.role == UserRole.CLIENT)
+        .group_by(User.client_status)
+    ).all()
+    by_status = {status.value: int(count) for status, count in status_rows}
+    return AdminClientStatsOut(total=total, by_status=by_status)
 
 
 @router.get("/password-email-template", response_model=AdminClientPasswordEmailTemplateOut)
@@ -7456,16 +7560,29 @@ def bulk_admin_clients(
 @router.get("/export")
 def export_admin_clients_csv(
     client_ids: list[UUID] = Query(default=[]),
+    selection_scope: AdminClientSelectionScope = AdminClientSelectionScope.PAGE,
+    search: str | None = Query(default=None, min_length=1, max_length=255),
+    client_status: ClientStatus | None = None,
+    student_site: StudentSite | None = None,
+    group_id: UUID | None = None,
+    include_archived: bool = False,
+    active_only: bool = False,
     db: Session = Depends(get_db),
     _: User = Depends(require_admin_or_permissions("can_export_clients")),
 ) -> StreamingResponse:
-    unique_ids: list[UUID] = []
-    seen: set[UUID] = set()
-    for client_id in client_ids:
-        if client_id in seen:
-            continue
-        seen.add(client_id)
-        unique_ids.append(client_id)
+    if selection_scope == AdminClientSelectionScope.FILTERED:
+        filtered_stmt = _filtered_clients_stmt(
+            search=search,
+            client_kind=None,
+            client_status=client_status,
+            student_site=student_site,
+            group_id=group_id,
+            include_archived=include_archived,
+            active_only=active_only,
+        ).with_only_columns(User.id)
+        unique_ids = list(dict.fromkeys(db.scalars(filtered_stmt).all()))
+    else:
+        unique_ids = list(dict.fromkeys(client_ids))
 
     if not unique_ids:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="No client selected for export")

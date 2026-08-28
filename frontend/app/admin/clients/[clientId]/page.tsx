@@ -64,13 +64,14 @@ import ManualTransactionLegalEntityFields from "../../../../components/manual-tr
 import ManualCheckSubmitButtons from "../../../../components/manual-check-submit-buttons";
 import RichMessageEditor from "../../../../components/rich-message-editor";
 import ModalFirstErrorFocus from "../../../../components/modal-first-error-focus";
-import SearchMultiSelect from "../../../../components/search-multi-select";
+import ClientLookupSingleSelect from "../../../../components/client-lookup-single-select";
 import ClientActionSubmitButton from "../../../../components/client-action-submit-button";
 import SendClientAccessLink from "../../../../components/send-client-access-link";
 import InvoiceLineSelection from "../../../../components/invoice-line-selection";
 import FamilyBillingSplitEditor from "../../../../components/family-billing-split-editor";
 import ConfirmSubmitButton from "../../../../components/confirm-submit-button";
 import AutomaticInvoicePreview from "../../../../components/automatic-invoice-preview";
+import ClientTabNavigation from "../../../../components/client-tab-navigation";
 import type {
   AdminClientBookingOut,
   AdminClientFamilyOut,
@@ -137,6 +138,10 @@ function readParams(params: SearchParams, key: string): string[] {
   }
   const normalized = String(value || "").trim();
   return normalized ? [normalized] : [];
+}
+
+function immediateBackendResult<T>(data: T): Promise<{ ok: true; status: 200; data: T }> {
+  return Promise.resolve({ ok: true, status: 200, data });
 }
 
 function parseToggleParam(value: string, fallback: boolean): boolean {
@@ -1701,23 +1706,6 @@ function contactDisplayLabel(firstName: string | null | undefined, lastName: str
   return name ? `${name} <${email}>` : email;
 }
 
-function familyCandidateOption(candidate: {
-  id: string;
-  first_name: string | null;
-  last_name: string | null;
-  email: string | null;
-}): { id: string; label: string; sortLabel: string } {
-  const firstName = String(candidate.first_name || "").trim();
-  const lastName = String(candidate.last_name || "").trim();
-  const email = String(candidate.email || "").trim();
-  const fallback = email || candidate.id;
-  return {
-    id: candidate.id,
-    label: [firstName, lastName].filter(Boolean).join(" ") || fallback,
-    sortLabel: [lastName, firstName, email].filter(Boolean).join(" "),
-  };
-}
-
 function formatLocalizedDate(value: string, language: UiLanguage): string {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
@@ -1940,6 +1928,19 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   }
   const messagesApiPath = `/api/v1/admin/clients/${params.clientId}/messages?${messageApiSearch.toString()}`;
 
+  const isSummaryTab = currentTab === "fiche";
+  const isInfoTab = currentTab === "infos";
+  const isFamilyTab = currentTab === "famille";
+  const isMessagesTab = currentTab === "messages";
+  const isPaymentsTab = currentTab === "paiements";
+  const isInvoicesTab = currentTab === "factures";
+  const isBookingsTab = currentTab === "reservations";
+  const isChangesTab = currentTab === "changements";
+  const needsPurchaseData = (isSummaryTab || isPaymentsTab) && purchaseModalAction.length > 0;
+  const needsPaymentEditorData = isPaymentsTab && paymentModalAction.length > 0;
+  const needsFinancialHistory = isPaymentsTab || isInvoicesTab;
+  const needsFamilyData = isFamilyTab || isMessagesTab || isPaymentsTab || isInvoicesTab || isBookingsTab;
+
   const [
     meResult,
     accountConfigResult,
@@ -1958,7 +1959,6 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     legalEntitiesResult,
     locationsResult,
     familyResult,
-    allClientsResult,
     groupsResult,
     manualCreditsResult,
     notesResult,
@@ -1967,29 +1967,77 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     makeupSummaryResult,
   ] = await Promise.all([
     backendRequest<UserOut>("/api/v1/auth/me", {}, token),
-    backendRequest<AdminConfigAccountOut>("/api/v1/admin/config/account", {}, token),
+    needsFinancialHistory
+      ? backendRequest<AdminConfigAccountOut>("/api/v1/admin/config/account", {}, token)
+      : immediateBackendResult<AdminConfigAccountOut | null>(null),
     backendRequest<AdminClientOut>(`/api/v1/admin/clients/${params.clientId}`, {}, token),
-    backendRequest<PlanOut[]>(`/api/v1/plans?purchase_user_id=${encodeURIComponent(params.clientId)}`, {}, token),
-    backendRequest<AdminFormulaOut[]>("/api/v1/admin/formulas", {}, token),
-    backendRequest<AdminClientSubscriptionOut[]>(`/api/v1/admin/clients/${params.clientId}/subscriptions`, {}, token),
-    backendRequest<AdminClientBookingOut[]>(`/api/v1/admin/clients/${params.clientId}/bookings`, {}, token),
-    backendRequest<AdminClientMessageOut[]>(messagesApiPath, {}, token),
-    backendRequest<AdminClientPaymentOut[]>(`/api/v1/admin/clients/${params.clientId}/payments`, {}, token),
-    backendRequest<AdminRangeInvoiceOut[]>(`/api/v1/admin/clients/${params.clientId}/invoices/range`, {}, token),
-    backendRequest<AdminLegacyInvoiceOut[]>(`/api/v1/admin/clients/${params.clientId}/invoices/legacy`, {}, token),
-    backendRequest<AdminProductCategoriesOut>("/api/v1/admin/config/product-categories", {}, token),
-    backendRequest<AdminCatalogProductOut[]>("/api/v1/admin/config/catalog/products?include_inactive=false", {}, token),
-    backendRequest<AdminPaymentMethodsOut>("/api/v1/admin/config/payment-methods", {}, token),
-    backendRequest<AdminLegalEntityOut[]>("/api/v1/admin/legal-entities?include_inactive=false", {}, token),
-    backendRequest<LocationOut[]>("/api/v1/locations", {}, token),
-    backendRequest<AdminClientFamilyOut>(`/api/v1/admin/clients/${params.clientId}/family`, {}, token),
-    backendRequest<AdminClientOut[]>("/api/v1/admin/clients?limit=1000", {}, token),
-    backendRequest<AdminClientGroupOut[]>("/api/v1/admin/clients/groups?include_inactive=false", {}, token),
-    backendRequest<AdminClientManualCreditOut[]>(`/api/v1/admin/clients/${params.clientId}/manual-credits`, {}, token),
-    backendRequest<AdminClientNoteOut[]>(`/api/v1/admin/clients/${params.clientId}/notes`, {}, token),
-    backendRequest<AdminStudentQuoteChangeOut[]>(`/api/v1/admin/clients/${params.clientId}/quote-changes`, {}, token),
-    backendRequest<ApprovedQuoteOption[]>(`/api/v1/admin/clients/${params.clientId}/approved-quotes`, {}, token),
-    backendRequest<MakeupStudentSummaryOut[]>(`/api/v1/admin/clients/${params.clientId}/makeup-summary`, {}, token),
+    needsPurchaseData
+      ? backendRequest<PlanOut[]>(`/api/v1/plans?purchase_user_id=${encodeURIComponent(params.clientId)}`, {}, token)
+      : immediateBackendResult<PlanOut[]>([]),
+    needsPurchaseData
+      ? backendRequest<AdminFormulaOut[]>("/api/v1/admin/formulas", {}, token)
+      : immediateBackendResult<AdminFormulaOut[]>([]),
+    (isSummaryTab || isPaymentsTab)
+      ? backendRequest<AdminClientSubscriptionOut[]>(`/api/v1/admin/clients/${params.clientId}/subscriptions`, {}, token)
+      : immediateBackendResult<AdminClientSubscriptionOut[]>([]),
+    (isSummaryTab || isBookingsTab)
+      ? backendRequest<AdminClientBookingOut[]>(`/api/v1/admin/clients/${params.clientId}/bookings`, {}, token)
+      : immediateBackendResult<AdminClientBookingOut[]>([]),
+    isMessagesTab
+      ? backendRequest<AdminClientMessageOut[]>(messagesApiPath, {}, token)
+      : immediateBackendResult<AdminClientMessageOut[]>([]),
+    (needsFinancialHistory || isBookingsTab)
+      ? backendRequest<AdminClientPaymentOut[]>(`/api/v1/admin/clients/${params.clientId}/payments`, {}, token)
+      : immediateBackendResult<AdminClientPaymentOut[]>([]),
+    needsFinancialHistory
+      ? backendRequest<AdminRangeInvoiceOut[]>(`/api/v1/admin/clients/${params.clientId}/invoices/range`, {}, token)
+      : immediateBackendResult<AdminRangeInvoiceOut[]>([]),
+    isInvoicesTab
+      ? backendRequest<AdminLegacyInvoiceOut[]>(`/api/v1/admin/clients/${params.clientId}/invoices/legacy`, {}, token)
+      : immediateBackendResult<AdminLegacyInvoiceOut[]>([]),
+    needsPaymentEditorData
+      ? backendRequest<AdminProductCategoriesOut>("/api/v1/admin/config/product-categories", {}, token)
+      : immediateBackendResult<AdminProductCategoriesOut>({ categories: [], updated_at: null }),
+    (needsPurchaseData || needsPaymentEditorData)
+      ? backendRequest<AdminCatalogProductOut[]>("/api/v1/admin/config/catalog/products?include_inactive=false", {}, token)
+      : immediateBackendResult<AdminCatalogProductOut[]>([]),
+    (needsPurchaseData || needsPaymentEditorData)
+      ? backendRequest<AdminPaymentMethodsOut>("/api/v1/admin/config/payment-methods", {}, token)
+      : immediateBackendResult<AdminPaymentMethodsOut>({ methods: [] }),
+    (needsFinancialHistory || isChangesTab)
+      ? backendRequest<AdminLegalEntityOut[]>("/api/v1/admin/legal-entities?include_inactive=false", {}, token)
+      : immediateBackendResult<AdminLegalEntityOut[]>([]),
+    needsPaymentEditorData
+      ? backendRequest<LocationOut[]>("/api/v1/locations", {}, token)
+      : immediateBackendResult<LocationOut[]>([]),
+    needsFamilyData
+      ? backendRequest<AdminClientFamilyOut>(`/api/v1/admin/clients/${params.clientId}/family`, {}, token)
+      : immediateBackendResult<AdminClientFamilyOut>({
+          client_id: params.clientId,
+          client_kind: "ADULT",
+          links_as_adult: [],
+          links_as_child: [],
+          billing_recipient_adult_id: null,
+          billing_children: [],
+        }),
+    isInfoTab
+      ? backendRequest<AdminClientGroupOut[]>("/api/v1/admin/clients/groups?include_inactive=false", {}, token)
+      : immediateBackendResult<AdminClientGroupOut[]>([]),
+    isSummaryTab
+      ? backendRequest<AdminClientManualCreditOut[]>(`/api/v1/admin/clients/${params.clientId}/manual-credits`, {}, token)
+      : immediateBackendResult<AdminClientManualCreditOut[]>([]),
+    isSummaryTab
+      ? backendRequest<AdminClientNoteOut[]>(`/api/v1/admin/clients/${params.clientId}/notes`, {}, token)
+      : immediateBackendResult<AdminClientNoteOut[]>([]),
+    isChangesTab
+      ? backendRequest<AdminStudentQuoteChangeOut[]>(`/api/v1/admin/clients/${params.clientId}/quote-changes`, {}, token)
+      : immediateBackendResult<AdminStudentQuoteChangeOut[]>([]),
+    isChangesTab
+      ? backendRequest<ApprovedQuoteOption[]>(`/api/v1/admin/clients/${params.clientId}/approved-quotes`, {}, token)
+      : immediateBackendResult<ApprovedQuoteOption[]>([]),
+    isSummaryTab
+      ? backendRequest<MakeupStudentSummaryOut[]>(`/api/v1/admin/clients/${params.clientId}/makeup-summary`, {}, token)
+      : immediateBackendResult<MakeupStudentSummaryOut[]>([]),
   ]);
 
   const language = meResult.ok ? normalizeUiLanguage(meResult.data.preferred_language) : "fr";
@@ -2220,13 +2268,6 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       `/admin/clients/${client.id}?tab=famille&error=${encodeURIComponent(t("admin.client_detail.family_missing_billing_recipient"))}`,
     );
   }
-
-  const allClients = allClientsResult.ok
-    ? allClientsResult.data
-    : (() => {
-        errors.push(`clients: ${allClientsResult.message}`);
-        return [] as AdminClientOut[];
-      })();
 
   const groups = groupsResult.ok
     ? groupsResult.data
@@ -3086,17 +3127,8 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
 
   const linkedChildren = family.links_as_adult;
   const linkedAdults = family.links_as_child;
-  const linkedChildIds = new Set(linkedChildren.map((link) => link.child.id));
-  const linkedAdultIds = new Set(linkedAdults.map((link) => link.adult.id));
-
-  const candidateChildren = allClients.filter(
-    (candidate) => candidate.id !== client.id && candidate.client_kind === "CHILD" && !linkedChildIds.has(candidate.id),
-  );
-  const candidateAdults = allClients.filter(
-    (candidate) => candidate.id !== client.id && candidate.client_kind === "ADULT" && !linkedAdultIds.has(candidate.id),
-  );
-  const candidateChildOptions = candidateChildren.map(familyCandidateOption);
-  const candidateAdultOptions = candidateAdults.map(familyCandidateOption);
+  const linkedChildIds = linkedChildren.map((link) => link.child.id);
+  const linkedAdultIds = linkedAdults.map((link) => link.adult.id);
   const familyAttachSearchPlaceholder =
     language === "en" ? "Type a last name, first name, or email..." : "Tapez un nom, prenom ou email...";
 
@@ -3356,20 +3388,12 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
           </div>
         </div>
 
-        <nav
-          className="client-tabs"
-          aria-label={language === "en" ? "Client profile navigation" : "Navigation de la fiche client"}
-        >
-          {tabs.map((tab) => (
-            <Link
-              key={tab.id}
-              href={tabHref(client.id, tab.id)}
-              className={`client-tab ${currentTab === tab.id ? "active" : ""}`}
-            >
-              {tab.label}
-            </Link>
-          ))}
-        </nav>
+        <ClientTabNavigation
+          ariaLabel={language === "en" ? "Client profile navigation" : "Navigation de la fiche client"}
+          clientId={client.id}
+          currentTab={currentTab}
+          tabs={tabs}
+        />
       </section>
 
       {okMessage ? <section className="flash-ok">{okMessage}</section> : null}
@@ -5065,25 +5089,18 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
           <article className="card">
             <h3>{t("admin.client_detail.attach_existing_account_title")}</h3>
             {client.client_kind === "ADULT" ? (
-              candidateChildren.length === 0 ? (
-                <p className="muted">{t("admin.client_detail.no_child_candidate")}</p>
-              ) : (
                 <form action={linkExistingFamilyMembersAction} className="grid">
                   <input type="hidden" name="adult_client_id" value={client.id} />
                   <input type="hidden" name="return_client_id" value={client.id} />
-                  <SearchMultiSelect
+                  <ClientLookupSingleSelect
+                    kind="CHILD"
                     label={t("admin.client_detail.child_to_attach")}
                     name="child_client_id"
-                    options={candidateChildOptions}
-                    selectedIds={[]}
                     placeholder={familyAttachSearchPlaceholder}
-                    language={language}
-                    maxSelections={1}
-                    requiredSelection
-                    emptySelectionLabel={t("admin.client_detail.select_child")}
-                    emptySummaryLabel={t("admin.client_detail.select_child")}
-                    availableOptionsLabel={t("admin.client_detail.child_to_attach")}
+                    emptyLabel={t("admin.client_detail.select_child")}
                     noResultsLabel={t("admin.client_detail.no_child_candidate")}
+                    searchingLabel={language === "en" ? "Searching..." : "Recherche..."}
+                    excludedIds={[client.id, ...linkedChildIds]}
                   />
                   <label>
                     {uiText(language, "admin.clients.relationship_label")}
@@ -5100,26 +5117,19 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   </label>
                   <button type="submit">{t("admin.client_detail.attach_existing_child")}</button>
                 </form>
-              )
-            ) : candidateAdults.length === 0 ? (
-              <p className="muted">{t("admin.client_detail.no_adult_candidate")}</p>
             ) : (
               <form action={linkExistingFamilyMembersAction} className="grid">
                 <input type="hidden" name="child_client_id" value={client.id} />
                 <input type="hidden" name="return_client_id" value={client.id} />
-                <SearchMultiSelect
+                <ClientLookupSingleSelect
+                  kind="ADULT"
                   label={t("admin.client_detail.adult_to_attach")}
                   name="adult_client_id"
-                  options={candidateAdultOptions}
-                  selectedIds={[]}
                   placeholder={familyAttachSearchPlaceholder}
-                  language={language}
-                  maxSelections={1}
-                  requiredSelection
-                  emptySelectionLabel={t("admin.client_detail.select_adult")}
-                  emptySummaryLabel={t("admin.client_detail.select_adult")}
-                  availableOptionsLabel={t("admin.client_detail.adult_to_attach")}
+                  emptyLabel={t("admin.client_detail.select_adult")}
                   noResultsLabel={t("admin.client_detail.no_adult_candidate")}
+                  searchingLabel={language === "en" ? "Searching..." : "Recherche..."}
+                  excludedIds={[client.id, ...linkedAdultIds]}
                 />
                 <label>
                   {uiText(language, "admin.clients.relationship_label")}

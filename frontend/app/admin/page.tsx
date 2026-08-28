@@ -1064,8 +1064,11 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const notesAdvancedMode = readParam(searchParams, "notes_mode").trim().toLowerCase() === "advanced";
   const confirmActionRaw = readParam(searchParams, "confirm_action").toLowerCase();
   const confirmAction: "" | "cancel" | "delete" = confirmActionRaw === "cancel" || confirmActionRaw === "delete" ? confirmActionRaw : "";
+  const agendaRange = buildAgendaRange(agendaView, agendaDate, language);
 
   const sessionsQuery = new URLSearchParams();
+  sessionsQuery.set("from", agendaRange.from.toISOString());
+  sessionsQuery.set("to", agendaRange.to.toISOString());
   const locationFilterIdsForApi = selectedLocationIdsFromQuery.length ? selectedLocationIdsFromQuery : rawLocation ? [rawLocation] : [];
   for (const locationId of locationFilterIdsForApi) {
     sessionsQuery.append("location_ids", locationId);
@@ -1085,18 +1088,29 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   if (selectedClientStatus !== "ALL") {
     sessionsQuery.set("client_status", selectedClientStatus);
   }
-  const sessionsEndpoint = sessionsQuery.toString() ? `/api/v1/admin/sessions?${sessionsQuery.toString()}` : "/api/v1/admin/sessions";
+  const sessionsEndpoint = `/api/v1/admin/sessions?${sessionsQuery.toString()}`;
+  const needsClientDirectory =
+    filtersOpen ||
+    createOpen ||
+    editSessionOpen ||
+    Boolean(selectedSessionId) ||
+    selectedClientIds.length > 0;
+  const needsGroupNoteTemplates = Boolean(selectedSessionId);
 
   const [locationsResult, professorsResult, sessionsResult, clientsResult, groupNoteTemplatesResult] = await Promise.all([
     backendRequest<LocationOut[]>("/api/v1/locations", {}, token),
     backendRequest<AdminProfessorOut[]>("/api/v1/admin/professors", {}, token),
     backendRequest<AdminSessionOut[]>(sessionsEndpoint, {}, token),
-    backendRequest<AdminClientOut[]>("/api/v1/admin/clients?active_only=true&limit=5000", {}, token),
-    backendRequest<AdminMessagingTemplateOut[]>(
-      "/api/v1/admin/config/messaging-templates?kind=CUSTOM&channel=GROUP_NOTE",
-      {},
-      token,
-    ),
+    needsClientDirectory
+      ? backendRequest<AdminClientOut[]>("/api/v1/admin/clients?active_only=true&limit=5000", {}, token)
+      : Promise.resolve({ ok: true as const, status: 200, data: [] as AdminClientOut[] }),
+    needsGroupNoteTemplates
+      ? backendRequest<AdminMessagingTemplateOut[]>(
+          "/api/v1/admin/config/messaging-templates?kind=CUSTOM&channel=GROUP_NOTE",
+          {},
+          token,
+        )
+      : Promise.resolve({ ok: true as const, status: 200, data: [] as AdminMessagingTemplateOut[] }),
   ]);
 
   const errors: string[] = [];
@@ -1221,7 +1235,6 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const nextHref = buildPlanningHref({ ...queryForLinks, agendaDate: nextAgendaDate, createOpen: false, dayDetails: "" });
   const todayHref = buildPlanningHref({ ...queryForLinks, agendaDate: todayAgendaKey, createOpen: false, dayDetails: "" });
 
-  const agendaRange = buildAgendaRange(agendaView, agendaDate, language);
   const fromMs = agendaRange.from.getTime();
   const toMs = agendaRange.to.getTime();
 
