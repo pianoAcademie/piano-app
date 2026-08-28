@@ -17,6 +17,7 @@ from sqlalchemy import func, select
 from app.api.routes.admin import (
     BOOKING_STATUSES_ACTIVE,
     _move_planning_reorganization_booking_occurrence,
+    _participant_capacity_block_reason,
     _session_client_kind_allowed,
 )
 from app.db.session import SessionLocal
@@ -294,6 +295,7 @@ def main(argv: list[str] | None = None) -> int:
 
         target_series_coverage: dict[str, int] = {}
         target_series_active: dict[str, int] = {}
+        target_series_capacity_blocks: dict[str, int] = {}
         for series_key, sessions_by_week in sorted(target_series_by_week.items()):
             covered_weeks = sum(
                 1 for week in source_by_week if len(sessions_by_week.get(week, [])) == 1
@@ -305,11 +307,23 @@ def main(argv: list[str] | None = None) -> int:
             )
             target_series_coverage[series_key] = covered_weeks
             target_series_active[series_key] = active_bookings
+            capacity_blocks = sum(
+                1
+                for sessions in sessions_by_week.values()
+                for session_obj in sessions
+                if _participant_capacity_block_reason(
+                    db,
+                    session_obj=session_obj,
+                    client_kind=student.client_kind,
+                )
+                is not None
+            )
+            target_series_capacity_blocks[series_key] = capacity_blocks
             print(
                 f"{SCRIPT_PREFIX}|target_series|series={series_key}|"
                 f"covered_source_weeks={covered_weeks}/{len(source_by_week)}|"
                 f"season_sessions={sum(len(sessions) for sessions in sessions_by_week.values())}|"
-                f"active_bookings={active_bookings}"
+                f"active_bookings={active_bookings}|capacity_blocked_sessions={capacity_blocks}"
             )
         if not target_series_coverage:
             _abort("no_friday_17_target_series")
@@ -321,14 +335,21 @@ def main(argv: list[str] | None = None) -> int:
             for series_key, covered_weeks in target_series_coverage.items()
             if covered_weeks == highest_coverage
         ]
-        highest_active = max(target_series_active[series_key] for series_key in best_coverage_series)
-        selected_series = [
+        capacity_available_series = [
             series_key
             for series_key in best_coverage_series
+            if target_series_capacity_blocks[series_key] == 0
+        ]
+        if not capacity_available_series:
+            _abort("all_coherent_friday_17_series_are_full")
+        highest_active = max(target_series_active[series_key] for series_key in capacity_available_series)
+        selected_series = [
+            series_key
+            for series_key in capacity_available_series
             if target_series_active[series_key] == highest_active
         ]
-        if highest_active <= 0 or len(selected_series) != 1:
-            _abort(f"expected_one_used_friday_17_series_found_{len(selected_series)}")
+        if len(selected_series) != 1:
+            _abort(f"expected_one_available_friday_17_series_found_{len(selected_series)}")
         selected_target_series = selected_series[0]
         selected_targets = sorted(
             (
