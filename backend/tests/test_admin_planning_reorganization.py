@@ -131,7 +131,7 @@ class AdminPlanningReorganizationTests(unittest.TestCase):
             "app.api.routes.admin._participant_capacity_block_reason",
             return_value=None,
         ), patch("app.api.routes.admin.skip_pending_reminders_for_booking"), patch(
-            "app.api.routes.admin._cancel_pending_notification_reminders_for_booking"
+            "app.api.routes.admin.cancel_pending_booking_reminder_notifications"
         ), patch("app.api.routes.admin.ensure_booking_reminder"):
             moved, detail = _move_planning_reorganization_booking_occurrence(
                 db,  # type: ignore[arg-type]

@@ -916,7 +916,7 @@ def _move_planning_reorganization_booking_occurrence(
             reason="Booking moved by admin",
             now=now,
         )
-        _cancel_pending_notification_reminders_for_booking(
+        cancel_pending_booking_reminder_notifications(
             db,
             booking_id=booking.id,
             reason="Booking moved by admin",
@@ -945,7 +945,7 @@ def _move_planning_reorganization_booking_occurrence(
         )
 
     if moved_booking.status == BookingStatus.BOOKED:
-        _cancel_pending_notification_reminders_for_booking(
+        cancel_pending_booking_reminder_notifications(
             db,
             booking_id=moved_booking.id,
             reason="Booking moved by admin",
@@ -5411,7 +5411,7 @@ def update_admin_session_booking_student_time(
             reason="Student reminder time changed by admin",
             now=now,
         )
-        _cancel_pending_notification_reminders_for_booking(
+        cancel_pending_booking_reminder_notifications(
             db,
             booking_id=booking.id,
             reason="Student reminder time changed by admin",
@@ -5773,7 +5773,7 @@ def cancel_admin_session_booking(
             reason="Booking cancelled by admin",
             now=now,
         )
-        _cancel_pending_notification_reminders_for_booking(
+        cancel_pending_booking_reminder_notifications(
             db,
             booking_id=target_booking.id,
             reason="Booking cancelled by admin",
