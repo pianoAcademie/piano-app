@@ -84,6 +84,38 @@ def _money_snapshot(booking: Booking) -> tuple[Decimal, Decimal, Decimal, Decima
     )
 
 
+def _active_season_rows(
+    db,
+    *,
+    student_id: UUID,
+    start_utc: datetime,
+    end_utc: datetime,
+) -> list[BookingRow]:
+    rows = db.execute(
+        select(Booking, CourseSession, CourseType, Location)
+        .join(CourseSession, CourseSession.id == Booking.session_id)
+        .join(CourseType, CourseType.id == CourseSession.course_type_id)
+        .join(Location, Location.id == CourseSession.location_id)
+        .where(
+            Booking.user_id == student_id,
+            Booking.status.in_(BOOKING_STATUSES_ACTIVE),
+            CourseSession.status == SessionStatus.SCHEDULED,
+            CourseSession.start_at_utc >= start_utc,
+            CourseSession.start_at_utc < end_utc,
+        )
+        .order_by(CourseSession.start_at_utc.asc(), Booking.id.asc())
+        .with_for_update()
+    ).all()
+    return [BookingRow(row[0], row[1], row[2], row[3]) for row in rows]
+
+
+def _rows_by_signature(rows: list[BookingRow]) -> dict[tuple[UUID, UUID, int, time], list[BookingRow]]:
+    grouped: dict[tuple[UUID, UUID, int, time], list[BookingRow]] = {}
+    for row in rows:
+        grouped.setdefault(_signature(row.session), []).append(row)
+    return grouped
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Move Diane Ceroux's 2026-2027 weekly bookings to Friday 17h at the same location."
@@ -118,6 +150,34 @@ def main(argv: list[str] | None = None) -> int:
             for candidate in candidates
             if _identity_key(f"{candidate.first_name or ''} {candidate.last_name or ''}") == expected_identity
         ]
+        identity_resolution = "exact_name"
+        if not students:
+            recurring_candidates: list[User] = []
+            for candidate in candidates:
+                if _identity_key(candidate.first_name) != FIRST_NAME:
+                    continue
+                candidate_rows = _active_season_rows(
+                    db,
+                    student_id=candidate.id,
+                    start_utc=start_utc,
+                    end_utc=end_utc,
+                )
+                candidate_groups = _rows_by_signature(candidate_rows)
+                recurring_group_count = sum(1 for group in candidate_groups.values() if len(group) >= 10)
+                print(
+                    f"{SCRIPT_PREFIX}|identity_candidate|"
+                    f"name={candidate.first_name or ''} {candidate.last_name or ''}|"
+                    f"active_season_bookings={len(candidate_rows)}|"
+                    f"recurring_groups={recurring_group_count}"
+                )
+                if recurring_group_count == 1:
+                    recurring_candidates.append(candidate)
+            if len(recurring_candidates) > 1:
+                _abort(f"multiple_diane_recurring_candidates_found_{len(recurring_candidates)}")
+            if len(recurring_candidates) == 1:
+                students = recurring_candidates
+                identity_resolution = "unique_diane_with_recurring_season_booking"
+
         if not students and args.allow_missing:
             db.rollback()
             candidate_names = [
@@ -132,28 +192,16 @@ def main(argv: list[str] | None = None) -> int:
             _abort(f"expected_one_student_found_{len(students)}")
         student = students[0]
 
-        rows = db.execute(
-            select(Booking, CourseSession, CourseType, Location)
-            .join(CourseSession, CourseSession.id == Booking.session_id)
-            .join(CourseType, CourseType.id == CourseSession.course_type_id)
-            .join(Location, Location.id == CourseSession.location_id)
-            .where(
-                Booking.user_id == student.id,
-                Booking.status.in_(BOOKING_STATUSES_ACTIVE),
-                CourseSession.status == SessionStatus.SCHEDULED,
-                CourseSession.start_at_utc >= start_utc,
-                CourseSession.start_at_utc < end_utc,
-            )
-            .order_by(CourseSession.start_at_utc.asc(), Booking.id.asc())
-            .with_for_update()
-        ).all()
-        booking_rows = [BookingRow(row[0], row[1], row[2], row[3]) for row in rows]
+        booking_rows = _active_season_rows(
+            db,
+            student_id=student.id,
+            start_utc=start_utc,
+            end_utc=end_utc,
+        )
         if not booking_rows:
             _abort("student_has_no_active_season_booking")
 
-        rows_by_signature: dict[tuple[UUID, UUID, int, time], list[BookingRow]] = {}
-        for row in booking_rows:
-            rows_by_signature.setdefault(_signature(row.session), []).append(row)
+        rows_by_signature = _rows_by_signature(booking_rows)
         recurring_groups = {
             signature: signature_rows
             for signature, signature_rows in rows_by_signature.items()
@@ -237,6 +285,7 @@ def main(argv: list[str] | None = None) -> int:
         sample_target = pairs[0][1]
         print(
             f"{SCRIPT_PREFIX}|audit|student={student.first_name} {student.last_name}|"
+            f"identity_resolution={identity_resolution}|"
             f"bookings={len(source_rows)}|activity={sample_source.course_type.name}|"
             f"location={sample_source.location.name}|source_weekday={source_weekday}|"
             f"source_time={source_time.strftime('%H:%M')}|target_weekday={TARGET_WEEKDAY}|"
