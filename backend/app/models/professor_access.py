@@ -62,6 +62,7 @@ class ProfessorPermission(Base):
     )
     can_view_intakes: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     can_view_quotes: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    can_view_upcoming_trials: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     can_configure_app: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     can_list_payments: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     can_manage_events: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))

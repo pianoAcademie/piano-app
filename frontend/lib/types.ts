@@ -1290,6 +1290,7 @@ export type ProfessorPermissionOut = {
   check_deposits_location_id: string | null;
   can_view_intakes: boolean;
   can_view_quotes: boolean;
+  can_view_upcoming_trials: boolean;
   can_configure_app: boolean;
   can_list_payments: boolean;
   can_manage_events: boolean;

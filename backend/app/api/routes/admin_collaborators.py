@@ -1567,6 +1567,7 @@ def update_collaborator_permissions(
         values["can_access_collaborators"] = True
         values["can_view_intakes"] = True
         values["can_view_quotes"] = True
+        values["can_view_upcoming_trials"] = True
         if is_admin is None:
             is_admin = False
 

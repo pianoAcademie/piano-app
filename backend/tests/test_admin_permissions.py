@@ -6,7 +6,8 @@ import unittest
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from app.api.deps import normalize_admin_permission_map
+from app.api.deps import BACKOFFICE_PERMISSION_KEYS, normalize_admin_permission_map
+from app.services.professor_permissions import DEFAULT_PROFESSOR_PERMISSIONS, PERMISSION_FIELDS
 
 
 class AdminPermissionTests(unittest.TestCase):
@@ -31,6 +32,11 @@ class AdminPermissionTests(unittest.TestCase):
         )
 
         self.assertFalse(permissions["can_view_planning"])
+
+    def test_upcoming_trials_is_a_dedicated_backoffice_permission(self) -> None:
+        self.assertIn("can_view_upcoming_trials", BACKOFFICE_PERMISSION_KEYS)
+        self.assertIn("can_view_upcoming_trials", PERMISSION_FIELDS)
+        self.assertFalse(DEFAULT_PROFESSOR_PERMISSIONS["can_view_upcoming_trials"])
 
 
 if __name__ == "__main__":

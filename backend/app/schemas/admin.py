@@ -2033,6 +2033,7 @@ class ProfessorPermissionOut(BaseModel):
     check_deposits_location_id: UUID | None = None
     can_view_intakes: bool
     can_view_quotes: bool
+    can_view_upcoming_trials: bool
     can_configure_app: bool
     can_list_payments: bool
     can_manage_events: bool
@@ -2085,6 +2086,7 @@ class ProfessorPermissionUpdateRequest(BaseModel):
     check_deposits_location_id: UUID | None = None
     can_view_intakes: bool = False
     can_view_quotes: bool = False
+    can_view_upcoming_trials: bool = False
     can_configure_app: bool = False
     can_list_payments: bool = False
     can_manage_events: bool = False

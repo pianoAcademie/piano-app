@@ -18,7 +18,7 @@ from xhtml2pdf import pisa
 from sqlalchemy import Numeric, Text, and_, case, cast, extract, func, or_, select, update
 from sqlalchemy.orm import Session
 
-from app.api.deps import BACKOFFICE_PERMISSION_KEYS, get_db, require_admin_or_permissions, require_roles
+from app.api.deps import get_db, require_admin_or_permissions, require_roles
 from app.models.catalog import (
     Booking,
     BookingStatus,
@@ -2843,7 +2843,7 @@ def report_trial_courses(
     include_inactive: bool = False,
     limit: int = Query(default=2000, ge=1, le=5000),
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin_or_permissions(*BACKOFFICE_PERMISSION_KEYS)),
+    _: User = Depends(require_admin_or_permissions("can_view_upcoming_trials")),
 ) -> list[TrialCourseReportRow]:
     return _load_trial_course_report_rows(
         db,
@@ -2969,7 +2969,7 @@ def export_trial_courses_xlsx(
     location_id: UUID | None = None,
     include_inactive: bool = False,
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin_or_permissions(*BACKOFFICE_PERMISSION_KEYS)),
+    _: User = Depends(require_admin_or_permissions("can_view_upcoming_trials")),
 ) -> Response:
     rows = _load_trial_course_report_rows(
         db,

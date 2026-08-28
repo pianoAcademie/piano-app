@@ -342,6 +342,7 @@ const PERMISSION_SECTIONS: Array<{ titleKey: string; keys: Array<{ key: string; 
       { key: "can_access_collaborators", labelKey: "admin.professor_detail.permissions.access_collaborators" },
       { key: "can_view_intakes", labelKey: "admin.professor_detail.permissions.view_intakes_readonly" },
       { key: "can_view_quotes", labelKey: "admin.professor_detail.permissions.view_quotes_readonly" },
+      { key: "can_view_upcoming_trials", labelKey: "admin.professor_detail.permissions.view_upcoming_trials" },
     ],
   },
   {
@@ -489,7 +490,8 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
     Boolean(permissionState.can_view_clients) &&
     Boolean(permissionState.can_access_collaborators) &&
     Boolean(permissionState.can_view_intakes) &&
-    Boolean(permissionState.can_view_quotes);
+    Boolean(permissionState.can_view_quotes) &&
+    Boolean(permissionState.can_view_upcoming_trials);
   const rates = ratesResult.ok ? ratesResult.data : [];
   const courseTypes = courseTypesResult.ok ? courseTypesResult.data : [];
   const sessions = sessionsResult.ok ? sessionsResult.data : [];

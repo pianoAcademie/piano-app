@@ -847,6 +847,7 @@ def me(
             "can_access_collaborators",
             "can_view_intakes",
             "can_view_quotes",
+            "can_view_upcoming_trials",
         }
         payload.admin_access_profile = "manager" if any(permissions.get(key) for key in manager_keys) else "professor"
     return payload

@@ -2,7 +2,7 @@ import { cookies } from "next/headers";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
-import { hasAnyAdminAccess } from "../../../../lib/admin-access";
+import { hasAdminPermission } from "../../../../lib/admin-access";
 import { backendRequest } from "../../../../lib/backend";
 import type { AdminProfessorOut, LocationOut, UserOut } from "../../../../lib/types";
 import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage } from "../../../../lib/ui-i18n";
@@ -206,7 +206,7 @@ export default async function TrialCoursesReportPage({ searchParams }: { searchP
     redirect("/login?error_code=session_expired");
   }
   const meResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, token);
-  if (!meResult.ok || !hasAnyAdminAccess(meResult.data)) {
+  if (!meResult.ok || !hasAdminPermission(meResult.data, "can_view_upcoming_trials")) {
     redirect("/login?error_code=admin_access_required");
   }
   const language = normalizeUiLanguage(meResult.data.preferred_language);

@@ -1193,6 +1193,7 @@ const PROFESSOR_PERMISSION_KEYS: ProfessorPermissionBooleanKey[] = [
   "can_manage_check_deposits",
   "can_view_intakes",
   "can_view_quotes",
+  "can_view_upcoming_trials",
   "can_configure_app",
   "can_list_payments",
   "can_manage_events",

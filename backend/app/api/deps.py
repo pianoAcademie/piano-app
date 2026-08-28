@@ -30,6 +30,7 @@ BACKOFFICE_PERMISSION_KEYS = {
     "can_access_collaborators",
     "can_view_intakes",
     "can_view_quotes",
+    "can_view_upcoming_trials",
     "can_manage_events",
     "can_manage_mobile_news",
     "can_manage_website_and_news",

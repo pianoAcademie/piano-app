@@ -3,8 +3,6 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-import { MANAGER_ADMIN_PERMISSION_KEYS } from "../lib/admin-access";
-
 type UiLanguage = "fr" | "en";
 
 type LocalizedLabel = Record<UiLanguage, string>;
@@ -28,7 +26,7 @@ const NAV_SECTIONS: NavSection[] = [
     title: { fr: "Operations", en: "Operations" },
     items: [
       { href: "/admin", label: { fr: "Planning", en: "Schedule" }, icon: "📅", permission: "can_view_planning" },
-      { href: "/admin/reporting/trial-courses", label: { fr: "Essais à venir", en: "Upcoming trials" }, icon: "🧪", permission: "manager_access" },
+      { href: "/admin/reporting/trial-courses", label: { fr: "Essais à venir", en: "Upcoming trials" }, icon: "🧪", permission: "can_view_upcoming_trials" },
       { href: "/admin/tasks", label: { fr: "Tâches", en: "Tasks" }, icon: "📋", permission: "can_manage_tasks" },
       { href: "/admin/events", label: { fr: "Événements", en: "Events" }, icon: "🎟️", permission: "can_manage_events" },
       { href: "/admin/planning-reorganization", label: { fr: "Reorganisation saison", en: "Season reorg" }, icon: "🧩", permission: "can_edit_planning" },
@@ -102,9 +100,6 @@ function withUiLanguage(href: string, language: UiLanguage): string {
 }
 
 function hasVisiblePermission(permission: string, permissions: Partial<Record<string, boolean | string | null>>): boolean {
-  if (permission === "manager_access") {
-    return MANAGER_ADMIN_PERMISSION_KEYS.some((key) => Boolean(permissions[key]));
-  }
   if (permission === "can_view_planning" && permissions.can_edit_planning) {
     return true;
   }
