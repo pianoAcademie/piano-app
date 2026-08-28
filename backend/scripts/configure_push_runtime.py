@@ -57,13 +57,40 @@ finally:
 
 
 def _active_non_system_user_count() -> int:
-    result = subprocess.run(
-        ["docker", "compose", "exec", "-T", "backend", "python", "-c", _ACTIVE_USER_QUERY],
+    backend = subprocess.run(
+        ["docker", "compose", "ps", "-q", "backend"],
         check=True,
         capture_output=True,
         text=True,
         stdin=subprocess.DEVNULL,
     )
+    if not backend.stdout.strip():
+        print("[OK] Backend is stopped; no user session can be active. Deployment recovery is allowed.")
+        return 0
+
+    try:
+        result = subprocess.run(
+            ["docker", "compose", "exec", "-T", "backend", "python", "-c", _ACTIVE_USER_QUERY],
+            check=True,
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+        )
+    except subprocess.CalledProcessError:
+        # A backend may disappear between `compose ps` and `compose exec`
+        # during recovery from a failed deployment. Re-check before deciding
+        # whether this is a real query failure.
+        backend_after_failure = subprocess.run(
+            ["docker", "compose", "ps", "-q", "backend"],
+            check=True,
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+        )
+        if not backend_after_failure.stdout.strip():
+            print("[OK] Backend stopped during the presence check; deployment recovery is allowed.")
+            return 0
+        raise
     output_lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
     if not output_lines:
         raise RuntimeError("the production presence query returned no result")
