@@ -323,15 +323,19 @@ def _audit_candidates(db: Session, *, school_year: str) -> tuple[int, list[Audit
             for value in _json_list(execution.get("created_annual_invoice_note_ids"))
             if (parsed := _parse_uuid(value))
         ]
+        # The invoice may have been issued after quote integration.  In that
+        # case it is not part of ``created_annual_invoice_note_ids`` anymore,
+        # but its immutable BOOKING source id still points to the enrollment.
+        # Use that accounting reference instead of relying only on the quote's
+        # historical note list.
         invoice_lines = list(
             db.scalars(
                 select(ClientInvoiceLine).where(
-                    ClientInvoiceLine.note_id.in_(invoice_note_ids),
                     ClientInvoiceLine.source == "BOOKING",
                     ClientInvoiceLine.source_payment_id.in_(booking_ids),
                 )
             ).all()
-        ) if invoice_note_ids else []
+        )
         invoice_lines_by_booking_id: dict[UUID, list[ClientInvoiceLine]] = defaultdict(list)
         for line in invoice_lines:
             invoice_lines_by_booking_id[line.source_payment_id].append(line)
@@ -364,7 +368,7 @@ def _audit_candidates(db: Session, *, school_year: str) -> tuple[int, list[Audit
             elif current_dates != expected_dates:
                 issue_codes.append("PLANNING_DATE_MISMATCH")
 
-            if invoice_note_ids:
+            if invoice_note_ids or invoice_lines:
                 if any(not invoice_lines_by_booking_id.get(booking.id) for booking in bookings):
                     issue_codes.append("MISSING_INVOICE_LINE")
                 date_mismatch = False
@@ -400,7 +404,7 @@ def _audit_candidates(db: Session, *, school_year: str) -> tuple[int, list[Audit
                         sessions_by_booking_id=sessions_by_booking_id,
                         expected_dates=expected_dates,
                         invoice_lines_by_booking_id=invoice_lines_by_booking_id,
-                        annual_invoice_expected=bool(invoice_note_ids),
+                        annual_invoice_expected=bool(invoice_note_ids or invoice_lines),
                         issue_codes=issue_codes,
                     )
                 )
