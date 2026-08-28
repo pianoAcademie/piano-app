@@ -18660,3 +18660,30 @@ export async function deleteClientNewsAction(formData: FormData): Promise<void> 
   revalidatePath("/client");
   redirect(appendQueryMessage(context.path, "ok", context.text.deleted));
 }
+
+export async function repairSafeQuotePlanningMismatchesAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+  await ensureAdminAndGetLanguage(token);
+  const schoolYear = String(formData.get("school_year") ?? "2026-2027").trim() || "2026-2027";
+  const result = await backendRequest<Record<string, number | string>>(
+    `/api/v1/admin/quality-control/quote-planning/repair-safe?school_year=${encodeURIComponent(schoolYear)}`,
+    { method: "POST" },
+    token,
+    120000,
+  );
+  const returnTo = `/admin/quality-control?school_year=${encodeURIComponent(schoolYear)}`;
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/admin/quality-control");
+  redirect(
+    appendQueryMessage(
+      returnTo,
+      "ok",
+      `${result.data.moved_bookings ?? 0} inscription(s) et ${result.data.updated_invoice_lines ?? 0} ligne(s) de facture alignées sur les devis validés.`,
+    ),
+  );
+}

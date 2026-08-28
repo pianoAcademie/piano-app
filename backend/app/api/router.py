@@ -9,6 +9,7 @@ from app.api.routes import (
     admin_collaborators,
     admin_config,
     admin_notifications,
+    admin_quality,
     admin_subscriptions,
     admin_sportigo_import,
     admin_to_process,
@@ -49,6 +50,7 @@ api_router.include_router(admin_clients.router, tags=["admin-clients"])
 api_router.include_router(admin_collaborators.router, tags=["admin-collaborators"])
 api_router.include_router(admin_pricing.router, tags=["admin-pricing"])
 api_router.include_router(admin_notifications.router, tags=["admin-notifications"])
+api_router.include_router(admin_quality.router, tags=["admin-quality"])
 api_router.include_router(admin_subscriptions.router, tags=["admin-subscriptions"])
 api_router.include_router(admin_sportigo_import.router, tags=["admin-sportigo-import"])
 api_router.include_router(admin_to_process.router, tags=["admin-to-process"])

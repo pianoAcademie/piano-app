@@ -2902,6 +2902,40 @@ export type AdminPlanningSimulationOut = {
   slots: AdminPlanningSimulationSlotOut[];
 };
 
+export type AdminQuotePlanningAuditItemOut = {
+  quote_id: string;
+  quote_number: string;
+  student_id: string;
+  student_name: string;
+  series_id: string;
+  activity_name: string;
+  location_name: string;
+  slot_label: string;
+  issue_codes: string[];
+  expected_sessions: number;
+  booked_sessions: number;
+  invoiced_sessions: number;
+  expected_start: string | null;
+  expected_end: string | null;
+  booked_start: string | null;
+  booked_end: string | null;
+  missing_dates: string[];
+  unexpected_dates: string[];
+  repairable: boolean;
+  approved_for_automatic_repair: boolean;
+};
+
+export type AdminQuotePlanningAuditOut = {
+  checked_at: string;
+  school_year: string;
+  checked_quotes: number;
+  affected_series: number;
+  issue_count: number;
+  repairable_count: number;
+  approved_repair_count: number;
+  items: AdminQuotePlanningAuditItemOut[];
+};
+
 export type ReservationReportRow = {
   session_id: string;
   start_at_utc: string;

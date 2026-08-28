@@ -129,6 +129,9 @@ function labelForSegment(segment: string, previous: string, language: UiLanguage
   if (segment === "config") {
     return pickText(language, "Configuration", "Settings");
   }
+  if (segment === "quality-control") {
+    return pickText(language, "Contrôle devis/planning", "Quote/schedule checks");
+  }
   if (segment === "formulas") {
     return pickText(language, "Formules", "Plans");
   }
