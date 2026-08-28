@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
+import { hasAnyAdminAccess } from "../../../../lib/admin-access";
 import { backendRequest } from "../../../../lib/backend";
 import type { AdminProfessorOut, LocationOut, UserOut } from "../../../../lib/types";
 import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage } from "../../../../lib/ui-i18n";
@@ -205,7 +206,7 @@ export default async function TrialCoursesReportPage({ searchParams }: { searchP
     redirect("/login?error_code=session_expired");
   }
   const meResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, token);
-  if (!meResult.ok || meResult.data.role !== "admin") {
+  if (!meResult.ok || !hasAnyAdminAccess(meResult.data)) {
     redirect("/login?error_code=admin_access_required");
   }
   const language = normalizeUiLanguage(meResult.data.preferred_language);
@@ -230,7 +231,18 @@ export default async function TrialCoursesReportPage({ searchParams }: { searchP
     backendRequest<LocationOut[]>("/api/v1/locations?active=false", {}, token),
   ]);
   const rows = rowsResult.ok ? rowsResult.data : [];
-  const professors = professorsResult.ok ? professorsResult.data : [];
+  const professors = professorsResult.ok
+    ? professorsResult.data.map((professor) => ({
+      id: professor.id,
+      name: `${professor.first_name} ${professor.last_name}`.trim(),
+    }))
+    : Array.from(
+      new Map(
+        rows
+          .filter((row) => row.professor_id)
+          .map((row) => [row.professor_id as string, { id: row.professor_id as string, name: row.professor_name }]),
+      ).values(),
+    ).sort((left, right) => left.name.localeCompare(right.name, localeForUiLanguage(language)));
   const locations = locationsResult.ok ? locationsResult.data : [];
   const dayGroups = groupRowsByDay(rows, language);
   const locationCount = new Set(rows.map((row) => row.location_id)).size;
@@ -266,7 +278,7 @@ export default async function TrialCoursesReportPage({ searchParams }: { searchP
             <select name="professor_id" defaultValue={professorId}>
               <option value="">{labels.allProfessors}</option>
               {professors.map((professor) => (
-                <option key={professor.id} value={professor.id}>{professor.first_name} {professor.last_name}</option>
+                <option key={professor.id} value={professor.id}>{professor.name}</option>
               ))}
             </select>
           </label>
