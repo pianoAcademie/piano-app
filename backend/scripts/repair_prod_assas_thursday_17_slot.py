@@ -243,17 +243,22 @@ def main(argv: list[str] | None = None) -> int:
 
         if session_obj.status != SessionStatus.CANCELLED:
             raise SystemExit(f"{SCRIPT_PREFIX}|abort|reason=unexpected_session_status|status={_enum_value(session_obj.status)}")
-        if booking.status != BookingStatus.CANCELLED:
+        if booking.status not in (BookingStatus.BOOKED, BookingStatus.CANCELLED):
             raise SystemExit(f"{SCRIPT_PREFIX}|abort|reason=unexpected_booking_status|status={_enum_value(booking.status)}")
-        if (booking.cancellation_reason or "").strip().upper() != EXPECTED_BOOKING_CANCELLATION_REASON:
-            raise SystemExit(
-                f"{SCRIPT_PREFIX}|abort|reason=unexpected_booking_cancellation_reason|"
-                f"value={booking.cancellation_reason or '-'}"
-            )
-        if latest_cancel_event is None:
-            raise SystemExit(f"{SCRIPT_PREFIX}|abort|reason=missing_slot_cancel_event")
-
-        credit_changes = _undo_restored_credit(db, booking=booking, now=now)
+        if booking.status == BookingStatus.CANCELLED:
+            if (booking.cancellation_reason or "").strip().upper() != EXPECTED_BOOKING_CANCELLATION_REASON:
+                raise SystemExit(
+                    f"{SCRIPT_PREFIX}|abort|reason=unexpected_booking_cancellation_reason|"
+                    f"value={booking.cancellation_reason or '-'}"
+                )
+            if latest_cancel_event is None:
+                raise SystemExit(f"{SCRIPT_PREFIX}|abort|reason=missing_slot_cancel_event_for_cancelled_booking")
+            credit_changes = _undo_restored_credit(db, booking=booking, now=now)
+        else:
+            # Production audit showed that this booking remained BOOKED while
+            # only its session was marked CANCELLED. No credit was restored,
+            # so re-consuming one here would charge the student twice.
+            credit_changes = []
         session_obj.status = SessionStatus.SCHEDULED
         session_obj.cancel_reason = None
         session_obj.updated_at = now
@@ -275,7 +280,7 @@ def main(argv: list[str] | None = None) -> int:
                     "slot_id": str(session_obj.id),
                     "booking_id": str(booking.id),
                     "student_id": str(booking.user_id),
-                    "previous_slot_cancel_event_id": str(latest_cancel_event.id),
+                    "previous_slot_cancel_event_id": str(latest_cancel_event.id) if latest_cancel_event else None,
                     "credit_changes": credit_changes,
                 },
             )
