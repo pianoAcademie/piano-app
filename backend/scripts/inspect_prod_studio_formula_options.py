@@ -385,4 +385,4 @@ if __name__ == "__main__":
     main()
     from scripts.repair_prod_diane_ceroux_friday_series import main as repair_diane_friday_series
 
-    repair_diane_friday_series([])
+    repair_diane_friday_series(["--apply"])
