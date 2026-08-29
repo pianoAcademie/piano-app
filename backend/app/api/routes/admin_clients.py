@@ -6724,15 +6724,43 @@ def _filtered_clients_stmt(
     if student_site is not None:
         stmt = stmt.where(User.student_site == student_site)
 
-    for search_token in [token for token in (search or "").strip().split() if token]:
-        pattern = f"%{search_token}%"
+    normalized_search = (search or "").strip()
+    phone_digits = re.sub(r"[^0-9]", "", normalized_search)
+    phone_only_search = len(phone_digits) >= 4 and not re.search(r"[A-Za-z@]", normalized_search)
+
+    if phone_only_search:
+        phone_variants = {phone_digits}
+        if phone_digits.startswith("0033") and len(phone_digits) > 4:
+            phone_variants.add(phone_digits[2:])
+            phone_variants.add(f"0{phone_digits[4:]}")
+        elif phone_digits.startswith("33") and len(phone_digits) > 2:
+            phone_variants.add(f"0{phone_digits[2:]}")
+        elif phone_digits.startswith("0") and len(phone_digits) > 1:
+            phone_variants.add(f"33{phone_digits[1:]}")
+
+        normalized_phone_fields = [
+            func.regexp_replace(func.coalesce(phone_field, ""), "[^0-9]", "", "g")
+            for phone_field in (User.phone, User.mobile_phone_1, User.mobile_phone_2, User.home_phone)
+        ]
         stmt = stmt.where(
             or_(
-                User.email.ilike(pattern),
-                User.first_name.ilike(pattern),
-                User.last_name.ilike(pattern),
+                *(
+                    normalized_phone.like(f"%{variant}%")
+                    for variant in sorted(phone_variants)
+                    for normalized_phone in normalized_phone_fields
+                )
             )
         )
+    else:
+        for search_token in [token for token in normalized_search.split() if token]:
+            pattern = f"%{search_token}%"
+            stmt = stmt.where(
+                or_(
+                    User.email.ilike(pattern),
+                    User.first_name.ilike(pattern),
+                    User.last_name.ilike(pattern),
+                )
+            )
 
     if group_id is not None:
         stmt = stmt.join(ClientGroupMembership, ClientGroupMembership.user_id == User.id).where(

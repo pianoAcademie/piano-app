@@ -68,6 +68,42 @@ class AdminFullNameSearchTests(unittest.TestCase):
 
         self.assertIn(ClientKind.ADULT, _parameter_values(statement))
 
+    def test_clients_search_phone_in_all_phone_fields(self) -> None:
+        statement = _filtered_clients_stmt(
+            search="+33 6 12 34 56 78",
+            client_kind=None,
+            client_status=None,
+            student_site=None,
+            group_id=None,
+            include_archived=True,
+            active_only=False,
+        )
+
+        compiled = str(statement.compile())
+        values = _parameter_values(statement)
+        self.assertIn("regexp_replace", compiled)
+        self.assertIn("users.phone", compiled)
+        self.assertIn("users.mobile_phone_1", compiled)
+        self.assertIn("users.mobile_phone_2", compiled)
+        self.assertIn("users.home_phone", compiled)
+        self.assertIn("%33612345678%", values)
+        self.assertIn("%0612345678%", values)
+
+    def test_clients_search_french_phone_matches_international_format(self) -> None:
+        statement = _filtered_clients_stmt(
+            search="06 12 34 56 78",
+            client_kind=None,
+            client_status=None,
+            student_site=None,
+            group_id=None,
+            include_archived=True,
+            active_only=False,
+        )
+
+        values = _parameter_values(statement)
+        self.assertIn("%0612345678%", values)
+        self.assertIn("%33612345678%", values)
+
     def test_collaborators_require_every_full_name_token(self) -> None:
         db = _CaptureDb()
         list_collaborators(
