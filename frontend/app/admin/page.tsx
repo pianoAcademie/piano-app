@@ -36,6 +36,7 @@ import MonthDayCard from "../../components/planning/month-day-card";
 import SessionCreateMainFields from "../../components/planning/session-create-main-fields";
 import SessionCreateSubmitButton from "../../components/planning/session-create-submit-button";
 import GroupNoteComposer from "../../components/planning/group-note-composer";
+import { AttendanceSubmitButton, PendingFormButton } from "../../components/planning/attendance-submit-controls";
 import { localeForUiLanguage, normalizeUiLanguage, resolveAuthOkMessage, type UiLanguage, uiText } from "../../lib/ui-i18n";
 import { resolveUiFlashMessage, withUiLanguage } from "../../lib/ui-messages";
 import type {
@@ -3439,14 +3440,36 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                       </div>
                       <div className="attendance-v2-nav-links">
                         {previousAttendanceBooking ? (
-                          <a className="mode-link" href={attendanceBookingHref(previousAttendanceBooking.id)}>
-                            {isEnglish ? "← Previous" : "← Precedent"}
-                          </a>
+                          canEditAttendance(focusedAttendanceBooking.status) ? (
+                            <AttendanceSubmitButton
+                              formId="attendance-status-form"
+                              language={language}
+                              className="mode-link"
+                              targetHref={attendanceBookingHref(previousAttendanceBooking.id)}
+                              idleLabel={isEnglish ? "← Previous" : "← Precedent"}
+                              showReadyIcon={false}
+                            />
+                          ) : (
+                            <a className="mode-link" href={attendanceBookingHref(previousAttendanceBooking.id)}>
+                              {isEnglish ? "← Previous" : "← Precedent"}
+                            </a>
+                          )
                         ) : null}
                         {nextAttendanceBooking ? (
-                          <a className="mode-link" href={attendanceBookingHref(nextAttendanceBooking.id)}>
-                            {isEnglish ? "Next →" : "Suivant →"}
-                          </a>
+                          canEditAttendance(focusedAttendanceBooking.status) ? (
+                            <AttendanceSubmitButton
+                              formId="attendance-status-form"
+                              language={language}
+                              className="mode-link"
+                              targetHref={attendanceBookingHref(nextAttendanceBooking.id)}
+                              idleLabel={isEnglish ? "Next →" : "Suivant →"}
+                              showReadyIcon={false}
+                            />
+                          ) : (
+                            <a className="mode-link" href={attendanceBookingHref(nextAttendanceBooking.id)}>
+                              {isEnglish ? "Next →" : "Suivant →"}
+                            </a>
+                          )
                         ) : null}
                       </div>
                     </div>
@@ -3471,6 +3494,8 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                           }
                           previousHref={previousAttendanceBooking ? attendanceBookingHref(previousAttendanceBooking.id) : null}
                           nextHref={nextAttendanceBooking ? attendanceBookingHref(nextAttendanceBooking.id) : null}
+                          successMessage={okMessage}
+                          errorMessage={errorMessage}
                         />
                       </form>
                     ) : (
@@ -3579,9 +3604,11 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                           />
                         </label>
                         <div className="row">
-                          <button type="submit" className="ghost">
-                            {isEnglish ? "Save" : "Enregistrer"}
-                          </button>
+                          <PendingFormButton
+                            language={language}
+                            className="ghost"
+                            idleLabel={isEnglish ? "Save internal note" : "Enregistrer la note interne"}
+                          />
                         </div>
                       </form>
                     </details>
@@ -3593,11 +3620,14 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                   </a>
                   <div className="row">
                     {canEditAttendance(focusedAttendanceBooking.status) ? (
-                      <button type="submit" form="attendance-status-form">
-                        {nextAttendanceBooking
-                          ? (isEnglish ? "Save & next" : "Enregistrer & suivant")
-                          : (isEnglish ? "Save & close" : "Enregistrer & fermer")}
-                      </button>
+                      <AttendanceSubmitButton
+                        formId="attendance-status-form"
+                        language={language}
+                        targetHref={nextAttendanceBooking ? attendanceBookingHref(nextAttendanceBooking.id) : modalHref}
+                        idleLabel={nextAttendanceBooking
+                          ? (isEnglish ? "Save and go to next student" : "Enregistrer et passer à l’élève suivant")
+                          : (isEnglish ? "Save and finish" : "Enregistrer et terminer")}
+                      />
                     ) : null}
                   </div>
                 </footer>

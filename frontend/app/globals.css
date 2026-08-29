@@ -7892,10 +7892,50 @@ button.danger:focus-visible {
   gap: 8px;
 }
 
-.presence-dirty-flag {
-  color: #8d5e00;
+.presence-save-state {
   font-weight: 700;
   font-size: 12px;
+  text-align: right;
+}
+
+.presence-save-state.is-dirty {
+  color: #8d5e00;
+}
+
+.presence-save-state.is-saved {
+  color: #216b3e;
+}
+
+.presence-save-state.is-error {
+  color: #a52f2a;
+}
+
+.attendance-v2-nav-links button,
+.note-modal-footer button,
+.attendance-v2-note-form button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
+.attendance-v2-nav-links button:disabled,
+.note-modal-footer button:disabled,
+.attendance-v2-note-form button:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.attendance-v2-nav-links button.is-pending span,
+.note-modal-footer button.is-pending span,
+.attendance-v2-note-form button.is-pending span {
+  animation: attendance-saving-spin 0.8s linear infinite;
+}
+
+@keyframes attendance-saving-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .attendance-v2-notes {

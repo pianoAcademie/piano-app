@@ -13,6 +13,8 @@ type PresenceButtonsGroupProps = {
   language?: UiLanguage;
   previousHref?: string | null;
   nextHref?: string | null;
+  successMessage?: string | null;
+  errorMessage?: string | null;
 };
 
 export default function PresenceButtonsGroup({
@@ -22,6 +24,8 @@ export default function PresenceButtonsGroup({
   language = "fr",
   previousHref,
   nextHref,
+  successMessage,
+  errorMessage,
 }: PresenceButtonsGroupProps): JSX.Element {
   const [selected, setSelected] = useState<PresenceValue>(initialValue);
   const isDirty = selected !== initialValue;
@@ -40,6 +44,7 @@ export default function PresenceButtonsGroup({
   }, [initialValue]);
 
   const shortcutsHint = useMemo(() => uiText(language, "admin.planning.shortcuts_hint"), [language]);
+  const selectedLabel = options.find((option) => option.value === selected)?.label ?? "";
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -74,12 +79,22 @@ export default function PresenceButtonsGroup({
         }
         if (event.key === "ArrowUp" && previousHref) {
           event.preventDefault();
-          window.location.assign(previousHref);
+          const form = document.getElementById(formId) as HTMLFormElement | null;
+          const returnTo = form?.elements.namedItem("return_to") as HTMLInputElement | null;
+          if (form && returnTo) {
+            returnTo.value = previousHref;
+            form.requestSubmit();
+          }
           return;
         }
         if (event.key === "ArrowDown" && nextHref) {
           event.preventDefault();
-          window.location.assign(nextHref);
+          const form = document.getElementById(formId) as HTMLFormElement | null;
+          const returnTo = form?.elements.namedItem("return_to") as HTMLInputElement | null;
+          if (form && returnTo) {
+            returnTo.value = nextHref;
+            form.requestSubmit();
+          }
           return;
         }
       }
@@ -121,7 +136,21 @@ export default function PresenceButtonsGroup({
       </div>
       <div className="presence-group-meta">
         <small className="muted">{shortcutsHint}</small>
-        {isDirty ? <small className="presence-dirty-flag">{uiText(language, "admin.planning.unsaved_changes")}</small> : null}
+        <small
+          className={`presence-save-state ${errorMessage ? "is-error" : isDirty ? "is-dirty" : "is-saved"}`}
+          role={errorMessage ? "alert" : "status"}
+          aria-live="polite"
+        >
+          {errorMessage
+            ? `× ${errorMessage}`
+            : isDirty
+              ? `● ${uiText(language, "admin.planning.unsaved_changes")}`
+              : successMessage
+                ? `✓ ${successMessage}`
+                : selected === "BOOKED"
+                  ? uiText(language, "admin.planning.attendance_not_recorded")
+                  : `✓ ${uiText(language, "admin.planning.saved_status", { status: selectedLabel })}`}
+        </small>
       </div>
     </div>
   );
