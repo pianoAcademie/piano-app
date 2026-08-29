@@ -12,13 +12,14 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import func, or_, select
 
 from app.api.routes.admin import BOOKING_STATUSES_ACTIVE
 from app.api.routes.admin_clients import _parse_invoice_range_note_entry
 from app.db.session import SessionLocal
 from app.models.catalog import Booking, CourseSession, CourseType, Location, SessionStatus
 from app.models.client_record import ClientInvoiceLine, ClientNoteEntry
+from app.models.family import ClientFamilyLink
 from app.models.notification_engine import DomainEvent
 from app.models.quote import Quote, QuoteAcceptanceFollowup, QuoteLine
 from app.models.user import User, UserRole
@@ -134,23 +135,26 @@ def _candidate_series(db) -> list[dict[str, Any]]:
     if rows:
         return rows
 
-    # The legacy central account can own the bookings while the invoice lines
-    # display the child's name.  Fall back to the two identities visible on the
-    # affected family record, without emitting either identity in the audit.
-    students = list(
-        db.scalars(
-            select(User).where(
-                User.role == UserRole.CLIENT,
-                or_(
-                    func.lower(func.coalesce(User.first_name, "")) == "diane",
-                    and_(
-                        func.lower(func.coalesce(User.first_name, "")) == "marc",
-                        func.lower(func.coalesce(User.last_name, "")).contains("ceroux"),
-                    ),
-                ),
-            )
-        ).all()
+    # The account page belongs to the family payer while bookings belong to a
+    # linked child. Resolve the exact payer record shown in production, then
+    # inspect only that family. The audit output remains free of contact data.
+    payer = db.scalar(
+        select(User).where(
+            User.role == UserRole.CLIENT,
+            or_(
+                func.lower(func.coalesce(User.email, "")) == "m_bernardceroux@hotmail.com",
+                func.lower(func.coalesce(User.contact_email, "")) == "m_bernardceroux@hotmail.com",
+            ),
+        )
     )
+    family_ids: set[UUID] = {payer.id} if payer is not None else set()
+    if payer is not None:
+        family_ids.update(
+            db.scalars(
+                select(ClientFamilyLink.child_user_id).where(ClientFamilyLink.adult_user_id == payer.id)
+            ).all()
+        )
+    students = list(db.scalars(select(User).where(User.id.in_(family_ids))).all()) if family_ids else []
     for student in students:
         booking_rows = db.execute(
             select(Booking, CourseSession, CourseType, Location)
