@@ -265,6 +265,45 @@ def diagnose_legacy_friday_series() -> None:
                 ]
             }
         )
+        target_session_ids = {row[1].id for row in target_rows}
+        peer_rows = db.execute(
+            select(Booking.user_id, Booking.session_id).where(
+                Booking.session_id.in_(target_session_ids),
+                Booking.user_id != target_student_id,
+                Booking.status.in_(BOOKING_STATUSES_ACTIVE),
+            )
+        ).all()
+        peer_counts = defaultdict(int)
+        for peer_id, _ in peer_rows:
+            peer_counts[peer_id] += 1
+        strong_peers = {peer_id for peer_id, count in peer_counts.items() if count >= 15}
+        strong_peer_rows = db.execute(
+            select(Booking, CourseSession)
+            .join(CourseSession, CourseSession.id == Booking.session_id)
+            .where(
+                Booking.user_id.in_(strong_peers),
+                Booking.status.in_(BOOKING_STATUSES_ACTIVE),
+                CourseSession.course_type_id == UUID("4bdf5d1e-fe55-4f95-80d4-0cafd3ce7683"),
+                CourseSession.location_id == UUID("cb3337a8-6a32-431d-b5c4-2cd8667be97f"),
+                CourseSession.start_at_utc >= datetime(2026, 9, 1, tzinfo=timezone.utc),
+                CourseSession.start_at_utc < datetime(2027, 7, 1, tzinfo=timezone.utc),
+            )
+            .order_by(Booking.user_id.asc(), CourseSession.start_at_utc.asc())
+        ).all()
+        peer_dates = defaultdict(list)
+        for booking, session_obj in strong_peer_rows:
+            local_start = session_obj.start_at_utc.astimezone(ZoneInfo(session_obj.timezone or "Europe/Paris"))
+            if local_start.weekday() == 4 and local_start.strftime("%H:%M") == "17:00":
+                peer_dates[booking.user_id].append((local_start.date().isoformat(), str(session_obj.id)))
+        print(
+            {
+                "target_peer_counts": {str(peer_id): count for peer_id, count in peer_counts.items()},
+                "strong_peer_series": {
+                    str(peer_id): {"count": len(rows), "dates_and_sessions": rows}
+                    for peer_id, rows in peer_dates.items()
+                },
+            }
+        )
         target_booking_ids = {row[0].id for row in target_rows}
         target_invoice_lines = list(
             db.scalars(
