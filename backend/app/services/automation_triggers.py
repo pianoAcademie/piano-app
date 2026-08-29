@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, Location
+from app.models.notification_engine import Notification
 from app.models.ops import AppSetting
 from app.models.plan import ClientPlanSubscription, Plan
 from app.models.user import ClientKind, User, UserRole
@@ -28,7 +29,9 @@ from app.services.notifications.domain.constants import (
     CHANNEL_EMAIL,
     DISPATCH_MODE_IMMEDIATE,
     DISPATCH_MODE_SCHEDULED,
+    NOTIFICATION_STATUS_CANCELLED,
     NOTIFICATION_STATUS_PENDING,
+    NOTIFICATION_STATUS_QUEUED,
     QUEUE_NOTIFICATIONS_IMMEDIATE,
     QUEUE_NOTIFICATIONS_SCHEDULED,
 )
@@ -238,6 +241,46 @@ def _context(
     }
 
 
+def _automation_scheduled_for(
+    *,
+    event_type: str,
+    occurred_at: datetime,
+    delay: timedelta,
+    session_obj: CourseSession | None,
+) -> datetime:
+    if event_type == EVENT_TRIAL_COURSE_ATTENDED and session_obj is not None:
+        return max(occurred_at, session_obj.end_at_utc + delay)
+    return occurred_at + delay
+
+
+def cancel_pending_trial_attended_triggers(
+    db: Session,
+    *,
+    booking_id: UUID,
+    now: datetime,
+) -> int:
+    notifications = db.scalars(
+        select(Notification).where(
+            Notification.booking_id == booking_id,
+            Notification.notification_type == "automation_trigger_email",
+            Notification.source == "automation_trigger",
+            Notification.status.in_([NOTIFICATION_STATUS_PENDING, NOTIFICATION_STATUS_QUEUED]),
+        )
+    ).all()
+    cancelled = 0
+    for notification in notifications:
+        payload = notification.payload_snapshot or {}
+        if payload.get("automation_event_type") != EVENT_TRIAL_COURSE_ATTENDED:
+            continue
+        notification.status = NOTIFICATION_STATUS_CANCELLED
+        notification.skipped_at = now
+        notification.failure_reason = "Trial attendance corrected before follow-up delivery"
+        notification.updated_at = now
+        db.add(notification)
+        cancelled += 1
+    return cancelled
+
+
 def _schedule_matching(
     db: Session, *, event_type: str, related_entity_type: str, related_entity_id: UUID,
     client: User, plan: Plan | None = None, booking: Booking | None = None,
@@ -271,10 +314,25 @@ def _schedule_matching(
             course_type=course_type, location=location,
         )
         delay = max(0, min(10080, int(rule.get("delay_minutes") or 0)))
-        scheduled_for = occurred_at + timedelta(minutes=delay)
-        dispatch_mode = DISPATCH_MODE_IMMEDIATE if delay == 0 else DISPATCH_MODE_SCHEDULED
-        queue_name = QUEUE_NOTIFICATIONS_IMMEDIATE if delay == 0 else QUEUE_NOTIFICATIONS_SCHEDULED
+        delay_delta = timedelta(minutes=delay)
+        scheduled_for = _automation_scheduled_for(
+            event_type=event_type,
+            occurred_at=occurred_at,
+            delay=delay_delta,
+            session_obj=session_obj,
+        )
+        due_now = scheduled_for <= occurred_at
+        dispatch_mode = DISPATCH_MODE_IMMEDIATE if due_now else DISPATCH_MODE_SCHEDULED
+        queue_name = QUEUE_NOTIFICATIONS_IMMEDIATE if due_now else QUEUE_NOTIFICATIONS_SCHEDULED
         rule_id = str(rule.get("id"))
+        idempotency_key = f"automation:{rule_id}:{event_type}:{related_entity_id}:{recipient_ref.contact_id}"
+        payload_snapshot = {
+            "body_format": str(template.get("body_format") or "TEXT"),
+            "automation_rule_id": rule_id,
+            "automation_rule_name": str(rule.get("name") or ""),
+            "automation_event_type": event_type,
+            "template_ref": template_ref,
+        }
         created = create_notification_if_new(
             db,
             notification_type="automation_trigger_email",
@@ -292,17 +350,32 @@ def _schedule_matching(
             recipient_phone=None,
             subject=render_template_content(str(template.get("subject") or "Piano Academie"), context),
             body_snapshot=render_template_content(str(template.get("body") or ""), context),
-            payload_snapshot={
-                "body_format": str(template.get("body_format") or "TEXT"),
-                "automation_rule_id": rule_id,
-                "automation_rule_name": str(rule.get("name") or ""),
-                "automation_event_type": event_type,
-                "template_ref": template_ref,
-            },
-            idempotency_key=f"automation:{rule_id}:{event_type}:{related_entity_id}:{recipient_ref.contact_id}",
+            payload_snapshot=payload_snapshot,
+            idempotency_key=idempotency_key,
             scheduled_for=scheduled_for,
             status=NOTIFICATION_STATUS_PENDING,
         )
+        if created is None:
+            existing = db.scalar(select(Notification).where(Notification.idempotency_key == idempotency_key).limit(1))
+            if existing is not None and existing.status == NOTIFICATION_STATUS_CANCELLED:
+                existing.dispatch_mode = dispatch_mode
+                existing.recipient_email = recipient_ref.email
+                existing.subject = render_template_content(str(template.get("subject") or "Piano Academie"), context)
+                existing.body_snapshot = render_template_content(str(template.get("body") or ""), context)
+                existing.payload_snapshot = payload_snapshot
+                existing.scheduled_for = scheduled_for
+                existing.status = NOTIFICATION_STATUS_PENDING
+                existing.provider_name = None
+                existing.provider_message_id = None
+                existing.provider_status = None
+                existing.sent_at = None
+                existing.failed_at = None
+                existing.skipped_at = None
+                existing.failure_reason = None
+                existing.updated_at = occurred_at
+                db.add(existing)
+                db.flush()
+                created = existing
         if created is not None:
             result.append(OrchestratedNotification(notification_id=created.id, queue_name=queue_name))
     return result

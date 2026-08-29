@@ -56,7 +56,10 @@ from app.schemas.professor import (
     ProfessorSessionStudentOut,
 )
 from app.services.professor_contracts import label_for_contract_location
-from app.services.automation_triggers import schedule_trial_attended_triggers
+from app.services.automation_triggers import (
+    cancel_pending_trial_attended_triggers,
+    schedule_trial_attended_triggers,
+)
 from app.services.notifications.application.orchestrator import enqueue_notifications
 from app.services.intake_local_confirmation import LOCAL_CONFIRMATION_CONFIRMED
 from app.services.professor_default_grid import DefaultProfessorGridLine, load_default_professor_grid
@@ -1846,6 +1849,12 @@ def update_booking_attendance(
             booking=booking,
             session_obj=session_obj,
             occurred_at=attendance_updated_at,
+        )
+    elif previous_status == BookingStatus.ATTENDED and next_status != BookingStatus.ATTENDED:
+        cancel_pending_trial_attended_triggers(
+            db,
+            booking_id=booking.id,
+            now=attendance_updated_at,
         )
 
     db.commit()

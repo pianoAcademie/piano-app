@@ -60,7 +60,10 @@ from app.models.planning_simulation import PlanningSimulationTeacherAssignment
 from app.models.plan import ClientPlanSubscription, Plan, PlanKind
 from app.models.quote import Prospect, Quote, QuoteAcceptanceFollowup
 from app.models.user import ClientStatus, User, UserPresence, UserPresenceHour, UserRole
-from app.services.automation_triggers import schedule_trial_attended_triggers
+from app.services.automation_triggers import (
+    cancel_pending_trial_attended_triggers,
+    schedule_trial_attended_triggers,
+)
 from app.services.booking_transfers import bookings_have_equivalent_financial_coverage
 from app.services.invoice_documents import normalize_billing_entity
 from app.services.notifications.application.orchestrator import (
@@ -5121,6 +5124,12 @@ def update_admin_session_booking_attendance(
             booking=booking,
             session_obj=session_obj,
             occurred_at=attendance_updated_at,
+        )
+    elif previous_status == BookingStatus.ATTENDED and next_status != BookingStatus.ATTENDED:
+        cancel_pending_trial_attended_triggers(
+            db,
+            booking_id=booking.id,
+            now=attendance_updated_at,
         )
 
     db.commit()
