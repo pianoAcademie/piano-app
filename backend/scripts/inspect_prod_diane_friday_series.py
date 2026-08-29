@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
-from sqlalchemy import select
+from sqlalchemy import and_, func, or_, select
 
 from app.api.routes.admin import BOOKING_STATUSES_ACTIVE
 from app.api.routes.admin_clients import _parse_invoice_range_note_entry
@@ -131,6 +131,55 @@ def _candidate_series(db) -> list[dict[str, Any]]:
                     "repair_event_id": event.id,
                 }
             )
+    if rows:
+        return rows
+
+    # The legacy central account can own the bookings while the invoice lines
+    # display the child's name.  Fall back to the two identities visible on the
+    # affected family record, without emitting either identity in the audit.
+    students = list(
+        db.scalars(
+            select(User).where(
+                User.role == UserRole.CLIENT,
+                or_(
+                    func.lower(func.coalesce(User.first_name, "")) == "diane",
+                    and_(
+                        func.lower(func.coalesce(User.first_name, "")) == "marc",
+                        func.lower(func.coalesce(User.last_name, "")).contains("ceroux"),
+                    ),
+                ),
+            )
+        ).all()
+    )
+    for student in students:
+        booking_rows = db.execute(
+            select(Booking, CourseSession, CourseType, Location)
+            .join(CourseSession, CourseSession.id == Booking.session_id)
+            .join(CourseType, CourseType.id == CourseSession.course_type_id)
+            .join(Location, Location.id == CourseSession.location_id)
+            .where(
+                Booking.user_id == student.id,
+                Booking.status.in_(BOOKING_STATUSES_ACTIVE),
+                CourseSession.status == SessionStatus.SCHEDULED,
+                CourseSession.start_at_utc >= SEASON_START,
+                CourseSession.start_at_utc < SEASON_END,
+            )
+            .order_by(CourseSession.start_at_utc.asc())
+        ).all()
+        grouped: dict[UUID, list[tuple[Booking, CourseSession, CourseType, Location]]] = defaultdict(list)
+        for booking, session_obj, course_type, location in booking_rows:
+            local_start = _local_start(session_obj)
+            if (
+                session_obj.recurrence_group_id is not None
+                and local_start.weekday() == TARGET_WEEKDAY
+                and local_start.timetz().replace(tzinfo=None, second=0, microsecond=0) == TARGET_TIME
+            ):
+                grouped[session_obj.recurrence_group_id].append((booking, session_obj, course_type, location))
+        for group_id, group_rows in grouped.items():
+            current_dates = {_local_start(row[1]).date() for row in group_rows}
+            if len(group_rows) < 20 or max(current_dates) != date(2027, 6, 4):
+                continue
+            rows.append({"student": student, "group_id": group_id, "rows": group_rows})
     return rows
 
 
