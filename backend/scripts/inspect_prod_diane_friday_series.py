@@ -163,23 +163,23 @@ def _candidate_series(db) -> list[dict[str, Any]]:
             .order_by(CourseSession.start_at_utc.asc())
         ).all()
         grouped_by_student: dict[
-            tuple[UUID, UUID], list[tuple[Booking, CourseSession, CourseType, Location]]
+            tuple[UUID, UUID, UUID], list[tuple[Booking, CourseSession, CourseType, Location]]
         ] = defaultdict(list)
         for booking, session_obj, course_type, location in booking_rows:
             local_start = _local_start(session_obj)
             if (
-                session_obj.recurrence_group_id is not None
-                and local_start.weekday() == TARGET_WEEKDAY
+                local_start.weekday() == TARGET_WEEKDAY
                 and local_start.timetz().replace(tzinfo=None, second=0, microsecond=0) == TARGET_TIME
             ):
-                grouped_by_student[(booking.user_id, session_obj.recurrence_group_id)].append(
+                grouped_by_student[(booking.user_id, session_obj.course_type_id, session_obj.location_id)].append(
                     (booking, session_obj, course_type, location)
                 )
-        for (student_id, group_id), group_rows in grouped_by_student.items():
+        for (student_id, _, _), group_rows in grouped_by_student.items():
             if len(group_rows) < 20:
                 continue
             student = db.get(User, student_id)
             if student is not None:
+                group_id = group_rows[0][1].recurrence_group_id or group_rows[0][1].id
                 rows.append({"student": student, "group_id": group_id, "rows": group_rows})
     if rows:
         return rows
