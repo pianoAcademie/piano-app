@@ -278,8 +278,13 @@ def main(argv: list[str] | None = None) -> int:
         metadata_total = _money(dict(invoice_metadata.get("totals_by_currency") or {}).get("EUR"))
         if metadata_total != EXPECTED_DOCUMENT_TOTAL:
             _abort(f"invoice_metadata_total_mismatch_{metadata_total}")
-        if str(invoice_metadata.get("source_quote_id") or "") != str(quote.id):
-            _abort("invoice_quote_link_mismatch")
+        execution = _quote_transformation_execution(followup)
+        source_quote_id = str(invoice_metadata.get("source_quote_id") or "").strip()
+        if source_quote_id and source_quote_id != str(quote.id):
+            _abort("invoice_has_conflicting_quote_link")
+        execution_invoice_note_ids = set(_json_uuid_list(execution.get("created_annual_invoice_note_ids")))
+        if note.id not in execution_invoice_note_ids:
+            _abort("invoice_missing_from_quote_execution")
 
         target_unit = (
             _money(course_line.unit_price_ht),
@@ -406,7 +411,6 @@ def main(argv: list[str] | None = None) -> int:
             created_bookings.append(booking)
             created_invoice_lines.append(invoice_line)
 
-        execution = _quote_transformation_execution(followup)
         execution_booking_ids = _json_uuid_list(execution.get("created_booking_ids"))
         merged_booking_ids = list(dict.fromkeys([*execution_booking_ids, *[row.id for row in created_bookings]]))
         execution["created_booking_ids"] = [str(value) for value in merged_booking_ids]
