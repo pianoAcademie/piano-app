@@ -135,6 +135,55 @@ def _candidate_series(db) -> list[dict[str, Any]]:
     if rows:
         return rows
 
+    # Immutable invoice lines keep the booking ids even after an occurrence is
+    # moved. They are the most reliable bridge between the child's displayed
+    # name in the account ledger and the current Friday sessions.
+    invoiced_booking_ids = set(
+        db.scalars(
+            select(ClientInvoiceLine.source_payment_id).where(
+                ClientInvoiceLine.source == "BOOKING",
+                func.lower(ClientInvoiceLine.label).contains("diane"),
+                func.lower(ClientInvoiceLine.label).contains("bernard"),
+            )
+        ).all()
+    )
+    if invoiced_booking_ids:
+        booking_rows = db.execute(
+            select(Booking, CourseSession, CourseType, Location)
+            .join(CourseSession, CourseSession.id == Booking.session_id)
+            .join(CourseType, CourseType.id == CourseSession.course_type_id)
+            .join(Location, Location.id == CourseSession.location_id)
+            .where(
+                Booking.id.in_(invoiced_booking_ids),
+                Booking.status.in_(BOOKING_STATUSES_ACTIVE),
+                CourseSession.status == SessionStatus.SCHEDULED,
+                CourseSession.start_at_utc >= SEASON_START,
+                CourseSession.start_at_utc < SEASON_END,
+            )
+            .order_by(CourseSession.start_at_utc.asc())
+        ).all()
+        grouped_by_student: dict[
+            tuple[UUID, UUID], list[tuple[Booking, CourseSession, CourseType, Location]]
+        ] = defaultdict(list)
+        for booking, session_obj, course_type, location in booking_rows:
+            local_start = _local_start(session_obj)
+            if (
+                session_obj.recurrence_group_id is not None
+                and local_start.weekday() == TARGET_WEEKDAY
+                and local_start.timetz().replace(tzinfo=None, second=0, microsecond=0) == TARGET_TIME
+            ):
+                grouped_by_student[(booking.user_id, session_obj.recurrence_group_id)].append(
+                    (booking, session_obj, course_type, location)
+                )
+        for (student_id, group_id), group_rows in grouped_by_student.items():
+            if len(group_rows) < 20:
+                continue
+            student = db.get(User, student_id)
+            if student is not None:
+                rows.append({"student": student, "group_id": group_id, "rows": group_rows})
+    if rows:
+        return rows
+
     # The account page belongs to the family payer while bookings belong to a
     # linked child. Resolve the exact payer record shown in production, then
     # inspect only that family. The audit output remains free of contact data.
