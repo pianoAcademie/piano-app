@@ -222,6 +222,7 @@ def _render_template(template: str, context: dict[str, Any]) -> str:
 
 def _prepare_teacher_invoice_template(template: str) -> str:
     prepared = template or ""
+    had_legacy_flex_layout = ".row { display:flex; gap:16px; }" in prepared
     if not re.search(r"\{\{\s*vat_summary\s*\}\}", prepared, flags=re.IGNORECASE):
         total_ttc_row = re.compile(
             r"(<tr>\s*<td>\s*TOTAL TTC\s*</td>.*?</tr>)",
@@ -254,6 +255,32 @@ def _prepare_teacher_invoice_template(template: str) -> str:
         ".page { width: 210mm; min-height: 297mm; padding: 16mm; margin: 0 auto; box-sizing: border-box; }",
         ".page { width:auto; min-height:0; padding:10mm; margin:0; box-sizing:border-box; }",
     ).replace("width:52px;", "width:76px;")
+    if had_legacy_flex_layout:
+        compact_pdf_css = """
+<style>
+  @page { size:A4; margin:11mm; }
+  html, body { font-size:10.5px; line-height:1.25; }
+  .page { width:auto; min-height:0; padding:0; margin:0; }
+  .box { padding:7px; }
+  .spacer-12 { height:5px; }
+  .spacer-18 { height:7px; }
+  .spacer-24 { height:9px; }
+  th, td { padding:5px 4px; }
+  .totals { width:280px; }
+  .footer { margin-top:8px; padding-top:7px; }
+  .legal { margin-top:7px; }
+</style>
+"""
+        if re.search(r"</head>", prepared, flags=re.IGNORECASE):
+            prepared = re.sub(
+                r"</head>",
+                compact_pdf_css + "</head>",
+                prepared,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+        else:
+            prepared = compact_pdf_css + prepared
     return prepared
 
 

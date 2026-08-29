@@ -52,6 +52,8 @@ class TeacherInvoiceDocumentTests(unittest.TestCase):
 
         self.assertIn("display:table", rendered)
         self.assertIn("display:table-cell", rendered)
+        self.assertIn("@page { size:A4; margin:11mm; }", rendered)
+        self.assertIn(".spacer-24 { height:9px; }", rendered)
         self.assertNotIn("display:flex", rendered)
         self.assertNotIn("min-height: 297mm", rendered)
 
