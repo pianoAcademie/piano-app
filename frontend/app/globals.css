@@ -13098,19 +13098,59 @@ button.danger:focus-visible {
   gap: 4px;
 }
 
-.statement-service-grid {
+.statement-service-pricing {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 4px 12px;
+  gap: 8px;
 }
 
-.statement-service-grid small {
+.statement-service-calculation {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.statement-service-calculation > div,
+.statement-service-amounts > div {
+  min-width: 0;
+  border: 1px solid #e4e9f1;
+  border-radius: 9px;
+  background: #ffffff;
+  padding: 9px 10px;
+  display: grid;
+  gap: 3px;
+}
+
+.statement-service-calculation small,
+.statement-service-amounts small {
   font-size: 12px;
   color: #4d6079;
 }
 
-.statement-service-grid small strong {
+.statement-service-calculation strong,
+.statement-service-amounts strong {
   color: #243a55;
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+
+.statement-service-amounts {
+  display: grid;
+  gap: 8px;
+}
+
+.statement-service-amounts .statement-service-payable {
+  border-color: #e7c58a;
+  background: #fff8eb;
+}
+
+.statement-service-payable strong {
+  font-size: 18px;
+}
+
+.statement-service-payable span {
+  color: #596b82;
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 .statement-attendance-block {
@@ -13300,8 +13340,7 @@ button.danger:focus-visible {
     justify-content: flex-start;
   }
 
-  .statement-summary-grid,
-  .statement-service-grid {
+  .statement-summary-grid {
     grid-template-columns: 1fr;
   }
 
@@ -13323,6 +13362,17 @@ button.danger:focus-visible {
   .coach-agenda-grid.agenda-grid-month,
   .coach-agenda-grid.agenda-grid-week {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (min-width: 720px) {
+  .statement-service-pricing {
+    grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.4fr);
+    align-items: stretch;
+  }
+
+  .statement-service-amounts-vat {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 

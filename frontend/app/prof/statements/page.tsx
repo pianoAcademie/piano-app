@@ -518,17 +518,19 @@ export default async function TeacherStatementsPage({
             <strong>{totalHours} h</strong>
           </div>
           <div>
-            <small className="muted">{t("teacher.total_excl_tax")}</small>
+            <small className="muted">{t(vatApplicable ? "teacher.total_excl_tax" : "teacher.total_excl_tax_payable")}</small>
             <strong>{totalHt} EUR</strong>
           </div>
           <div>
             <small className="muted">{t("common.vat")}</small>
             <strong>{vatApplicable ? `${totalVat} EUR` : t("teacher.vat_not_applicable")}</strong>
           </div>
-          <div>
-            <small className="muted">{t("teacher.amount_payable")}</small>
-            <strong>{totalPayable} EUR</strong>
-          </div>
+          {vatApplicable ? (
+            <div>
+              <small className="muted">{t("teacher.net_payable_incl_tax")}</small>
+              <strong>{totalPayable} EUR</strong>
+            </div>
+          ) : null}
           <div>
             <small className="muted">{t("teacher.student_attendance")}</small>
             <strong className={`status-pill ${attendanceComplete ? "status-ok" : "status-warn"}`}>
@@ -569,12 +571,41 @@ export default async function TeacherStatementsPage({
                     {row.studentOrGroup !== "-" ? <span>{row.studentOrGroup}</span> : null}
                     {row.locationOrMode !== "-" ? <span>{row.locationOrMode}</span> : null}
                   </div>
-                  <div className="statement-service-grid">
-                    <small>{t("teacher.duration")}: <strong>{row.durationMinutes} min</strong></small>
-                    <small>{t("teacher.hourly_rate_excl_tax")}: <strong>{row.rateHt} EUR</strong></small>
-                    <small>{t("common.ht")}: <strong>{row.amountHt} EUR</strong></small>
-                    <small>{t("common.vat")}: <strong>{vatApplicable ? `${row.vat} EUR` : t("teacher.vat_not_applicable")}</strong></small>
-                    <small>{t("teacher.amount_payable")}: <strong>{vatApplicable ? row.totalTtc : row.amountHt} EUR</strong></small>
+                  <div className="statement-service-pricing">
+                    <div className="statement-service-calculation" aria-label={t("teacher.calculation_details")}>
+                      <div>
+                        <small>{t("teacher.duration")}</small>
+                        <strong>{row.durationMinutes} min</strong>
+                      </div>
+                      <div>
+                        <small>{t("teacher.hourly_rate_excl_tax")}</small>
+                        <strong>{row.rateHt} EUR / h</strong>
+                      </div>
+                    </div>
+                    <div className={`statement-service-amounts ${vatApplicable ? "statement-service-amounts-vat" : ""}`}>
+                      {vatApplicable ? (
+                        <>
+                          <div>
+                            <small>{t("teacher.service_amount_excl_tax")}</small>
+                            <strong>{row.amountHt} EUR</strong>
+                          </div>
+                          <div>
+                            <small>{t("common.vat")}</small>
+                            <strong>{row.vat} EUR</strong>
+                          </div>
+                          <div className="statement-service-payable">
+                            <small>{t("teacher.net_payable_incl_tax")}</small>
+                            <strong>{row.totalTtc} EUR</strong>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="statement-service-payable statement-service-payable-only">
+                          <small>{t("teacher.service_amount_excl_tax_payable")}</small>
+                          <strong>{row.amountHt} EUR</strong>
+                          <span>{t("teacher.vat_not_applicable")}</span>
+                        </div>
+                      )}
+                    </div>
                   </div>
                   <div className="statement-attendance-block">
                     <small className="muted">{t("teacher.student_attendance")}</small>
