@@ -1409,6 +1409,22 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const bookingClientOptions = clientsSorted.map((client) => ({
     id: client.id,
     label: clientDisplayName(client),
+    sortLabel: [
+      client.email,
+      client.mobile_phone_1,
+      client.mobile_phone_2,
+      client.home_phone,
+      client.phone,
+      client.family_name,
+      ...client.linked_adult_names,
+      ...client.linked_children_names,
+    ]
+      .filter(Boolean)
+      .join(" "),
+    description:
+      client.client_kind === "CHILD" && client.linked_adult_names.length > 0
+        ? `Responsable : ${client.linked_adult_names.join(", ")}`
+        : [client.email, client.mobile_phone_1 || client.phone].filter(Boolean).join(" · "),
   }));
   const sessionRecipientStudents = Array.from(
     new Map(

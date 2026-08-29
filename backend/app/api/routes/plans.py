@@ -662,6 +662,17 @@ def _resolve_plan_owner(
     return member
 
 
+def _plan_purchase_parties(*, purchaser: User, owner: User) -> tuple[UUID | None, User]:
+    """Keep the beneficiary and the person paying for the purchase distinct.
+
+    ``owner`` receives the entitlement.  When an adult purchases for a linked
+    child, ``purchaser`` remains the billing contact and the PSP customer.
+    Self-purchases keep the historical ``NULL`` payer contact convention.
+    """
+    payer_contact_id = purchaser.id if purchaser.id != owner.id else None
+    return payer_contact_id, purchaser
+
+
 def _plan_payment_methods(plan: Plan) -> list[str]:
     raw = plan.payment_methods_json
     if not isinstance(raw, list):
@@ -1131,6 +1142,10 @@ def purchase_plan(
         current_user=current_user,
         requested_user_id=payload.user_id or context_booking_user_id,
     )
+    payer_contact_id, checkout_payer = _plan_purchase_parties(
+        purchaser=current_user,
+        owner=owner,
+    )
 
     now = datetime.now(timezone.utc)
     subscription_started_at = now
@@ -1243,8 +1258,8 @@ def purchase_plan(
     pricing = _purchase_pricing(
         db,
         plan=plan,
-        country=(owner.residence_country or "FR").upper(),
-        currency=(owner.preferred_currency or "EUR").upper(),
+        country=(checkout_payer.residence_country or "FR").upper(),
+        currency=(checkout_payer.preferred_currency or "EUR").upper(),
         on_date=subscription_started_at.date(),
         has_prior_purchase=has_prior_purchase,
         trial_course_type=trial_course_type,
@@ -1278,6 +1293,7 @@ def purchase_plan(
         initial_status = SubscriptionStatus.EXPIRED
     subscription = ClientPlanSubscription(
         user_id=owner.id,
+        payer_contact_id=payer_contact_id,
         plan_id=plan.id,
         status=initial_status,
         started_at=subscription_started_at,
@@ -1323,16 +1339,17 @@ def purchase_plan(
                 amount=amount_due,
                 currency=currency_code,
                 description=" + ".join(str(line.get("label") or "") for line in pricing.breakdown),
-                customer_email=owner.email,
-                customer_first_name=owner.first_name,
-                customer_last_name=owner.last_name,
-                customer_country=(owner.residence_country or "FR"),
+                customer_email=checkout_payer.email,
+                customer_first_name=checkout_payer.first_name,
+                customer_last_name=checkout_payer.last_name,
+                customer_country=(checkout_payer.residence_country or "FR"),
                 success_return_url=success_url,
                 cancel_return_url=cancel_url,
                 webhook_url=with_webhook_secret(webhook_url, resolve_webhook_secret(db)),
                 save_payment_method=(plan.kind == PlanKind.SUBSCRIPTION),
                 metadata={
                     "client_id": str(owner.id),
+                    "payer_contact_id": str(checkout_payer.id),
                     "subscription_id": str(subscription.id),
                     "plan_id": str(plan.id),
                     "plan_code": plan.code,
