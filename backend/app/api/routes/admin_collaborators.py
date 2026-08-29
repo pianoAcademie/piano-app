@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 import secrets
 from datetime import date, datetime, timedelta, timezone
@@ -88,8 +89,11 @@ from app.services.session_notifications import send_session_operation_email
 from app.services.providers.sms import send_provider_sms
 from app.services.security import hash_password
 from app.services.session_teachers import effective_teacher_filter_for_professor
+from app.services.collaborator_payment_notifications import schedule_collaborator_payment_confirmation
+from app.services.notifications.application.orchestrator import enqueue_notifications
 
 router = APIRouter(prefix="/admin/collaborators")
+logger = logging.getLogger(__name__)
 SUPPORTED_RATE_CURRENCIES = {"EUR", "USD"}
 ACCOUNT_ALLOWED_CURRENCIES_KEY = "config_account_allowed_currencies"
 ACCOUNT_DEFAULT_CURRENCY_KEY = "config_account_default_currency"
@@ -1971,6 +1975,32 @@ def create_salary_payment(
     db.add(payment)
     db.commit()
     db.refresh(payment)
+
+    confirmation_notifications = []
+    try:
+        confirmation_notifications = schedule_collaborator_payment_confirmation(
+            db,
+            professor=professor,
+            payment=payment,
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception(
+            "Collaborator payment recorded but confirmation notification could not be created | payment_id=%s | professor_id=%s",
+            payment.id,
+            professor.id,
+        )
+
+    if confirmation_notifications:
+        try:
+            enqueue_notifications(confirmation_notifications)
+        except Exception:
+            logger.exception(
+                "Collaborator payment recorded but confirmation notification could not be enqueued | payment_id=%s | professor_id=%s",
+                payment.id,
+                professor.id,
+            )
 
     return _serialize_salary_payment(payment=payment, professor=professor)
 

@@ -26,6 +26,7 @@ from app.services.notifications.domain.constants import (
     NOTIFICATION_STATUS_SKIPPED,
     NOTIFICATION_TYPE_AUTO_CANCEL_PARTICIPANT,
     NOTIFICATION_TYPE_CLIENT_BOOKING_CANCELLATION,
+    NOTIFICATION_TYPE_COLLABORATOR_PAYMENT_CONFIRMATION,
     NOTIFICATION_TYPE_REMINDER_EMAIL,
     NOTIFICATION_TYPE_REMINDER_SMS,
 )
@@ -47,6 +48,10 @@ LESSON_EMAIL_NOTIFICATION_TYPES = {
     NOTIFICATION_TYPE_REMINDER_EMAIL,
     NOTIFICATION_TYPE_CLIENT_BOOKING_CANCELLATION,
     NOTIFICATION_TYPE_AUTO_CANCEL_PARTICIPANT,
+}
+
+TRANSACTIONAL_EMAIL_NOTIFICATION_TYPES = {
+    NOTIFICATION_TYPE_COLLABORATOR_PAYMENT_CONFIRMATION,
 }
 
 
@@ -104,6 +109,7 @@ def dispatch_notification(
                 return DispatchResult(status=notification.status, sent=0, skipped=1, failed=0, reason=notification.failure_reason)
             if (
                 notification.notification_type not in LESSON_EMAIL_NOTIFICATION_TYPES
+                and notification.notification_type not in TRANSACTIONAL_EMAIL_NOTIFICATION_TYPES
                 and not user.email_opt_in
             ):
                 notification.status = NOTIFICATION_STATUS_SKIPPED

@@ -13,6 +13,7 @@ from app.services.notifications.domain.constants import (
     NOTIFICATION_STATUS_PENDING,
     NOTIFICATION_TYPE_AUTO_CANCEL_PARTICIPANT,
     NOTIFICATION_TYPE_CLIENT_BOOKING_CANCELLATION,
+    NOTIFICATION_TYPE_COLLABORATOR_PAYMENT_CONFIRMATION,
 )
 from app.services.providers.email import EmailProviderSendResult
 
@@ -30,6 +31,57 @@ class _FakeSession:
 
 
 class NotificationDispatcherTests(unittest.TestCase):
+    def test_collaborator_payment_confirmation_is_transactional(self) -> None:
+        user_id = uuid4()
+        user = SimpleNamespace(
+            id=user_id,
+            email="teacher@example.test",
+            email_opt_in=False,
+            lesson_reminder_email_opt_in=False,
+        )
+        notification = SimpleNamespace(
+            status=NOTIFICATION_STATUS_PENDING,
+            recipient_contact_id=user_id,
+            recipient_phone=None,
+            recipient_email="teacher@example.test",
+            notification_type=NOTIFICATION_TYPE_COLLABORATOR_PAYMENT_CONFIRMATION,
+            channel="email",
+            subject="Paiement de votre facture",
+            body_snapshot="Votre facture a été réglée.",
+            payload_snapshot={},
+            job_run_id=None,
+            updated_at=None,
+            provider_name=None,
+            provider_message_id=None,
+            provider_status=None,
+            sent_at=None,
+            failure_reason=None,
+        )
+        fake_db = _FakeSession(user)
+
+        with patch(
+            "app.services.notifications.application.dispatcher.ensure_contact_delivery_status",
+        ), patch(
+            "app.services.notifications.application.dispatcher.get_contact_delivery_status_for_user",
+            return_value=None,
+        ), patch(
+            "app.services.notifications.application.dispatcher.send_provider_email",
+            return_value=EmailProviderSendResult(
+                ok=True,
+                provider_name="BREVO",
+                provider_message_id="mail-payment-test",
+                provider_status="SENT",
+            ),
+        ) as send_provider_email:
+            result = dispatch_notification(
+                fake_db,
+                notification=notification,
+                now=datetime(2026, 8, 29, 10, 0, tzinfo=timezone.utc),
+            )
+
+        self.assertEqual(result.sent, 1)
+        send_provider_email.assert_called_once()
+
     def test_email_journal_keeps_recipient_user_link(self) -> None:
         user_id = uuid4()
         user = SimpleNamespace(
