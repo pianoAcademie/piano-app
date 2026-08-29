@@ -363,6 +363,8 @@ class TeacherStatementOut(BaseModel):
     totals_ht: Decimal
     totals_vat: Decimal
     totals_ttc: Decimal
+    vat_applicable: bool = False
+    vat_rate: Decimal | None = None
     dispute_message_last: str | None = None
     lines: list[TeacherStatementLineOut] = Field(default_factory=list)
     missing_sessions: list[TeacherStatementMissingSessionOut] = Field(default_factory=list)

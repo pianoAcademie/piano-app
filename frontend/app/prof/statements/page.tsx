@@ -328,6 +328,8 @@ export default async function TeacherStatementsPage({
   const totalHt = statements.reduce((sum, row) => sum + safeNumber(row.totals_ht), 0).toFixed(2);
   const totalVat = statements.reduce((sum, row) => sum + safeNumber(row.totals_vat), 0).toFixed(2);
   const totalTtc = statements.reduce((sum, row) => sum + safeNumber(row.totals_ttc), 0).toFixed(2);
+  const vatApplicable = statements.some((row) => row.vat_applicable);
+  const totalPayable = vatApplicable ? totalTtc : totalHt;
   const statusValues = statements.map((row) => row.status);
   const globalStatus = statusValues[0] ? statusLabel(statusValues[0], language) : t("teacher.statement_status_to_verify");
   const globalStatusTone = statusValues[0] ? statusTone(statusValues[0]) : "status-off";
@@ -521,11 +523,11 @@ export default async function TeacherStatementsPage({
           </div>
           <div>
             <small className="muted">{t("common.vat")}</small>
-            <strong>{totalVat} EUR</strong>
+            <strong>{vatApplicable ? `${totalVat} EUR` : t("teacher.vat_not_applicable")}</strong>
           </div>
           <div>
-            <small className="muted">{t("common.ttc")}</small>
-            <strong>{totalTtc} EUR</strong>
+            <small className="muted">{t("teacher.amount_payable")}</small>
+            <strong>{totalPayable} EUR</strong>
           </div>
           <div>
             <small className="muted">{t("teacher.student_attendance")}</small>
@@ -571,8 +573,8 @@ export default async function TeacherStatementsPage({
                     <small>{t("teacher.duration")}: <strong>{row.durationMinutes} min</strong></small>
                     <small>{t("teacher.hourly_rate_excl_tax")}: <strong>{row.rateHt} EUR</strong></small>
                     <small>{t("common.ht")}: <strong>{row.amountHt} EUR</strong></small>
-                    <small>{t("common.vat")}: <strong>{row.vat} EUR</strong></small>
-                    <small>{t("common.ttc")}: <strong>{row.totalTtc} EUR</strong></small>
+                    <small>{t("common.vat")}: <strong>{vatApplicable ? `${row.vat} EUR` : t("teacher.vat_not_applicable")}</strong></small>
+                    <small>{t("teacher.amount_payable")}: <strong>{vatApplicable ? row.totalTtc : row.amountHt} EUR</strong></small>
                   </div>
                   <div className="statement-attendance-block">
                     <small className="muted">{t("teacher.student_attendance")}</small>
@@ -685,7 +687,7 @@ export default async function TeacherStatementsPage({
                         </span>
                       </div>
                       <small className="muted">
-                        {t("common.date")}: {formatDateLabel(invoice.invoice_date, language)} • {t("common.ttc")}: {invoice.totals_ttc} EUR
+                        {t("common.date")}: {formatDateLabel(invoice.invoice_date, language)} • {t("teacher.amount_payable")}: {invoice.is_vat_applicable ? invoice.totals_ttc : invoice.totals_ht} EUR
                       </small>
                       <div className="statement-generated-actions">
                         <Link className="mode-link" href={`/prof/invoices/${invoice.id}`}>

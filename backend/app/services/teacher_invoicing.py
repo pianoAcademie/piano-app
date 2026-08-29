@@ -108,6 +108,8 @@ class ComputedStatement:
     totals_ttc: Decimal
     lines: list[ComputedStatementLine]
     missing_sessions: list[ComputedMissingSession]
+    vat_applicable: bool = False
+    vat_rate: Decimal | None = None
 
 
 def compute_teacher_monthly_statements(
@@ -313,6 +315,8 @@ def compute_teacher_monthly_statements(
                 totals_ttc=totals_ttc,
                 lines=lines,
                 missing_sessions=missing_sessions,
+                vat_applicable=vat_applicable,
+                vat_rate=vat_rate if vat_applicable else None,
             )
         )
 
@@ -332,6 +336,8 @@ def statement_to_snapshot_payload(statement: ComputedStatement) -> dict[str, Any
         "totals_ht": f"{statement.totals_ht}",
         "totals_vat": f"{statement.totals_vat}",
         "totals_ttc": f"{statement.totals_ttc}",
+        "vat_applicable": statement.vat_applicable,
+        "vat_rate": f"{statement.vat_rate}" if statement.vat_rate is not None else None,
         "lines": [
             {
                 "course_type_id": str(line.course_type_id) if line.course_type_id is not None else None,

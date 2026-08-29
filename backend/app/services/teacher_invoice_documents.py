@@ -40,6 +40,8 @@ TEACHER_INVOICE_TEMPLATE_VARIABLES: tuple[str, ...] = (
     "totals_ht",
     "totals_vat",
     "totals_ttc",
+    "vat_summary",
+    "amount_payable",
     "payment_instructions",
     "late_payment_penalty_text",
     "comptability_email",
@@ -59,7 +61,7 @@ DEFAULT_TEACHER_INVOICE_TEMPLATES = {
 <h2>Lignes</h2>
 <p>{{lines_by_course_type}}</p>
 <h2>Totaux</h2>
-<p>HT: {{totals_ht}} | TVA: {{totals_vat}} | TTC: {{totals_ttc}}</p>
+<p>Total HT: {{totals_ht}}<br/>{{vat_summary}}<br/><strong>Net a payer: {{amount_payable}}</strong></p>
 <p>{{payment_instructions}}</p>
 <p>{{late_payment_penalty_text}}</p>
 <p>Compta: {{comptability_email}}</p>
@@ -77,7 +79,7 @@ DEFAULT_TEACHER_INVOICE_TEMPLATES = {
 <h2>Lines</h2>
 <p>{{lines_by_course_type}}</p>
 <h2>Totals</h2>
-<p>Net: {{totals_ht}} | VAT: {{totals_vat}} | Gross: {{totals_ttc}}</p>
+<p>Net total: {{totals_ht}}<br/>{{vat_summary}}<br/><strong>Amount payable: {{amount_payable}}</strong></p>
 <p>{{payment_instructions}}</p>
 <p>{{late_payment_penalty_text}}</p>
 <p>Accounting: {{comptability_email}}</p>
@@ -277,6 +279,8 @@ def default_teacher_invoice_context(*, language: str | None = None) -> dict[str,
         "totals_ht": f"{Decimal('140.00')}",
         "totals_vat": f"{Decimal('28.00')}",
         "totals_ttc": f"{Decimal('168.00')}",
+        "vat_summary": "TVA (20 %): 28.00" if normalized_language == "fr" else "VAT (20%): 28.00",
+        "amount_payable": f"{Decimal('168.00')}",
         "payment_instructions": "Payment by bank transfer within 30 days." if normalized_language == "en" else "Paiement par virement sous 30 jours.",
         "late_payment_penalty_text": "Late-payment penalties apply according to the terms and conditions." if normalized_language == "en" else "Penalites de retard conformement aux CGV.",
         "comptability_email": "comptabilite@piano-academie.com",

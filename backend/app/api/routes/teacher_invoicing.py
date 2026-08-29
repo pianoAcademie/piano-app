@@ -4,7 +4,7 @@ import base64
 import csv
 import re
 import unicodedata
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from io import StringIO
 from typing import Any
@@ -45,6 +45,7 @@ from app.services.teacher_invoice_documents import (
     render_teacher_invoice_pdf_from_html,
 )
 from app.services.teacher_statement_documents import render_teacher_statement_pdf
+from app.services.teacher_statement_notifications import expected_payment_date, invoice_deadline
 from app.services.teacher_invoicing import (
     ComputedStatement,
     PARIS_TIMEZONE,
@@ -63,7 +64,7 @@ TEACHER_I18N = {
         "delivery_any": "Tous modes",
         "professor_not_found": "Profil professeur introuvable",
         "siret_pending": "en cours d'immatriculation",
-        "payment_instructions": "Paiement par virement bancaire sous 30 jours.",
+        "payment_instructions": "Paiement par virement bancaire a la date d echeance indiquee.",
         "late_payment_penalty_text": "Penalites de retard conformement aux CGV.",
         "dispute_subject": "Litige releve professeur {name} - {period}",
         "attendance_incomplete": "Presences incompletes. Completez les seances manquantes avant validation.",
@@ -117,7 +118,7 @@ TEACHER_I18N = {
         "delivery_any": "All modes",
         "professor_not_found": "Professor profile not found",
         "siret_pending": "registration pending",
-        "payment_instructions": "Payment by bank transfer within 30 days.",
+        "payment_instructions": "Payment by bank transfer on the due date shown.",
         "late_payment_penalty_text": "Late-payment penalties apply according to the terms and conditions.",
         "dispute_subject": "Teacher statement dispute {name} - {period}",
         "attendance_incomplete": "Attendance is incomplete. Complete missing sessions before approval.",
@@ -360,6 +361,8 @@ def _statement_out(row: TeacherMonthlyStatement, computed: ComputedStatement) ->
         totals_ht=computed.totals_ht,
         totals_vat=computed.totals_vat,
         totals_ttc=computed.totals_ttc,
+        vat_applicable=computed.vat_applicable,
+        vat_rate=computed.vat_rate,
         dispute_message_last=row.dispute_message_last,
         lines=[
             {
@@ -614,6 +617,12 @@ def _invoice_pdf_bytes(
             "totals_ht": _format_money(invoice.totals_ht),
             "totals_vat": _format_money(invoice.totals_vat),
             "totals_ttc": _format_money(invoice.totals_ttc),
+            "vat_summary": (
+                f"TVA ({_format_money(invoice.vat_rate or 0)} %): {_format_money(invoice.totals_vat)}"
+                if invoice.is_vat_applicable
+                else "TVA non applicable, article 293 B du CGI"
+            ),
+            "amount_payable": _format_money(invoice.totals_ttc if invoice.is_vat_applicable else invoice.totals_ht),
             "payment_instructions": _teacher_text("payment_instructions", language=normalized_language),
             "late_payment_penalty_text": _teacher_text("late_payment_penalty_text", language=normalized_language),
             "comptability_email": "-",
@@ -786,7 +795,13 @@ def _generate_invoices_for_period(
 
         invoice_number = f"PROF-{str(locked_professor.id).split('-')[0].upper()}-{counter:06d}"
         counter += 1
-        due_date = invoice_date + timedelta(days=30)
+        due_date = expected_payment_date(
+            invoice_deadline(
+                period_year=year,
+                period_month=month,
+                notification_date=invoice_date,
+            )
+        )
         teacher_siret_display = (locked_professor.teacher_siret or "").strip() or _teacher_text("siret_pending", language=language)
         teacher_iban = (
             (locked_professor.teacher_iban or "").strip()

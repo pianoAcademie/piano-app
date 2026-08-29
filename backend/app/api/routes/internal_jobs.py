@@ -20,6 +20,7 @@ from app.schemas.jobs import (
     SubscriptionCycleGenerationJobResponse,
     SubscriptionRecoveryReconciliationJobResponse,
     SubscriptionRetryJobResponse,
+    TeacherStatementNotificationJobResponse,
 )
 from app.services.auto_invoice_billing import run_auto_invoice_billing_job
 from app.services.event_reminders import run_school_event_reminders_job
@@ -40,6 +41,11 @@ from app.services.subscription_billing import (
     run_subscription_retry_job,
 )
 from app.services.session_automation import run_auto_cancel_empty_sessions_job
+from app.services.teacher_statement_notifications import (
+    run_teacher_statement_notification_job,
+    set_teacher_statement_notifications_enabled,
+    teacher_statement_notifications_enabled,
+)
 from app.services.notifications.application.orchestrator import enqueue_notifications
 
 router = APIRouter(prefix="/internal/jobs")
@@ -55,12 +61,24 @@ def send_reminders(
     generation = run_reminder_generation_job(db, now=now, limit=limit)
     dispatch = run_scheduled_notification_dispatch_job(db, now=now, limit=limit)
     event_reminders = run_school_event_reminders_job(db, now=now, limit=limit)
+    teacher_statements = None
+    if teacher_statement_notifications_enabled(db):
+        teacher_statements = run_teacher_statement_notification_job(db, now=now, limit=limit, dry_run=False)
     db.commit()
     return ReminderJobResponse(
         created=generation.sent,
-        sent=dispatch.sent + event_reminders.sent,
-        skipped=generation.skipped + dispatch.skipped + event_reminders.skipped,
-        failed=generation.failed + dispatch.failed + event_reminders.failed,
+        sent=(
+            dispatch.sent
+            + event_reminders.sent
+            + (teacher_statements.available_sent + teacher_statements.blocked_sent + teacher_statements.accounting_sent if teacher_statements else 0)
+        ),
+        skipped=(
+            generation.skipped
+            + dispatch.skipped
+            + event_reminders.skipped
+            + (teacher_statements.skipped_not_due + teacher_statements.skipped_already_sent if teacher_statements else 0)
+        ),
+        failed=generation.failed + dispatch.failed + event_reminders.failed + (teacher_statements.failed if teacher_statements else 0),
     )
 
 
@@ -139,6 +157,44 @@ def send_professor_attendance_reminders(
         skipped_complete=result.skipped_complete,
         failed=result.failed,
     )
+
+
+@router.post("/teacher-statement-notifications", response_model=TeacherStatementNotificationJobResponse)
+def send_teacher_statement_notifications(
+    limit: int = Query(default=500, ge=1, le=5000),
+    dry_run: bool = Query(default=True),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> TeacherStatementNotificationJobResponse:
+    """Preview by default; real emails require an explicit dry_run=false call."""
+    now = datetime.now(timezone.utc)
+    result = run_teacher_statement_notification_job(db, now=now, limit=limit, dry_run=dry_run)
+    if dry_run:
+        db.rollback()
+    else:
+        db.commit()
+    return TeacherStatementNotificationJobResponse(
+        checked=result.checked,
+        available_sent=result.available_sent,
+        blocked_sent=result.blocked_sent,
+        accounting_sent=result.accounting_sent,
+        skipped_not_due=result.skipped_not_due,
+        skipped_already_sent=result.skipped_already_sent,
+        failed=result.failed,
+        dry_run=result.dry_run,
+    )
+
+
+@router.post("/teacher-statement-notifications/activation")
+def activate_teacher_statement_notifications(
+    enabled: bool = Query(...),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> dict[str, bool]:
+    now = datetime.now(timezone.utc)
+    set_teacher_statement_notifications_enabled(db, enabled=enabled, now=now)
+    db.commit()
+    return {"enabled": enabled}
 
 
 @router.post("/run-subscription-billing", response_model=SubscriptionBillingJobResponse)

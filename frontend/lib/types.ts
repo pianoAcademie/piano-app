@@ -1717,6 +1717,8 @@ export type TeacherStatementOut = {
   totals_ht: string;
   totals_vat: string;
   totals_ttc: string;
+  vat_applicable: boolean;
+  vat_rate: string | null;
   dispute_message_last: string | null;
   lines: TeacherStatementLineOut[];
   missing_sessions: TeacherStatementMissingSessionOut[];

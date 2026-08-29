@@ -46,6 +46,9 @@ TEXTS = {
         "courses": "Cours effectués",
         "hours": "Total des heures",
         "total_ht": "Montant total HT",
+        "vat": "TVA",
+        "vat_not_applicable": "Non applicable",
+        "amount_payable": "Montant à payer",
         "attendance": "Présences",
         "attendance_complete": "Complètes",
         "attendance_incomplete": "À compléter",
@@ -80,6 +83,9 @@ TEXTS = {
         "courses": "Lessons completed",
         "hours": "Total hours",
         "total_ht": "Total excl. tax",
+        "vat": "VAT",
+        "vat_not_applicable": "Not applicable",
+        "amount_payable": "Amount payable",
         "attendance": "Attendance",
         "attendance_complete": "Complete",
         "attendance_incomplete": "To complete",
@@ -240,9 +246,14 @@ def render_teacher_statement_pdf(
     sessions = _flatten_sessions(statements, normalized_language)
     total_hours = sum((line.hours for statement in statements for line in statement.lines), Decimal("0.00"))
     totals_by_currency: dict[str, Decimal] = defaultdict(lambda: Decimal("0.00"))
+    vat_by_currency: dict[str, Decimal] = defaultdict(lambda: Decimal("0.00"))
+    payable_by_currency: dict[str, Decimal] = defaultdict(lambda: Decimal("0.00"))
     for statement in statements:
         totals_by_currency[statement.currency] += statement.totals_ht
+        vat_by_currency[statement.currency] += statement.totals_vat
+        payable_by_currency[statement.currency] += statement.totals_ttc if statement.vat_applicable else statement.totals_ht
     attendance_complete = bool(statements) and all(statement.attendance_complete for statement in statements)
+    vat_applicable = any(statement.vat_applicable for statement in statements)
 
     identity_list: list[CompanyIdentity] = []
     seen_identity_ids: set[object] = set()
@@ -340,13 +351,23 @@ def render_teacher_statement_pdf(
     story.extend([Spacer(1, 3 * mm), Paragraph(t("not_invoice"), styles["PANote"]), Spacer(1, 3 * mm), Paragraph(t("summary"), styles["PAHeading"])])
 
     totals_label = " | ".join(_money(value, currency, normalized_language) for currency, value in sorted(totals_by_currency.items())) or _money(0, "EUR", normalized_language)
+    vat_label = (
+        " | ".join(_money(value, currency, normalized_language) for currency, value in sorted(vat_by_currency.items()))
+        if vat_applicable
+        else t("vat_not_applicable")
+    )
+    payable_label = " | ".join(
+        _money(value, currency, normalized_language) for currency, value in sorted(payable_by_currency.items())
+    ) or _money(0, "EUR", normalized_language)
     summary_data = [[
         Paragraph(f"<font color='#607089'>{t('courses')}</font><br/><b><font size='14'>{len(sessions)}</font></b>", styles["PABody"]),
         Paragraph(f"<font color='#607089'>{t('hours')}</font><br/><b><font size='14'>{_hours(total_hours, normalized_language)}</font></b>", styles["PABody"]),
         Paragraph(f"<font color='#607089'>{t('total_ht')}</font><br/><b><font size='14'>{totals_label}</font></b>", styles["PABody"]),
+        Paragraph(f"<font color='#607089'>{t('vat')}</font><br/><b><font size='12'>{vat_label}</font></b>", styles["PABody"]),
+        Paragraph(f"<font color='#607089'>{t('amount_payable')}</font><br/><b><font size='14'>{payable_label}</font></b>", styles["PABody"]),
         Paragraph(f"<font color='#607089'>{t('attendance')}</font><br/><b><font color='{'#237A4B' if attendance_complete else '#9A6500'}'>{t('attendance_complete') if attendance_complete else t('attendance_incomplete')}</font></b>", styles["PABody"]),
     ]]
-    summary = Table(summary_data, colWidths=[61.5 * mm] * 4)
+    summary = Table(summary_data, colWidths=[41 * mm] * 6)
     summary.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), colors.white), ("BOX", (0, 0), (-1, -1), 0.6, LINE), ("INNERGRID", (0, 0), (-1, -1), 0.4, LINE), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 8), ("RIGHTPADDING", (0, 0), (-1, -1), 8), ("TOPPADDING", (0, 0), (-1, -1), 7), ("BOTTOMPADDING", (0, 0), (-1, -1), 7)]))
     story.extend([summary, Spacer(1, 4 * mm), Paragraph(t("details"), styles["PAHeading"])])
 

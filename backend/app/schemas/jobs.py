@@ -40,6 +40,17 @@ class ProfessorAttendanceReminderJobResponse(BaseModel):
     failed: int
 
 
+class TeacherStatementNotificationJobResponse(BaseModel):
+    checked: int
+    available_sent: int
+    blocked_sent: int
+    accounting_sent: int
+    skipped_not_due: int
+    skipped_already_sent: int
+    failed: int
+    dry_run: bool
+
+
 class SubscriptionBillingJobResponse(BaseModel):
     checked: int
     charged: int
