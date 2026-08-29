@@ -6252,16 +6252,23 @@ def update_quote(
             document_dirty = True
 
     planned_quantities_changed = False
+    planned_amounts_changed = False
     if payload.calendar_snapshot is not None or payload.lines is not None:
+        synchronized_lines = _load_quote_lines(db, row.id)
+        previous_planned_lines_total = _q2(
+            sum((Decimal(line.amount_ttc or 0) for line in synchronized_lines), Decimal("0.00"))
+        )
         planned_quantities_changed = _sync_typeform_planned_quote_line_quantities(
-            _load_quote_lines(db, row.id),
+            synchronized_lines,
             calendar_snapshot=row.calendar_snapshot,
         )
         if planned_quantities_changed:
             db.flush()
             lines_total = _quote_lines_total_ttc(db, quote_id=row.id)
-            computed_total = _quote_total_with_adjustment(lines_total_ttc=lines_total, meta=row.meta or {})
-            row.total_ttc = computed_total
+            planned_amounts_changed = lines_total != previous_planned_lines_total
+            if planned_amounts_changed:
+                computed_total = _quote_total_with_adjustment(lines_total_ttc=lines_total, meta=row.meta or {})
+                row.total_ttc = computed_total
             row.updated_at = _utcnow()
             document_dirty = True
 
@@ -6271,7 +6278,7 @@ def update_quote(
         or adjustment_changed
         or deposit_changed
         or activity_lines_removed
-        or planned_quantities_changed
+        or planned_amounts_changed
     ):
         total_for_schedule = computed_total if computed_total is not None else _q2(Decimal(row.total_ttc or 0))
         if payload.payment_terms_snapshot is None or not _payment_terms_snapshot_matches_total(
@@ -6284,7 +6291,7 @@ def update_quote(
         payload.lines is not None
         or adjustment_changed
         or activity_lines_removed
-        or planned_quantities_changed
+        or planned_amounts_changed
     ):
         lines_total_ttc = _quote_lines_total_ttc(db, quote_id=row.id)
         row.price_snapshot = {
