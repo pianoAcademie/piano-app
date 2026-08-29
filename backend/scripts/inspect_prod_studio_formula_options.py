@@ -179,3 +179,6 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+    from scripts.inspect_prod_diane_friday_series import main as inspect_diane_friday_series
+
+    inspect_diane_friday_series()
