@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import os
 import sys
+from collections import defaultdict
+from datetime import date, time
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
@@ -10,7 +14,9 @@ from sqlalchemy import false, func, or_, select
 
 from app.api.routes.clients import _active_formula_options_for_course_type, _session_purchase_catalog
 from app.db.session import SessionLocal
-from app.models.catalog import CourseSession, CourseType, CreditType, Location
+from app.api.routes.admin import BOOKING_STATUSES_ACTIVE
+from app.models.catalog import Booking, CourseSession, CourseType, CreditType, Location, SessionStatus
+from app.models.client_record import ClientInvoiceLine
 from app.models.plan import Plan, PlanCreditGrant, PlanEntitlement, PlanKind
 from app.services.session_audience import resolve_session_booking_scopes
 
@@ -177,8 +183,65 @@ def main() -> None:
             )
 
 
+def diagnose_legacy_friday_series() -> None:
+    with SessionLocal() as db:
+        booking_rows = db.execute(
+            select(Booking, CourseSession)
+            .join(CourseSession, CourseSession.id == Booking.session_id)
+            .where(
+                Booking.status.in_(BOOKING_STATUSES_ACTIVE),
+                CourseSession.status == SessionStatus.SCHEDULED,
+                CourseSession.start_at_utc >= datetime(2026, 9, 1, tzinfo=timezone.utc),
+                CourseSession.start_at_utc < datetime(2027, 7, 1, tzinfo=timezone.utc),
+            )
+            .order_by(CourseSession.start_at_utc.asc())
+        ).all()
+        grouped = defaultdict(list)
+        for booking, session_obj in booking_rows:
+            local_start = session_obj.start_at_utc.astimezone(ZoneInfo(session_obj.timezone or "Europe/Paris"))
+            if local_start.weekday() != 4:
+                continue
+            grouped[(booking.user_id, session_obj.course_type_id, session_obj.location_id, local_start.time())].append(
+                (booking, session_obj, local_start)
+            )
+        candidates = []
+        for (student_id, course_type_id, location_id, local_time), rows in grouped.items():
+            dates = {row[2].date() for row in rows}
+            if len(rows) < 15 or max(dates) > date(2027, 6, 18):
+                continue
+            booking_ids = {row[0].id for row in rows}
+            invoice_lines = list(
+                db.scalars(
+                    select(ClientInvoiceLine).where(
+                        ClientInvoiceLine.source == "BOOKING",
+                        ClientInvoiceLine.source_payment_id.in_(booking_ids),
+                    )
+                ).all()
+            )
+            candidates.append(
+                {
+                    "student_id": str(student_id),
+                    "course_type_id": str(course_type_id),
+                    "location_id": str(location_id),
+                    "time": local_time.strftime("%H:%M"),
+                    "booking_count": len(rows),
+                    "first": min(dates).isoformat(),
+                    "last": max(dates).isoformat(),
+                    "booking_amounts": sorted(
+                        {str(Decimal(row[0].total_incl_vat_snapshot or 0).quantize(Decimal("0.01"))) for row in rows}
+                    ),
+                    "invoice_line_count": len(invoice_lines),
+                    "invoice_amounts": sorted(
+                        {str(Decimal(line.total_incl_vat or 0).quantize(Decimal("0.01"))) for line in invoice_lines}
+                    ),
+                }
+            )
+        print({"legacy_friday_candidates": candidates})
+
+
 if __name__ == "__main__":
     main()
+    diagnose_legacy_friday_series()
     from scripts.inspect_prod_diane_friday_series import main as inspect_diane_friday_series
 
     inspect_diane_friday_series()
