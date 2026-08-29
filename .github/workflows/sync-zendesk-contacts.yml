@@ -80,7 +80,13 @@ jobs:
           if [ "${SYNC_FULL}" = "true" ]; then
             arguments="${arguments} --full"
           fi
-          ssh -i ~/.ssh/id_ed25519 -p "${VPS_PORT:-22}" "${VPS_USER}@${VPS_HOST}" "
+          ssh \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=20 \
+            -o TCPKeepAlive=yes \
+            -i ~/.ssh/id_ed25519 \
+            -p "${VPS_PORT:-22}" \
+            "${VPS_USER}@${VPS_HOST}" "
             set -euo pipefail
             cd '${VPS_PATH}'
             docker compose exec -T backend python scripts/sync_zendesk_contacts.py ${arguments}
