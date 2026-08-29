@@ -43,6 +43,12 @@ LAST_COURSE_DELAY = timedelta(hours=2)
 ACCOUNTING_SEND_HOUR = 7
 ACCOUNTING_DIGEST_SETTING_PREFIX = "teacher_statement_accounting_digest_v1"
 NOTIFICATIONS_ENABLED_SETTING_KEY = "teacher_statement_notifications_enabled_v1"
+NOTIFICATION_ROLLOUT_START = date(2026, 8, 1)
+EXCLUDED_TECHNICAL_PROFESSOR_EMAILS = frozenset(
+    {
+        "apple-review-professor-20260814@piano-academie.com",
+    }
+)
 
 EVENT_BLOCKED_EMAIL_SENT = "teacher_statement_blocked_email_sent"
 EVENT_AVAILABLE_EMAIL_SENT = "teacher_statement_available_email_sent"
@@ -70,6 +76,10 @@ class TeacherStatementNotificationResult:
 
 def _quantized_text(value: Decimal | float | int) -> str:
     return f"{Decimal(value).quantize(Decimal('0.01'))}"
+
+
+def teacher_statement_professor_is_eligible(professor: Professor) -> bool:
+    return professor.email.strip().lower() not in EXCLUDED_TECHNICAL_PROFESSOR_EMAILS
 
 
 def teacher_statement_notifications_enabled(db: Session) -> bool:
@@ -251,6 +261,7 @@ def _period_candidates(
     rows = db.execute(
         select(Professor, last_sessions.c.last_course_end_at_utc)
         .join(last_sessions, last_sessions.c.teacher_id == Professor.id)
+        .where(func.lower(func.trim(Professor.email)).notin_(EXCLUDED_TECHNICAL_PROFESSOR_EMAILS))
         .order_by(Professor.last_name.asc(), Professor.first_name.asc())
         .limit(limit)
     ).all()
@@ -644,7 +655,11 @@ def run_teacher_statement_notification_job(
     dry_run: bool = True,
 ) -> TeacherStatementNotificationResult:
     paris_now = now.astimezone(PARIS_TIMEZONE)
-    periods = {_month_start(paris_now.date()), _previous_month(paris_now.date())}
+    periods = {
+        period
+        for period in {_month_start(paris_now.date()), _previous_month(paris_now.date())}
+        if period >= NOTIFICATION_ROLLOUT_START
+    }
     checked = 0
     available_sent = 0
     blocked_sent = 0
@@ -656,6 +671,8 @@ def run_teacher_statement_notification_job(
 
     for period in sorted(periods):
         for candidate in _period_candidates(db, period=period, limit=limit):
+            if not teacher_statement_professor_is_eligible(candidate.professor):
+                continue
             checked += 1
             if candidate.last_course_end_at_utc + LAST_COURSE_DELAY > now:
                 skipped_not_due += 1
@@ -755,7 +772,7 @@ def run_teacher_statement_notification_job(
                 failed += 1
 
     previous_period = _previous_month(paris_now.date())
-    if paris_now.day >= 1:
+    if paris_now.day >= 1 and previous_period >= NOTIFICATION_ROLLOUT_START:
         digest_rows = rows_by_period.get((previous_period.year, previous_period.month), [])
         digest_rows.sort(key=lambda row: (row[0].last_name.casefold(), row[0].first_name.casefold(), row[2].payor_legal_entity_name.casefold()))
         try:
@@ -794,5 +811,6 @@ __all__ = [
     "render_accounting_digest_pdf",
     "run_teacher_statement_notification_job",
     "set_teacher_statement_notifications_enabled",
+    "teacher_statement_professor_is_eligible",
     "teacher_statement_notifications_enabled",
 ]

@@ -24,6 +24,7 @@ from app.services.teacher_statement_notifications import (
     invoice_deadline,
     render_accounting_digest_pdf,
     run_teacher_statement_notification_job,
+    teacher_statement_professor_is_eligible,
 )
 
 
@@ -76,6 +77,15 @@ def _computed(
 
 
 class TeacherStatementNotificationTests(unittest.TestCase):
+    def test_technical_apple_review_professor_is_excluded(self) -> None:
+        professor = _professor()
+        professor.email = " Apple-Review-Professor-20260814@piano-academie.com "
+
+        self.assertFalse(teacher_statement_professor_is_eligible(professor))
+
+    def test_real_professor_is_eligible(self) -> None:
+        self.assertTrue(teacher_statement_professor_is_eligible(_professor()))
+
     def test_regular_deadline_and_payment_date(self) -> None:
         deadline = invoice_deadline(period_year=2026, period_month=8, notification_date=date(2026, 8, 21))
 
@@ -211,6 +221,53 @@ class TeacherStatementNotificationTests(unittest.TestCase):
         self.assertEqual(result.available_sent, 1)
         self.assertTrue(result.dry_run)
         send_email_mock.assert_not_called()
+
+    @patch("app.services.teacher_statement_notifications._send_accounting_digest_if_due", return_value=0)
+    @patch("app.services.teacher_statement_notifications._period_candidates")
+    def test_rollout_starts_in_august_2026(
+        self,
+        candidates_mock: MagicMock,
+        *_: MagicMock,
+    ) -> None:
+        candidates_mock.return_value = []
+
+        run_teacher_statement_notification_job(
+            MagicMock(),
+            now=datetime(2026, 8, 20, 18, 0, tzinfo=timezone.utc),
+            dry_run=True,
+        )
+
+        requested_periods = [call.kwargs["period"] for call in candidates_mock.call_args_list]
+        self.assertEqual(requested_periods, [date(2026, 8, 1)])
+
+    @patch("app.services.teacher_statement_notifications._send_accounting_digest_if_due", return_value=0)
+    @patch("app.services.teacher_statement_notifications.sync_teacher_monthly_statements")
+    @patch("app.services.teacher_statement_notifications._period_candidates")
+    def test_technical_professor_is_skipped_defensively(
+        self,
+        candidates_mock: MagicMock,
+        sync_mock: MagicMock,
+        *_: MagicMock,
+    ) -> None:
+        professor = _professor()
+        professor.email = "apple-review-professor-20260814@piano-academie.com"
+        candidates_mock.return_value = [
+            TeacherPeriodCandidate(
+                professor=professor,
+                year=2026,
+                month=8,
+                last_course_end_at_utc=datetime(2026, 8, 20, 16, 0, tzinfo=timezone.utc),
+            )
+        ]
+
+        result = run_teacher_statement_notification_job(
+            MagicMock(),
+            now=datetime(2026, 8, 20, 18, 0, tzinfo=timezone.utc),
+            dry_run=True,
+        )
+
+        self.assertEqual(result.checked, 0)
+        sync_mock.assert_not_called()
 
 
 if __name__ == "__main__":
