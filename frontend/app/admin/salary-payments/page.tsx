@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { createAdminCollaboratorSalaryPaymentAction } from "../../../lib/actions";
+import { hasAdminPermission } from "../../../lib/admin-access";
 import { backendRequest } from "../../../lib/backend";
 import type { AdminProfessorDetailOut, AdminProfessorSalaryPaymentOut, UserOut } from "../../../lib/types";
 import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../lib/ui-i18n";
@@ -77,7 +78,7 @@ export default async function AdminSalaryPaymentsPage({ searchParams }: { search
   }
 
   const meResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, token);
-  if (!meResult.ok || meResult.data.role !== "admin") {
+  if (!meResult.ok || !hasAdminPermission(meResult.data, "can_manage_invoices_and_accounts")) {
     redirect("/login?error_code=admin_access_required");
   }
   const language = normalizeUiLanguage(meResult.data.preferred_language);
@@ -175,11 +176,13 @@ export default async function AdminSalaryPaymentsPage({ searchParams }: { search
                 return (
                   <tr key={professor.id}>
                     <td data-mobile-label="" className="mobile-row-primary">
-                      <Link href={`/admin/professors/${professor.id}`} className="mode-link">
-                        <strong>
-                          {professor.first_name} {professor.last_name}
-                        </strong>
-                      </Link>
+                      {meResult.data.role === "admin" ? (
+                        <Link href={`/admin/professors/${professor.id}`} className="mode-link">
+                          <strong>{professor.first_name} {professor.last_name}</strong>
+                        </Link>
+                      ) : (
+                        <strong>{professor.first_name} {professor.last_name}</strong>
+                      )}
                     </td>
                     <td data-mobile-label={uiText(language, "common.email")}>{professor.email}</td>
                     <td data-mobile-label={t("admin.salary.amount_due")}>{money(due, currency, language)}</td>

@@ -36,7 +36,7 @@ export type UserOut = {
   phone_suspended_at: string | null;
   phone_suspension_reason: string | null;
   admin_permissions: Partial<ProfessorPermissionOut> | null;
-  admin_access_profile: "admin" | "manager" | "professor" | string | null;
+  admin_access_profile: "admin" | "accountant" | "manager" | "professor" | string | null;
   residence_country: string;
   preferred_language: string;
   preferred_currency: string;

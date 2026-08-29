@@ -1665,7 +1665,7 @@ def sync_admin_external_content_wordpress_learndash(
 def list_admin_legal_entities(
     include_inactive: bool = Query(default=False),
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin_or_permissions("can_view_clients", "can_view_quotes")),
+    _: User = Depends(require_admin_or_permissions("can_view_clients", "can_view_quotes", "can_create_and_view_reports")),
 ) -> list[AdminLegalEntityOut]:
     stmt = select(LegalEntity).order_by(LegalEntity.name.asc())
     if not include_inactive:

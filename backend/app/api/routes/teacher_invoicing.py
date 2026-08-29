@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Respon
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db, require_roles
+from app.api.deps import get_db, require_admin_or_permissions, require_roles
 from app.models.catalog import BookingStatus, CourseType, DeliveryMode, Location, Professor
 from app.models.ops import AppSetting, LegalEntity
 from app.models.teacher_invoicing import (
@@ -920,7 +920,7 @@ def get_admin_teacher_statement_month(
     year: int,
     month: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+    current_user: User = Depends(require_admin_or_permissions("can_manage_invoices_and_accounts", "can_create_and_view_reports")),
 ) -> list[TeacherStatementOut]:
     if year < 2000 or year > 2100 or month < 1 or month > 12:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Periode invalide")
@@ -938,7 +938,7 @@ def export_admin_teacher_statement_month_csv(
     year: int,
     month: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+    current_user: User = Depends(require_admin_or_permissions("can_manage_invoices_and_accounts", "can_create_and_view_reports")),
 ) -> Response:
     if year < 2000 or year > 2100 or month < 1 or month > 12:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Periode invalide")
@@ -968,7 +968,7 @@ def export_admin_teacher_statement_month_pdf(
     year: int,
     month: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+    current_user: User = Depends(require_admin_or_permissions("can_manage_invoices_and_accounts", "can_create_and_view_reports")),
 ) -> Response:
     if year < 2000 or year > 2100 or month < 1 or month > 12:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Periode invalide")

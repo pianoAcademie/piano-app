@@ -492,6 +492,14 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
     Boolean(permissionState.can_view_intakes) &&
     Boolean(permissionState.can_view_quotes) &&
     Boolean(permissionState.can_view_upcoming_trials);
+  const isAccountantProfile =
+    professor.role !== "admin" &&
+    Boolean(permissionState.can_manage_invoices_and_accounts) &&
+    Boolean(permissionState.can_create_and_view_reports) &&
+    Boolean(permissionState.can_manage_check_deposits) &&
+    !Boolean(permissionState.can_edit_planning) &&
+    !Boolean(permissionState.can_view_clients) &&
+    !Boolean(permissionState.can_access_collaborators);
   const rates = ratesResult.ok ? ratesResult.data : [];
   const courseTypes = courseTypesResult.ok ? courseTypesResult.data : [];
   const sessions = sessionsResult.ok ? sessionsResult.data : [];
@@ -1042,6 +1050,13 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
                 {t("admin.professor_detail.permissions_manager_profile")}
               </label>
               <p className="muted">{t("admin.professor_detail.permissions_manager_profile_help")}</p>
+            </article>
+            <article className="item span-2">
+              <label className="checkline">
+                <input type="checkbox" name="accountant_profile" defaultChecked={isAccountantProfile} />
+                {t("admin.professor_detail.permissions_accountant_profile")}
+              </label>
+              <p className="muted">{t("admin.professor_detail.permissions_accountant_profile_help")}</p>
             </article>
             <article className="item span-2">
               <label className="checkline">

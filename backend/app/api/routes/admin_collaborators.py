@@ -933,7 +933,7 @@ def list_collaborators(
     payout_as_of: date | None = None,
     limit: int = Query(default=200, ge=1, le=1000),
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin_or_permissions("can_access_collaborators")),
+    _: User = Depends(require_admin_or_permissions("can_access_collaborators", "can_manage_invoices_and_accounts")),
 ) -> list[AdminProfessorDetailOut]:
     stmt = select(Professor)
 
@@ -1509,6 +1509,7 @@ def update_collaborator_permissions(
     is_admin = values.pop("is_admin", None)
     teacher_profile = bool(values.pop("teacher_profile", False))
     manager_profile = bool(values.pop("manager_profile", False))
+    accountant_profile = bool(values.pop("accountant_profile", False))
     planning_simulation_location_id = values.pop("planning_simulation_location_id", None)
     check_deposits_location_id = values.pop("check_deposits_location_id", None)
 
@@ -1568,6 +1569,17 @@ def update_collaborator_permissions(
         values["can_view_intakes"] = True
         values["can_view_quotes"] = True
         values["can_view_upcoming_trials"] = True
+        if is_admin is None:
+            is_admin = False
+
+    if accountant_profile:
+        for field in PERMISSION_FIELDS:
+            values[field] = False
+        values["can_manage_invoices_and_accounts"] = True
+        values["can_create_and_view_reports"] = True
+        values["can_manage_check_deposits"] = True
+        values["can_list_payments"] = True
+        values["can_view_dashboard"] = True
         if is_admin is None:
             is_admin = False
 
@@ -1880,7 +1892,7 @@ def list_salary_payments(
     professor_id: UUID | None = None,
     limit: int = Query(default=200, ge=1, le=1000),
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_manage_invoices_and_accounts")),
 ) -> list[AdminProfessorSalaryPaymentOut]:
     stmt = (
         select(ProfessorSalaryPayment, Professor)
@@ -1905,7 +1917,7 @@ def create_salary_payment(
     professor_id: UUID,
     payload: AdminProfessorSalaryPaymentCreateRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+    current_user: User = Depends(require_admin_or_permissions("can_manage_invoices_and_accounts")),
 ) -> AdminProfessorSalaryPaymentOut:
     professor = _load_professor_or_404(db, professor_id)
     invoice_number = _normalize_required(payload.invoice_number, "invoice_number")

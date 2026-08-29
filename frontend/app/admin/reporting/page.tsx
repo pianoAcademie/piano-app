@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { createGeneratedReportAction, deleteGeneratedReportAction, deleteGeneratedReportsAction } from "../../../lib/actions";
 import { backendRequest } from "../../../lib/backend";
 import { GeneratedReportsTable } from "../../../components/generated-reports-table";
+import { hasAdminPermission } from "../../../lib/admin-access";
 import type { AdminLegalEntityOut, GeneratedReportOut, UserOut } from "../../../lib/types";
 import { normalizeUiLanguage, uiText } from "../../../lib/ui-i18n";
 
@@ -258,7 +259,7 @@ export default async function AdminReportingPage({ searchParams }: ReportingPage
   }
 
   const meResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, token);
-  if (!meResult.ok || meResult.data.role !== "admin") {
+  if (!meResult.ok || !hasAdminPermission(meResult.data, "can_create_and_view_reports")) {
     redirect("/login?error_code=admin_access_required");
   }
   const language = normalizeUiLanguage(meResult.data.preferred_language);

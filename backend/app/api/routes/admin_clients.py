@@ -11660,6 +11660,12 @@ def _check_deposit_scope_location_id(db: Session, *, actor: User) -> UUID | None
     if actor.role == UserRole.ADMIN:
         return None
     permission_map = get_admin_permission_map(db, actor)
+    if (
+        permission_map.get("can_manage_check_deposits")
+        and permission_map.get("can_manage_invoices_and_accounts")
+        and permission_map.get("can_create_and_view_reports")
+    ):
+        return None
     raw_location_id = permission_map.get("check_deposits_location_id")
     if not raw_location_id:
         raise HTTPException(

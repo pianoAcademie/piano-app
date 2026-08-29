@@ -1432,6 +1432,10 @@ export async function loginAction(formData: FormData): Promise<void> {
     redirect("/admin?ok_code=login_admin_success");
   }
 
+  if (me.admin_access_profile === "accountant") {
+    redirect("/admin/accounting?ok_code=login_admin_success");
+  }
+
   if (me.role === "client") {
     if (purchaseContext) {
       redirect(
@@ -8578,12 +8582,19 @@ export async function updateAdminCollaboratorPermissionsAction(formData: FormDat
   const isAdmin = checkboxField(formData, "is_admin");
   const teacherProfile = checkboxField(formData, "teacher_profile");
   const managerProfile = checkboxField(formData, "manager_profile");
+  const accountantProfile = checkboxField(formData, "accountant_profile");
 
   const result = await backendRequest<ProfessorPermissionOut>(
     `/api/v1/admin/collaborators/${professorId}/permissions`,
     {
       method: "PUT",
-      body: JSON.stringify({ ...payload, is_admin: isAdmin, teacher_profile: teacherProfile, manager_profile: managerProfile }),
+      body: JSON.stringify({
+        ...payload,
+        is_admin: isAdmin,
+        teacher_profile: teacherProfile,
+        manager_profile: managerProfile,
+        accountant_profile: accountantProfile,
+      }),
     },
     token,
   );

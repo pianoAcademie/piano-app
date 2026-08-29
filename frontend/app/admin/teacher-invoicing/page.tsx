@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import AdminTeacherInvoicingNav from "../../../components/admin-teacher-invoicing-nav";
+import { hasAdminPermission } from "../../../lib/admin-access";
 import { backendRequest } from "../../../lib/backend";
 import type { UserOut } from "../../../lib/types";
 import { normalizeUiLanguage, uiText } from "../../../lib/ui-i18n";
@@ -36,17 +37,17 @@ export default async function AdminTeacherInvoicingHubPage(): Promise<JSX.Elemen
     redirect("/login?error_code=session_expired");
   }
   const meResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, token);
-  if (!meResult.ok || meResult.data.role !== "admin") {
+  if (!meResult.ok || !hasAdminPermission(meResult.data, "can_manage_invoices_and_accounts")) {
     redirect("/login?error_code=admin_access_required");
   }
   const language = normalizeUiLanguage(meResult.data.preferred_language);
 
   return (
     <section className="admin-page-grid">
-      <AdminTeacherInvoicingNav activeTab="hub" language={language} />
+      <AdminTeacherInvoicingNav activeTab="hub" language={language} isFullAdmin={meResult.data.role === "admin"} />
 
       <section className="grid cols-2 teacher-invoicing-hub-grid">
-        {HUB_LINKS.map((entry) => (
+        {HUB_LINKS.filter((entry) => meResult.data.role === "admin" || entry.href.endsWith("/statements") || entry.href.endsWith("/invoices")).map((entry) => (
           <article key={entry.href} className="card teacher-invoicing-hub-card">
             <h3>{uiText(language, entry.titleKey)}</h3>
             <p className="muted">{uiText(language, entry.descriptionKey)}</p>

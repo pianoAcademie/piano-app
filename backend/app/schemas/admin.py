@@ -2118,6 +2118,7 @@ class ProfessorPermissionUpdateRequest(BaseModel):
     is_admin: bool | None = None
     teacher_profile: bool = False
     manager_profile: bool = False
+    accountant_profile: bool = False
 
 
 class AdminProfessorContractOut(BaseModel):

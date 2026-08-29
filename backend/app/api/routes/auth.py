@@ -849,5 +849,13 @@ def me(
             "can_view_quotes",
             "can_view_upcoming_trials",
         }
-        payload.admin_access_profile = "manager" if any(permissions.get(key) for key in manager_keys) else "professor"
+        accounting_keys = {
+            "can_manage_invoices_and_accounts",
+            "can_create_and_view_reports",
+            "can_manage_check_deposits",
+        }
+        if all(permissions.get(key) for key in accounting_keys):
+            payload.admin_access_profile = "accountant"
+        else:
+            payload.admin_access_profile = "manager" if any(permissions.get(key) for key in manager_keys) else "professor"
     return payload

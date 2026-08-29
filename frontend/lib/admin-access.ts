@@ -14,6 +14,14 @@ export const MANAGER_ADMIN_PERMISSION_KEYS: AdminPermissionKey[] = [
   "can_view_quotes",
   "can_view_upcoming_trials",
   "can_manage_events",
+  "can_manage_invoices_and_accounts",
+  "can_create_and_view_reports",
+];
+
+export const ACCOUNTANT_ADMIN_PERMISSION_KEYS: AdminPermissionKey[] = [
+  "can_manage_invoices_and_accounts",
+  "can_create_and_view_reports",
+  "can_manage_check_deposits",
 ];
 
 export const TASK_MANAGER_PERMISSION_KEYS: AdminPermissionKey[] = [
@@ -41,6 +49,10 @@ export function hasAnyAdminAccess(user: UserOut): boolean {
   return user.role === "admin" || MANAGER_ADMIN_PERMISSION_KEYS.some((key) => hasAdminPermission(user, key));
 }
 
+export function hasAccountantAccess(user: UserOut): boolean {
+  return user.role === "admin" || ACCOUNTANT_ADMIN_PERMISSION_KEYS.every((key) => hasAdminPermission(user, key));
+}
+
 export function hasTaskManagerAccess(user: UserOut): boolean {
   return user.role === "admin" || TASK_MANAGER_PERMISSION_KEYS.some((key) => hasAdminPermission(user, key));
 }
@@ -48,6 +60,9 @@ export function hasTaskManagerAccess(user: UserOut): boolean {
 export function adminRoleLabel(user: UserOut, language: UiLanguage): string {
   if (user.role === "admin") {
     return language === "en" ? "Administrator" : "Administrateur";
+  }
+  if (user.admin_access_profile === "accountant" || hasAccountantAccess(user)) {
+    return language === "en" ? "Accountant" : "Comptable";
   }
   if (hasAnyAdminAccess(user)) {
     return language === "en" ? "Manager" : "Gestionnaire";

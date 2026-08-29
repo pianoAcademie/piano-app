@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import AdminTeacherInvoicingNav from "../../../../components/admin-teacher-invoicing-nav";
+import { hasAdminPermission } from "../../../../lib/admin-access";
 import { backendRequest } from "../../../../lib/backend";
 import type { AdminProfessorOut, TeacherStatementOut, UserOut } from "../../../../lib/types";
 import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../../lib/ui-i18n";
@@ -137,7 +138,7 @@ export default async function AdminTeacherInvoicingStatementsPage({
   if (!token) redirect("/login?error_code=session_expired");
 
   const meResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, token);
-  if (!meResult.ok || meResult.data.role !== "admin") redirect("/login?error_code=admin_access_required");
+  if (!meResult.ok || !hasAdminPermission(meResult.data, "can_manage_invoices_and_accounts")) redirect("/login?error_code=admin_access_required");
 
   const language = normalizeUiLanguage(meResult.data.preferred_language);
   const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
@@ -174,7 +175,7 @@ export default async function AdminTeacherInvoicingStatementsPage({
 
   return (
     <section className="admin-page-grid">
-      <AdminTeacherInvoicingNav activeTab="statements" language={language} />
+      <AdminTeacherInvoicingNav activeTab="statements" language={language} isFullAdmin={meResult.data.role === "admin"} />
 
       {!professorsResult.ok ? <section className="flash-err">{t("admin.teacher_invoicing.backend_error")}: {professorsResult.message}</section> : null}
       {statementsResult && !statementsResult.ok ? <section className="flash-err">{t("admin.teacher_invoicing.backend_error")}: {statementsResult.message}</section> : null}

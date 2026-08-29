@@ -38,6 +38,12 @@ class AdminPermissionTests(unittest.TestCase):
         self.assertIn("can_view_upcoming_trials", PERMISSION_FIELDS)
         self.assertFalse(DEFAULT_PROFESSOR_PERMISSIONS["can_view_upcoming_trials"])
 
+    def test_accounting_permissions_enable_backoffice_access(self) -> None:
+        self.assertIn("can_manage_invoices_and_accounts", BACKOFFICE_PERMISSION_KEYS)
+        self.assertIn("can_create_and_view_reports", BACKOFFICE_PERMISSION_KEYS)
+        self.assertFalse(DEFAULT_PROFESSOR_PERMISSIONS["can_manage_invoices_and_accounts"])
+        self.assertFalse(DEFAULT_PROFESSOR_PERMISSIONS["can_create_and_view_reports"])
+
 
 if __name__ == "__main__":
     unittest.main()

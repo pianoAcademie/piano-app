@@ -39,8 +39,9 @@ const NAV_SECTIONS: NavSection[] = [
     key: "finance",
     title: { fr: "Finance", en: "Finance" },
     items: [
-      { href: "/admin/salary-payments", label: { fr: "Paiement des salaires", en: "Salary payments" }, icon: "💶" },
-      { href: "/admin/teacher-invoicing", label: { fr: "Facturation professeurs", en: "Teacher invoicing" }, icon: "🧾" },
+      { href: "/admin/accounting", label: { fr: "Espace comptable", en: "Accounting" }, icon: "🧮", permission: "can_access_accounting" },
+      { href: "/admin/salary-payments", label: { fr: "Paiement des salaires", en: "Salary payments" }, icon: "💶", permission: "can_manage_invoices_and_accounts" },
+      { href: "/admin/teacher-invoicing", label: { fr: "Facturation professeurs", en: "Teacher invoicing" }, icon: "🧾", permission: "can_manage_invoices_and_accounts" },
       { href: "/admin/billing-adjustments", label: { fr: "Regularisations a valider", en: "Billing review" }, icon: "✅", permission: "can_view_clients" },
       { href: "/admin/check-deposits", label: { fr: "Depots de cheques", en: "Check deposits" }, icon: "🏦", permission: "can_manage_check_deposits" },
       { href: "/admin/referrals", label: { fr: "Parrainages", en: "Referrals" }, icon: "🤝" },
@@ -70,7 +71,7 @@ const NAV_SECTIONS: NavSection[] = [
       { href: "/admin/realtime", label: { fr: "Temps réel", en: "Real-time" }, icon: "🟢", permission: "can_view_planning" },
       { href: "/admin/quality-control", label: { fr: "Contrôle devis/planning", en: "Quote/schedule checks" }, icon: "🔎", permission: "can_view_quotes" },
       { href: "/admin/config", label: { fr: "Configuration", en: "Settings" }, icon: "⚙️" },
-      { href: "/admin/reporting", label: { fr: "Reporting", en: "Reporting" }, icon: "📊" },
+      { href: "/admin/reporting", label: { fr: "Reporting", en: "Reporting" }, icon: "📊", permission: "can_create_and_view_reports" },
     ],
   },
 ];
@@ -101,6 +102,13 @@ function withUiLanguage(href: string, language: UiLanguage): string {
 }
 
 function hasVisiblePermission(permission: string, permissions: Partial<Record<string, boolean | string | null>>): boolean {
+  if (permission === "can_access_accounting") {
+    return [
+      "can_manage_invoices_and_accounts",
+      "can_create_and_view_reports",
+      "can_manage_check_deposits",
+    ].every((key) => Boolean(permissions[key]));
+  }
   if (permission === "can_view_planning" && permissions.can_edit_planning) {
     return true;
   }

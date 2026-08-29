@@ -34,6 +34,8 @@ BACKOFFICE_PERMISSION_KEYS = {
     "can_manage_events",
     "can_manage_mobile_news",
     "can_manage_website_and_news",
+    "can_manage_invoices_and_accounts",
+    "can_create_and_view_reports",
 }
 
 

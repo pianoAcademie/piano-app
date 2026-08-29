@@ -3567,7 +3567,7 @@ def _render_generated_report_download(row: GeneratedReport) -> tuple[bytes, str,
 @router.get("/generated", response_model=list[GeneratedReportOut])
 def list_generated_reports(
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_create_and_view_reports")),
 ) -> list[GeneratedReportOut]:
     rows = db.scalars(select(GeneratedReport).order_by(GeneratedReport.created_at.desc()).limit(500)).all()
     return [_generated_report_out(row) for row in rows]
@@ -3577,7 +3577,7 @@ def list_generated_reports(
 def create_generated_report(
     payload: GeneratedReportCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+    current_user: User = Depends(require_admin_or_permissions("can_create_and_view_reports")),
 ) -> GeneratedReportOut:
     report_type = payload.report_type.strip()
     report_label = REPORT_TYPE_LABELS.get(report_type, report_type)
@@ -3726,7 +3726,7 @@ def download_generated_report_pdf(
     report_id: UUID,
     inline: bool = Query(default=False),
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_create_and_view_reports")),
 ) -> Response:
     row = db.get(GeneratedReport, report_id)
     if row is None:
@@ -3744,7 +3744,7 @@ def download_generated_report_pdf(
 def download_generated_report(
     report_id: UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_create_and_view_reports")),
 ) -> Response:
     row = db.get(GeneratedReport, report_id)
     if row is None:
@@ -3761,7 +3761,7 @@ def download_generated_report(
 def delete_generated_reports(
     report_ids: list[UUID] = Query(default=[]),
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_create_and_view_reports")),
 ) -> Response:
     if not report_ids:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Aucun rapport selectionne")
@@ -3780,7 +3780,7 @@ def delete_generated_reports(
 def delete_generated_report(
     report_id: UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_create_and_view_reports")),
 ) -> Response:
     row = db.get(GeneratedReport, report_id)
     if row is None:

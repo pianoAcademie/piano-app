@@ -19,9 +19,11 @@ const NAV_ITEMS: TeacherInvoicingNavItem[] = [
 type AdminTeacherInvoicingNavProps = {
   activeTab: TeacherInvoicingNavTab;
   language?: UiLanguage;
+  isFullAdmin?: boolean;
 };
 
-export default function AdminTeacherInvoicingNav({ activeTab, language = "fr" }: AdminTeacherInvoicingNavProps): JSX.Element {
+export default function AdminTeacherInvoicingNav({ activeTab, language = "fr", isFullAdmin = true }: AdminTeacherInvoicingNavProps): JSX.Element {
+  const visibleItems = isFullAdmin ? NAV_ITEMS : NAV_ITEMS.filter((item) => item.id === "statements" || item.id === "invoices");
   return (
     <section className="card teacher-invoicing-header-card">
       <div className="row spread teacher-invoicing-header-top">
@@ -39,7 +41,7 @@ export default function AdminTeacherInvoicingNav({ activeTab, language = "fr" }:
       </div>
 
       <nav className="teacher-invoicing-tabs" aria-label={uiText(language, "admin.teacher_invoicing.subnav_aria")}>
-        {NAV_ITEMS.map((item) => (
+        {visibleItems.map((item) => (
           <Link key={item.id} href={item.href} className={`teacher-invoicing-tab ${activeTab === item.id ? "active" : ""}`}>
             {uiText(language, item.labelKey)}
           </Link>

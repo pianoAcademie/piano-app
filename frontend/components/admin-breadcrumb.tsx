@@ -60,6 +60,9 @@ function labelForSegment(segment: string, previous: string, language: UiLanguage
   if (segment === "salary-payments") {
     return pickText(language, "Paiement des salaires", "Salary payments");
   }
+  if (segment === "accounting") {
+    return pickText(language, "Espace comptable", "Accounting");
+  }
   if (segment === "teacher-invoicing") {
     return pickText(language, "Facturation professeurs", "Teacher invoicing");
   }

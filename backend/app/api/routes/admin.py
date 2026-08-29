@@ -2865,7 +2865,7 @@ def admin_online_presence(
 def list_admin_professors(
     active: bool = True,
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin_or_permissions("can_view_planning", "can_access_collaborators")),
+    _: User = Depends(require_admin_or_permissions("can_view_planning", "can_access_collaborators", "can_manage_invoices_and_accounts")),
 ) -> list[AdminProfessorOut]:
     stmt = select(Professor).order_by(Professor.last_name.asc(), Professor.first_name.asc())
     if active:
