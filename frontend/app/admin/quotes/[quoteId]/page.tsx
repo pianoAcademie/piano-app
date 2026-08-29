@@ -3160,6 +3160,13 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                 <Link className="ghost" href={intakePanelHref}>{t("admin.quote_detail.intake_info_button")}</Link>
                 <Link className="ghost" href={backPath}>{t("admin.quote_detail.back_to_quotes")}</Link>
                 <Link className="ghost" href="/admin/quotes/new">{t("admin.quotes.new_quote")}</Link>
+                {canCreateVariant ? (
+                  <form action={createQuoteVariantAction}>
+                    <input type="hidden" name="quote_id" value={detail.quote.id} />
+                    <input type="hidden" name="return_to" value={selfPath} />
+                    <button type="submit" className="ghost">{t("admin.quote_detail.create_variant")}</button>
+                  </form>
+                ) : null}
               </>
             )}
             statuses={[
