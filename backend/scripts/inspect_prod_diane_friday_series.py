@@ -12,13 +12,14 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from app.api.routes.admin import BOOKING_STATUSES_ACTIVE
 from app.api.routes.admin_clients import _parse_invoice_range_note_entry
 from app.db.session import SessionLocal
 from app.models.catalog import Booking, CourseSession, CourseType, Location, SessionStatus
 from app.models.client_record import ClientInvoiceLine, ClientNoteEntry
+from app.models.notification_engine import DomainEvent
 from app.models.quote import Quote, QuoteAcceptanceFollowup, QuoteLine
 from app.models.user import User, UserRole
 
@@ -66,16 +67,31 @@ def _local_start(session_obj: CourseSession) -> datetime:
 
 
 def _candidate_series(db) -> list[dict[str, Any]]:
-    students = list(
+    repair_events = list(
         db.scalars(
-            select(User).where(
-                User.role == UserRole.CLIENT,
-                func.lower(func.coalesce(User.first_name, "")) == "diane",
+            select(DomainEvent)
+            .where(
+                DomainEvent.event_type == "booking_series_moved_by_admin_repair",
+                DomainEvent.source == "admin_repair",
             )
+            .order_by(DomainEvent.occurred_at.desc(), DomainEvent.created_at.desc())
         ).all()
     )
     rows: list[dict[str, Any]] = []
-    for student in students:
+    seen: set[tuple[UUID, UUID]] = set()
+    for event in repair_events:
+        payload = _json_object(event.payload_json)
+        moved_booking_ids = {
+            parsed
+            for raw in _json_list(payload.get("moved_booking_ids"))
+            if (parsed := _parse_uuid(raw)) is not None
+        }
+        if not moved_booking_ids or payload.get("price_policy") != "keep_source":
+            continue
+        student_id = _parse_uuid(payload.get("student_id")) or event.related_entity_id
+        student = db.get(User, student_id)
+        if student is None or student.role != UserRole.CLIENT:
+            continue
         booking_rows = db.execute(
             select(Booking, CourseSession, CourseType, Location)
             .join(CourseSession, CourseSession.id == Booking.session_id)
@@ -83,6 +99,7 @@ def _candidate_series(db) -> list[dict[str, Any]]:
             .join(Location, Location.id == CourseSession.location_id)
             .where(
                 Booking.user_id == student.id,
+                Booking.id.in_(moved_booking_ids),
                 Booking.status.in_(BOOKING_STATUSES_ACTIVE),
                 CourseSession.status == SessionStatus.SCHEDULED,
                 CourseSession.start_at_utc >= SEASON_START,
@@ -102,11 +119,16 @@ def _candidate_series(db) -> list[dict[str, Any]]:
         for group_id, group_rows in grouped.items():
             if len(group_rows) < 20:
                 continue
+            key = (student.id, group_id)
+            if key in seen:
+                continue
+            seen.add(key)
             rows.append(
                 {
                     "student": student,
                     "group_id": group_id,
                     "rows": group_rows,
+                    "repair_event_id": event.id,
                 }
             )
     return rows
