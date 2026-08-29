@@ -6,6 +6,7 @@ from collections import defaultdict
 from datetime import date, time
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from uuid import UUID
 from zoneinfo import ZoneInfo
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
@@ -15,9 +16,11 @@ from sqlalchemy import false, func, or_, select
 from app.api.routes.clients import _active_formula_options_for_course_type, _session_purchase_catalog
 from app.db.session import SessionLocal
 from app.api.routes.admin import BOOKING_STATUSES_ACTIVE
+from app.api.routes.admin_clients import _parse_invoice_range_note_entry
 from app.models.catalog import Booking, CourseSession, CourseType, CreditType, Location, SessionStatus
-from app.models.client_record import ClientInvoiceLine
+from app.models.client_record import ClientInvoiceLine, ClientNoteEntry
 from app.models.plan import Plan, PlanCreditGrant, PlanEntitlement, PlanKind
+from app.models.quote import Quote, QuoteAcceptanceFollowup, QuoteLine
 from app.services.session_audience import resolve_session_booking_scopes
 
 SCRIPT_PREFIX = "PROD_STUDIO_FORMULA_INSPECT"
@@ -237,6 +240,106 @@ def diagnose_legacy_friday_series() -> None:
                 }
             )
         print({"legacy_friday_candidates": candidates})
+
+        target_student_id = UUID("ed14d382-d354-4d03-a05e-b6c7cc51f446")
+        target_rows = [row for row in booking_rows if row[0].user_id == target_student_id]
+        target_groups = defaultdict(list)
+        for booking, session_obj in target_rows:
+            local_start = session_obj.start_at_utc.astimezone(ZoneInfo(session_obj.timezone or "Europe/Paris"))
+            target_groups[
+                (session_obj.course_type_id, session_obj.location_id, local_start.weekday(), local_start.time())
+            ].append((booking, session_obj, local_start))
+        print(
+            {
+                "target_groups": [
+                    {
+                        "course_type_id": str(key[0]),
+                        "location_id": str(key[1]),
+                        "weekday": key[2],
+                        "time": key[3].strftime("%H:%M"),
+                        "count": len(rows),
+                        "dates": [row[2].date().isoformat() for row in rows],
+                        "amounts": sorted({str(Decimal(row[0].total_incl_vat_snapshot or 0)) for row in rows}),
+                    }
+                    for key, rows in target_groups.items()
+                ]
+            }
+        )
+        target_booking_ids = {row[0].id for row in target_rows}
+        target_invoice_lines = list(
+            db.scalars(
+                select(ClientInvoiceLine).where(
+                    ClientInvoiceLine.source == "BOOKING",
+                    ClientInvoiceLine.source_payment_id.in_(target_booking_ids),
+                )
+            ).all()
+        )
+        note_ids = {line.note_id for line in target_invoice_lines}
+        notes = {
+            note.id: note for note in db.scalars(select(ClientNoteEntry).where(ClientNoteEntry.id.in_(note_ids))).all()
+        }
+        all_note_lines = list(
+            db.scalars(select(ClientInvoiceLine).where(ClientInvoiceLine.note_id.in_(note_ids))).all()
+        )
+        print(
+            {
+                "target_invoices": [
+                    {
+                        "invoice_number": str(
+                            (_parse_invoice_range_note_entry(notes[note_id]) or {}).get("invoice_number") or ""
+                        ),
+                        "invoice_status": str(
+                            (_parse_invoice_range_note_entry(notes[note_id]) or {}).get("invoice_status") or ""
+                        ),
+                        "total_ttc": str(
+                            sum(
+                                (Decimal(line.total_incl_vat or 0) for line in all_note_lines if line.note_id == note_id),
+                                Decimal("0"),
+                            )
+                        ),
+                        "target_booking_lines": sum(1 for line in target_invoice_lines if line.note_id == note_id),
+                        "target_booking_total": str(
+                            sum(
+                                (Decimal(line.total_incl_vat or 0) for line in target_invoice_lines if line.note_id == note_id),
+                                Decimal("0"),
+                            )
+                        ),
+                    }
+                    for note_id in note_ids
+                ]
+            }
+        )
+        quote_rows = db.execute(
+            select(Quote, QuoteAcceptanceFollowup)
+            .join(QuoteAcceptanceFollowup, QuoteAcceptanceFollowup.quote_id == Quote.id)
+            .where(Quote.school_year_label == "2026-2027")
+        ).all()
+        target_quotes = []
+        for quote, followup in quote_rows:
+            payload = followup.payload if isinstance(followup.payload, dict) else {}
+            execution = payload.get("quote_to_enrollment_execution")
+            execution = execution if isinstance(execution, dict) else {}
+            created_ids = {str(value) for value in execution.get("created_booking_ids") or []}
+            if not created_ids.intersection({str(value) for value in target_booking_ids}):
+                continue
+            lines = list(db.scalars(select(QuoteLine).where(QuoteLine.quote_id == quote.id)).all())
+            target_quotes.append(
+                {
+                    "quote_number": quote.quote_number,
+                    "status": str(quote.status),
+                    "total_ttc": str(quote.total_ttc),
+                    "lines": [
+                        {
+                            "activity_id": str(line.activity_id) if line.activity_id else None,
+                            "quantity": str(line.quantity),
+                            "unit_ttc": str(line.unit_price_ttc),
+                            "amount_ttc": str(line.amount_ttc),
+                        }
+                        for line in lines
+                    ],
+                }
+            )
+        print({"target_quotes": target_quotes})
 
 
 if __name__ == "__main__":
