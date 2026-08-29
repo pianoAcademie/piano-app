@@ -97,6 +97,8 @@ def _quote_status_label(status: str | None, *, language: str | None = None) -> s
             return "Expired"
         if normalized == "cancelled":
             return "Cancelled"
+        if normalized == "replaced":
+            return "Replaced"
         return normalized or "-"
 
     if normalized == "created":
@@ -113,6 +115,8 @@ def _quote_status_label(status: str | None, *, language: str | None = None) -> s
         return "Expire"
     if normalized == "cancelled":
         return "Annule"
+    if normalized == "replaced":
+        return "Remplace"
     return normalized or "-"
 
 

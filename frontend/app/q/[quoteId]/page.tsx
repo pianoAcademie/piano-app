@@ -187,13 +187,16 @@ function quoteStatusLabel(status: string, language: UiLanguage): string {
   if (status === "cancelled") {
     return uiText(language, "quote_public.status_cancelled");
   }
+  if (status === "replaced") {
+    return uiText(language, "quote_public.status_replaced");
+  }
   return status.replace(/_/g, " ");
 }
 
 function quoteStatusClass(status: string): string {
   if (status === "approved") return "status-ok";
   if (status === "sent" || status === "change_requested") return "status-warn";
-  if (status === "rejected" || status === "expired" || status === "cancelled") return "status-cancelled";
+  if (status === "rejected" || status === "expired" || status === "cancelled" || status === "replaced") return "status-cancelled";
   return "status-off";
 }
 

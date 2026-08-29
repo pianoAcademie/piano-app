@@ -11,7 +11,8 @@ export type QuoteValidationUiState =
   | "modification_demandee"
   | "valide"
   | "refuse"
-  | "expire";
+  | "expire"
+  | "remplace";
 
 const LABEL_KEYS: Record<QuoteValidationUiState, string> = {
   brouillon: "admin.quotes.validation.brouillon",
@@ -23,6 +24,7 @@ const LABEL_KEYS: Record<QuoteValidationUiState, string> = {
   valide: "admin.quotes.validation.valide",
   refuse: "admin.quotes.validation.refuse",
   expire: "admin.quotes.validation.expire",
+  remplace: "admin.quotes.validation.remplace",
 };
 
 const CLASSES: Record<QuoteValidationUiState, string> = {
@@ -35,6 +37,7 @@ const CLASSES: Record<QuoteValidationUiState, string> = {
   valide: "status-ok",
   refuse: "status-cancelled",
   expire: "status-cancelled",
+  remplace: "status-off",
 };
 
 export default function QuoteRowValidationState({

@@ -1644,6 +1644,19 @@ def _planning_simulation_quote_person_key(quote: Quote, prospect: Prospect | Non
     return None
 
 
+def _planning_simulation_quote_reserves_capacity(quote: Quote) -> bool:
+    """Return whether this quote must count against projected slot capacity."""
+    normalized_status = str(quote.status or "").strip().lower()
+    if normalized_status not in PLANNING_SIMULATION_QUOTE_RELEVANT_STATUSES:
+        return False
+    if normalized_status != "created":
+        return True
+    released = (quote.meta or {}).get("planning_hold_released")
+    if released is True:
+        return False
+    return str(released or "").strip().lower() not in {"1", "true", "yes"}
+
+
 def _planning_simulation_search_text(value: str) -> str:
     return "".join(
         char for char in unicodedata.normalize("NFD", value.casefold()) if unicodedata.category(char) != "Mn"
@@ -3813,6 +3826,8 @@ def get_planning_simulation(
 
     for quote, followup, prospect, quote_client in quote_rows:
         normalized_status = str(quote.status or "").strip().lower()
+        if not _planning_simulation_quote_reserves_capacity(quote):
+            continue
         if normalized_status in PLANNING_SIMULATION_QUOTE_APPROVED_STATUSES and followup is not None and followup.status == "completed":
             continue
         quote_person_key = _planning_simulation_quote_person_key(quote, prospect)

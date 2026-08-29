@@ -90,7 +90,7 @@ function quoteStatusClass(status: string): string {
   const normalized = status.trim().toLowerCase();
   if (normalized === "approved") return "status-ok";
   if (normalized === "sent" || normalized === "change_requested") return "status-warn";
-  if (normalized === "rejected" || normalized === "expired" || normalized === "cancelled") return "status-cancelled";
+  if (normalized === "rejected" || normalized === "expired" || normalized === "cancelled" || normalized === "replaced") return "status-cancelled";
   return "status-off";
 }
 
@@ -103,6 +103,7 @@ function quoteStatusLabel(status: string, language: UiLanguage): string {
   if (normalized === "change_requested") return uiText(language, "admin.prospects.quote_change_requested");
   if (normalized === "cancelled") return uiText(language, "admin.prospects.quote_cancelled");
   if (normalized === "expired") return uiText(language, "admin.prospects.quote_expired");
+  if (normalized === "replaced") return uiText(language, "admin.prospects.quote_replaced");
   return status || "-";
 }
 

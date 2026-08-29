@@ -18,6 +18,7 @@ from app.api.routes.admin import (
     _planning_simulation_location_name_key,
     _planning_simulation_is_online_solfege,
     _planning_simulation_quote_person_key,
+    _planning_simulation_quote_reserves_capacity,
     _planning_simulation_quote_location_name,
     _planning_simulation_resolve_live_slot_for_quote,
     _planning_simulation_search_text,
@@ -56,6 +57,17 @@ class _AssignmentSession:
 
 
 class AdminPlanningSimulationTests(unittest.TestCase):
+    def test_change_request_revision_draft_releases_capacity_until_sent(self) -> None:
+        released_draft = SimpleNamespace(status="created", meta={"planning_hold_released": True})
+        sent_revision = SimpleNamespace(status="sent", meta={"planning_hold_released": True})
+        regular_draft = SimpleNamespace(status="created", meta={})
+        replaced_source = SimpleNamespace(status="replaced", meta={"planning_hold_released": True})
+
+        self.assertFalse(_planning_simulation_quote_reserves_capacity(released_draft))
+        self.assertTrue(_planning_simulation_quote_reserves_capacity(sent_revision))
+        self.assertTrue(_planning_simulation_quote_reserves_capacity(regular_draft))
+        self.assertFalse(_planning_simulation_quote_reserves_capacity(replaced_source))
+
     @staticmethod
     def _teacher_need_slot(
         *,

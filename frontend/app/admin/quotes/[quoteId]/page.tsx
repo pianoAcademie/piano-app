@@ -613,6 +613,7 @@ function labelForQuoteStatus(value: string | null | undefined, language: UiLangu
   if (normalized === "change_requested") return uiText(language, "admin.quotes.validation.modification_demandee");
   if (normalized === "cancelled") return uiText(language, "admin.quotes.status_cancelled");
   if (normalized === "expired") return uiText(language, "admin.quotes.status_expired");
+  if (normalized === "replaced") return uiText(language, "admin.quotes.status_replaced");
   return normalized || "-";
 }
 
@@ -1701,6 +1702,7 @@ function commercialStateFromQuote(quote: QuoteOut): QuoteValidationUiState {
   if (status === "approved") return "valide";
   if (status === "rejected" || status === "cancelled") return "refuse";
   if (status === "expired") return "expire";
+  if (status === "replaced") return "remplace";
   if (status === "sent") {
     const meta = quote.meta || {};
     const viewed = ["public_viewed_at", "viewed_at", "consulted_at", "last_viewed_at"].some((key) => {
@@ -1733,6 +1735,7 @@ function commercialStateLabel(state: QuoteValidationUiState, language: UiLanguag
     valide: "admin.quotes.validation.valide",
     refuse: "admin.quotes.validation.refuse",
     expire: "admin.quotes.validation.expire",
+    remplace: "admin.quotes.validation.remplace",
   }[state];
   return uiText(language, key);
 }
@@ -1747,6 +1750,9 @@ function validationClientLabelFromQuote(quote: QuoteOut, language: UiLanguage = 
   }
   if (status === "rejected") {
     return uiText(language, "admin.quotes.validation.refuse");
+  }
+  if (status === "replaced") {
+    return uiText(language, "admin.quotes.validation.remplace");
   }
   return uiText(language, "admin.quote_detail.pending");
 }
@@ -2482,7 +2488,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const canResendQuote = ["sent", "approved", "rejected", "expired", "change_requested"].includes(quoteStatus) && !hasChangeRequestRevision;
   const quoteHasKitLine = detail.lines.some((line) => Boolean(line.kit_id));
   const showMissingKitWarning = !quoteHasKitLine;
-  const canCancelQuote = !["cancelled", "approved"].includes(quoteStatus);
+  const canCancelQuote = !["cancelled", "approved", "replaced"].includes(quoteStatus);
   const canReopenCancelledQuote = quoteStatus === "cancelled";
   const canRestorePublicResponse = ["approved", "rejected", "change_requested"].includes(quoteStatus);
   const canResendPublicConfirmation = ["approved", "rejected", "change_requested"].includes(quoteStatus);
@@ -3573,7 +3579,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                     <Link className="quote-list-row-link" href={`/admin/quotes/${encodeURIComponent(changeRequestRevisionQuoteId)}`}>
                       {changeRequestRevisionQuoteNumber || "ouvrir la version"}
                     </Link>
-                    . Cette version envoyee reste conservee comme archive figee.
+                    . L'ancien devis est marque « Remplace » et ses creneaux sont liberes.
                   </p>
                 ) : null}
                 {hasRevisionChangeRequest ? (
@@ -3582,7 +3588,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                     <Link className="quote-list-row-link" href={`/admin/quotes/${encodeURIComponent(revisionSourceQuoteId)}`}>
                       {revisionSourceQuoteNumber || "source"}
                     </Link>
-                    .
+                    . Les creneaux copies servent de reference et ne rebloquent une place qu'a l'envoi de cette version.
                   </p>
                 ) : null}
               </section>

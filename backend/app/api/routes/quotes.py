@@ -212,6 +212,11 @@ QUOTE_PUBLIC_RESPONSE_LAST_RESTORED_FROM_META_KEY = "public_response_last_restor
 BAR_LE_DUC_MANAGER_EMAIL = "estela.oliviero@piano-academie.com"
 QUOTE_CHANGE_REQUEST_REVISION_ID_META_KEY = "change_request_revision_quote_id"
 QUOTE_CHANGE_REQUEST_REVISION_NUMBER_META_KEY = "change_request_revision_quote_number"
+QUOTE_REPLACED_BY_ID_META_KEY = "replaced_by_quote_id"
+QUOTE_REPLACED_BY_NUMBER_META_KEY = "replaced_by_quote_number"
+QUOTE_REPLACED_AT_META_KEY = "replaced_at"
+QUOTE_PLANNING_HOLD_RELEASED_META_KEY = "planning_hold_released"
+QUOTE_PLANNING_HOLD_RELEASED_AT_META_KEY = "planning_hold_released_at"
 QUOTE_TRANSFORMATION_PAYLOAD_KEY = "quote_to_enrollment"
 QUOTE_TRANSFORMATION_EXECUTION_KEY = "quote_to_enrollment_execution"
 QUOTE_MONTHLY_CARD_BILLING_START_DATE = date(2026, 9, 1)
@@ -4937,6 +4942,17 @@ def _create_quote_revision_from_change_request(
             existing_revision_uuid = None
         existing_revision = db.scalar(select(Quote).where(Quote.id == existing_revision_uuid)) if existing_revision_uuid else None
         if existing_revision is not None:
+            existing_revision.meta = {
+                **_quote_meta_dict(existing_revision),
+                QUOTE_PLANNING_HOLD_RELEASED_META_KEY: True,
+                QUOTE_PLANNING_HOLD_RELEASED_AT_META_KEY: requested_at.isoformat(),
+            }
+            _mark_quote_replaced_by_revision(
+                source,
+                revision=existing_revision,
+                replaced_at=requested_at,
+            )
+            db.add_all([source, existing_revision])
             return existing_revision
 
     clone_meta = _quote_meta_without_public_response(source.meta or {})
@@ -4948,6 +4964,8 @@ def _create_quote_revision_from_change_request(
             "revision_source_quote_number": source.quote_number,
             "revision_change_request_message": message.strip(),
             "revision_change_request_at": requested_at.isoformat(),
+            QUOTE_PLANNING_HOLD_RELEASED_META_KEY: True,
+            QUOTE_PLANNING_HOLD_RELEASED_AT_META_KEY: requested_at.isoformat(),
         }
     )
     clone = Quote(
@@ -5024,13 +5042,25 @@ def _create_quote_revision_from_change_request(
             )
         )
 
-    source.meta = {
-        **_quote_meta_dict(source),
-        QUOTE_CHANGE_REQUEST_REVISION_ID_META_KEY: str(clone.id),
-        QUOTE_CHANGE_REQUEST_REVISION_NUMBER_META_KEY: clone.quote_number,
-    }
-    source.updated_at = requested_at
+    _mark_quote_replaced_by_revision(
+        source,
+        revision=clone,
+        replaced_at=requested_at,
+    )
     db.add(source)
+    db.add(
+        QuoteEvent(
+            quote_id=source.id,
+            event_type="quote_replaced",
+            actor_type="system",
+            payload={
+                "replacement_quote_id": str(clone.id),
+                "replacement_quote_number": clone.quote_number,
+                "planning_slots_released": True,
+            },
+            created_at=requested_at,
+        )
+    )
     db.add(
         QuoteEvent(
             quote_id=source.id,
@@ -5057,6 +5087,31 @@ def _create_quote_revision_from_change_request(
         )
     )
     return clone
+
+
+def _mark_quote_replaced_by_revision(
+    source: Quote,
+    *,
+    revision: Quote,
+    replaced_at: datetime,
+) -> None:
+    """Archive an obsolete public quote and release its planning projection.
+
+    The revision keeps the copied planning as an editable reference, but its draft
+    does not reserve capacity until it is sent to the client.
+    """
+    source.status = "replaced"
+    source.meta = {
+        **_quote_meta_dict(source),
+        QUOTE_CHANGE_REQUEST_REVISION_ID_META_KEY: str(revision.id),
+        QUOTE_CHANGE_REQUEST_REVISION_NUMBER_META_KEY: revision.quote_number,
+        QUOTE_REPLACED_BY_ID_META_KEY: str(revision.id),
+        QUOTE_REPLACED_BY_NUMBER_META_KEY: revision.quote_number,
+        QUOTE_REPLACED_AT_META_KEY: replaced_at.isoformat(),
+        QUOTE_PLANNING_HOLD_RELEASED_META_KEY: True,
+        QUOTE_PLANNING_HOLD_RELEASED_AT_META_KEY: replaced_at.isoformat(),
+    }
+    source.updated_at = replaced_at
 
 
 def _ensure_public_token(quote: Quote) -> None:
@@ -5282,6 +5337,8 @@ def _quote_admin_validation_state(row: Quote) -> str:
         return "refuse"
     if status_value == "expired":
         return "expire"
+    if status_value == "replaced":
+        return "remplace"
     if status_value == "sent":
         viewed = any(
             isinstance(meta.get(key), str) and str(meta.get(key)).strip()
@@ -5306,7 +5363,7 @@ def _quote_admin_integration_state(row: Quote, commercial_state: str) -> str:
     meta = row.meta or {}
     if _quote_admin_meta_string(meta, QUOTE_CHANGE_REQUEST_REVISION_ID_META_KEY):
         return "non_concerne"
-    if commercial_state in {"refuse", "expire"}:
+    if commercial_state in {"refuse", "expire", "remplace"}:
         return "non_concerne"
     if commercial_state != "valide":
         return "en_attente_validation_client"
@@ -5372,6 +5429,8 @@ def _quote_matches_commercial_status(row: Quote, status_filter: str | None) -> b
         return commercial_state == "refuse"
     if normalized == "expired":
         return commercial_state == "expire"
+    if normalized == "replaced":
+        return commercial_state == "remplace"
     return False
 
 
@@ -7494,7 +7553,7 @@ def cancel_quote(
     current_user: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> QuoteDetailOut:
     quote = _load_quote(db, quote_id, lock=True)
-    if quote.status in {"approved", "rejected", "cancelled"}:
+    if quote.status in {"approved", "rejected", "cancelled", "replaced"}:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Quote cannot be cancelled in current status")
     _ensure_public_token(quote)
 

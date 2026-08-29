@@ -189,6 +189,9 @@ function quoteValidationState(row: QuoteOut): QuoteValidationUiState {
   if (status === "expired") {
     return "expire";
   }
+  if (status === "replaced") {
+    return "remplace";
+  }
   if (status === "sent") {
     const viewed = ["public_viewed_at", "viewed_at", "consulted_at", "last_viewed_at"].some((key) => {
       const value = meta[key];
@@ -220,7 +223,7 @@ function quoteIntegrationState(row: QuoteOut, commercialState: QuoteValidationUi
   if (readStringMeta(meta, "change_request_revision_quote_id", "")) {
     return "non_concerne";
   }
-  if (commercialState === "refuse" || commercialState === "expire") {
+  if (commercialState === "refuse" || commercialState === "expire" || commercialState === "remplace") {
     return "non_concerne";
   }
   if (commercialState !== "valide") {
@@ -585,6 +588,7 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
     { value: "valide", label: t("admin.quotes.validation.valide") },
     { value: "refuse", label: t("admin.quotes.validation.refuse") },
     { value: "expire", label: t("admin.quotes.validation.expire") },
+    { value: "remplace", label: t("admin.quotes.validation.remplace") },
   ];
   const stats = quotesPage.stats || {};
   const quoteStats = {

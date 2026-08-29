@@ -131,6 +131,7 @@ function quoteStatusLabel(status: string, language: UiLanguage): string {
   if (normalized === "change_requested") return uiText(language, "admin.prospects.quote_change_requested");
   if (normalized === "cancelled") return uiText(language, "admin.prospects.quote_cancelled");
   if (normalized === "expired") return uiText(language, "admin.prospects.quote_expired");
+  if (normalized === "replaced") return uiText(language, "admin.prospects.quote_replaced");
   return status || "-";
 }
 
