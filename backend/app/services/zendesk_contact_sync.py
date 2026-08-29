@@ -62,6 +62,7 @@ FRENCH_WEEKDAYS = (
     "samedi",
     "dimanche",
 )
+TALK_PLACEHOLDER_NAME_PREFIXES = ("appelant", "caller", "anonymous")
 USER_FIELDS = (
     {
         "key": "piano_app_contact_type",
@@ -146,6 +147,8 @@ class ZendeskSyncResult:
     skipped: int
     failed: int
     conflicts: int
+    talk_callers_merged: int
+    unresolved_phone_owners: int
     dry_run: bool
     job_run_id: UUID | None
 
@@ -181,6 +184,16 @@ def normalize_phone(value: str | None, *, default_country_code: str = "FR") -> s
     # country-specific dialling rule. Skipping it is safer than attaching an
     # incorrect caller identity in Zendesk.
     return None
+
+
+def is_mergeable_talk_placeholder_user(user: dict[str, Any], *, phone: str) -> bool:
+    """Return true only for a phone-only end user automatically created by Talk."""
+    if user.get("role") != "end-user" or user.get("email") or user.get("external_id"):
+        return False
+    if normalize_phone(str(user.get("phone") or "")) != phone:
+        return False
+    name = str(user.get("name") or "").strip().casefold()
+    return any(name.startswith(prefix) for prefix in TALK_PLACEHOLDER_NAME_PREFIXES)
 
 
 def _display_name(first_name: str | None, last_name: str | None, fallback: str) -> str:
@@ -616,13 +629,49 @@ class ZendeskClient:
             raise RuntimeError("Zendesk n'a pas renvoyé l'identifiant utilisateur")
         return int(user["id"])
 
-    def ensure_secondary_identities(
+    def _exact_phone_users(self, phone: str, *, target_user_id: int) -> list[dict[str, Any]]:
+        payload = self._request("GET", "/users/search.json", params={"query": phone})
+        exact_users: list[dict[str, Any]] = []
+        for user in payload.get("users", []):
+            if not isinstance(user, dict) or user.get("id") == target_user_id:
+                continue
+            if normalize_phone(str(user.get("phone") or "")) == phone:
+                exact_users.append(user)
+        return exact_users
+
+    def _merge_unique_talk_placeholder(self, *, target_user_id: int, phone: str) -> tuple[bool, bool]:
+        phone_users = self._exact_phone_users(phone, target_user_id=target_user_id)
+        mergeable = [user for user in phone_users if is_mergeable_talk_placeholder_user(user, phone=phone)]
+        if len(phone_users) != 1 or len(mergeable) != 1:
+            return False, bool(phone_users)
+
+        source_user_id = mergeable[0].get("id")
+        if not isinstance(source_user_id, int):
+            return False, True
+        source_identities = self._request("GET", f"/users/{source_user_id}/identities.json").get("identities", [])
+        owns_phone_identity = any(
+            isinstance(identity, dict)
+            and identity.get("type") == "phone_number"
+            and normalize_phone(str(identity.get("value") or "")) == phone
+            for identity in source_identities
+        )
+        if not owns_phone_identity:
+            return False, True
+
+        self._request(
+            "PUT",
+            f"/users/{source_user_id}/merge",
+            json={"user": {"id": target_user_id}},
+        )
+        return True, False
+
+    def ensure_identities(
         self,
         *,
         user_id: int,
         emails: Iterable[str],
         phones: Iterable[str],
-    ) -> None:
+    ) -> tuple[int, tuple[str, ...]]:
         payload = self._request("GET", f"/users/{user_id}/identities.json")
         identities = payload.get("identities", [])
         existing = {
@@ -630,23 +679,50 @@ class ZendeskClient:
             for identity in identities
             if isinstance(identity, dict)
         }
-        for identity_type, values in (("email", emails), ("phone_number", phones)):
-            for value in values:
-                normalized_value = value.strip().lower()
-                if (identity_type, normalized_value) in existing:
-                    continue
-                self._request(
-                    "POST",
-                    f"/users/{user_id}/identities.json",
-                    json={
-                        "identity": {
-                            "type": identity_type,
-                            "value": value,
-                            "skip_verify_email": True,
-                        }
-                    },
-                )
-                existing.add((identity_type, normalized_value))
+        for value in emails:
+            normalized_value = value.strip().lower()
+            if ("email", normalized_value) in existing:
+                continue
+            self._request(
+                "POST",
+                f"/users/{user_id}/identities.json",
+                json={
+                    "identity": {
+                        "type": "email",
+                        "value": value,
+                        "skip_verify_email": True,
+                    }
+                },
+            )
+            existing.add(("email", normalized_value))
+
+        merged_callers = 0
+        unresolved_phones: list[str] = []
+        for value in phones:
+            normalized_value = value.strip().lower()
+            if ("phone_number", normalized_value) in existing:
+                continue
+            merged, blocked = self._merge_unique_talk_placeholder(target_user_id=user_id, phone=value)
+            if merged:
+                merged_callers += 1
+                existing.add(("phone_number", normalized_value))
+                continue
+            if blocked:
+                unresolved_phones.append(value)
+                continue
+            self._request(
+                "POST",
+                f"/users/{user_id}/identities.json",
+                json={
+                    "identity": {
+                        "type": "phone_number",
+                        "value": value,
+                        "skip_verify_email": True,
+                    }
+                },
+            )
+            existing.add(("phone_number", normalized_value))
+        return merged_callers, tuple(unresolved_phones)
 
 
 def run_zendesk_contact_sync_job(
@@ -678,6 +754,7 @@ def run_zendesk_contact_sync_job(
         job_run_id = job_run.id
         checked = processed = synced = skipped = failed = 0
         conflicts = 0
+        talk_callers_merged = unresolved_phone_owners = 0
         try:
             candidates = build_zendesk_contact_candidates(db, now=ts, since=since, limit=limit)
             checked = len(candidates)
@@ -724,11 +801,22 @@ def run_zendesk_contact_sync_job(
                                 excluded_phones=excluded_phones,
                             )
                             user_id = zendesk.create_or_update_user(payload)
-                            zendesk.ensure_secondary_identities(
+                            candidate_merges, unresolved_phones = zendesk.ensure_identities(
                                 user_id=user_id,
                                 emails=candidate.alternate_emails,
-                                phones=usable_phones[1:],
+                                phones=usable_phones,
                             )
+                            talk_callers_merged += candidate_merges
+                            for phone in unresolved_phones:
+                                unresolved_phone_owners += 1
+                                append_job_run_log(
+                                    db,
+                                    job_run_id=job_run_id,
+                                    level="WARNING",
+                                    message=f"Identité téléphonique Zendesk déjà détenue par une fiche non fusionnable : {phone}",
+                                    context_json={"phone": phone, "external_id": candidate.external_id},
+                                )
+                                db.commit()
                             synced += 1
                         except (httpx.HTTPError, RuntimeError) as exc:
                             failed += 1
@@ -746,7 +834,9 @@ def run_zendesk_contact_sync_job(
                     upsert_job_cursor(db, job_name=FULL_CURSOR_NAME, last_processed_at=ts, updated_at=ts)
                 summary = (
                     f"{synced}/{checked} contacts synchronisés vers Zendesk, "
-                    f"{failed} échec(s), {conflicts} numéro(s) partagé(s)"
+                    f"{failed} échec(s), {conflicts} numéro(s) partagé(s), "
+                    f"{talk_callers_merged} fiche(s) Talk fusionnée(s), "
+                    f"{unresolved_phone_owners} propriétaire(s) de numéro à vérifier"
                 )
 
             status = "success"
@@ -772,6 +862,8 @@ def run_zendesk_contact_sync_job(
                 skipped=skipped,
                 failed=failed,
                 conflicts=conflicts,
+                talk_callers_merged=talk_callers_merged,
+                unresolved_phone_owners=unresolved_phone_owners,
                 dry_run=dry_run,
                 job_run_id=job_run_id,
             )

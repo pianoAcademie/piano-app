@@ -8,9 +8,11 @@ from unittest.mock import patch
 from uuid import uuid4
 
 from app.services.zendesk_contact_sync import (
+    ZendeskClient,
     ZendeskContactCandidate,
     build_zendesk_user_payload,
     find_shared_phones,
+    is_mergeable_talk_placeholder_user,
     normalize_email,
     normalize_phone,
     run_zendesk_contact_sync_job,
@@ -97,6 +99,76 @@ class ZendeskContactSyncTests(unittest.TestCase):
         self.assertLessEqual(len(payload["user_fields"]["piano_app_schedule"]), 5_000)
         self.assertTrue(payload["user_fields"]["piano_app_schedule"].endswith("…"))
 
+    def test_only_phone_only_talk_placeholder_is_mergeable(self) -> None:
+        phone = "+33613554319"
+        self.assertTrue(
+            is_mergeable_talk_placeholder_user(
+                {
+                    "role": "end-user",
+                    "name": "Appelant +33 6 13 55 43 19",
+                    "phone": phone,
+                    "email": None,
+                    "external_id": None,
+                },
+                phone=phone,
+            )
+        )
+        self.assertFalse(
+            is_mergeable_talk_placeholder_user(
+                {
+                    "role": "end-user",
+                    "name": "Régine Onomo",
+                    "phone": phone,
+                    "email": "regine@example.test",
+                    "external_id": None,
+                },
+                phone=phone,
+            )
+        )
+
+    def test_phone_identity_merges_unique_talk_placeholder_into_app_user(self) -> None:
+        phone = "+33613554319"
+        calls: list[tuple[str, str, dict]] = []
+        client = object.__new__(ZendeskClient)
+
+        def fake_request(method, path, **kwargs):
+            calls.append((method, path, kwargs))
+            if path == "/users/200/identities.json":
+                return {"identities": [{"type": "email", "value": "regine@example.test"}]}
+            if path == "/users/search.json":
+                return {
+                    "users": [
+                        {
+                            "id": 100,
+                            "role": "end-user",
+                            "name": "Appelant +33 6 13 55 43 19",
+                            "phone": phone,
+                            "email": None,
+                            "external_id": None,
+                        },
+                        {
+                            "id": 200,
+                            "role": "end-user",
+                            "name": "Régine Onomo",
+                            "phone": phone,
+                            "email": "regine@example.test",
+                            "external_id": "piano-client:regine",
+                        },
+                    ]
+                }
+            if path == "/users/100/identities.json":
+                return {"identities": [{"type": "phone_number", "value": phone, "primary": True}]}
+            if path == "/users/100/merge":
+                return {"job_status": {"status": "completed"}}
+            self.fail(f"Requête Zendesk inattendue : {method} {path}")
+
+        client._request = fake_request
+        merged, unresolved = client.ensure_identities(user_id=200, emails=(), phones=(phone,))
+
+        self.assertEqual(merged, 1)
+        self.assertEqual(unresolved, ())
+        self.assertIn(("PUT", "/users/100/merge", {"json": {"user": {"id": 200}}}), calls)
+
     def test_apply_releases_database_transaction_before_zendesk_calls(self) -> None:
         class FakeDb:
             def __init__(self) -> None:
@@ -138,8 +210,8 @@ class ZendeskContactSyncTests(unittest.TestCase):
             def create_or_update_user(self, _payload) -> int:
                 return 123
 
-            def ensure_secondary_identities(self, **_kwargs) -> None:
-                pass
+            def ensure_identities(self, **_kwargs):
+                return 0, ()
 
         self_outer = self
         with (

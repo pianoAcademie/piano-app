@@ -59,7 +59,9 @@ def main() -> int:
     mode = "CONTROLE A BLANC" if result.dry_run else "APPLICATION"
     print(
         f"[OK] {mode} - analysés={result.checked}, synchronisés={result.created_or_updated}, "
-        f"échecs={result.failed}, numéros_partagés={result.conflicts}"
+        f"échecs={result.failed}, numéros_partagés={result.conflicts}, "
+        f"fiches_talk_fusionnées={result.talk_callers_merged}, "
+        f"numéros_à_vérifier={result.unresolved_phone_owners}"
     )
     return 0 if result.failed == 0 else 1
 
