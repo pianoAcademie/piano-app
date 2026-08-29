@@ -5779,6 +5779,7 @@ def _client_out(
         first_name=client.first_name,
         last_name=client.last_name,
         address_line=client.address_line,
+        home_access_instructions=client.home_access_instructions,
         postal_code=client.postal_code,
         city=client.city,
         address_country=client.address_country,
@@ -7831,6 +7832,7 @@ def create_admin_client(
         first_name=first_name,
         last_name=last_name,
         address_line=address_line,
+        home_access_instructions=_normalize_optional(payload.home_access_instructions),
         postal_code=_normalize_optional(payload.postal_code),
         city=city,
         address_country=_normalize_required(payload.address_country, "address_country").upper(),
@@ -7923,6 +7925,9 @@ def patch_admin_client(
 
     if "address_line" in changes:
         client.address_line = _normalize_optional(changes["address_line"])
+
+    if "home_access_instructions" in changes:
+        client.home_access_instructions = _normalize_optional(changes["home_access_instructions"])
 
     if "postal_code" in changes:
         client.postal_code = _normalize_optional(changes["postal_code"])

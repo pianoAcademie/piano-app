@@ -2360,6 +2360,7 @@ def delete_client_account(
     current_user.first_name = None
     current_user.last_name = None
     current_user.address_line = None
+    current_user.home_access_instructions = None
     current_user.postal_code = None
     current_user.city = None
     current_user.phone = None

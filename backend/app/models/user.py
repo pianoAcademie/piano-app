@@ -64,6 +64,7 @@ class User(Base):
     first_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     last_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     address_line: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    home_access_instructions: Mapped[str | None] = mapped_column(Text, nullable=True)
     postal_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
     city: Mapped[str | None] = mapped_column(String(120), nullable=True)
     address_country: Mapped[str] = mapped_column(String(2), nullable=False, server_default=text("'FR'"))

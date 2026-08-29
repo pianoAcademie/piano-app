@@ -819,6 +819,7 @@ class AdminClientOut(BaseModel):
     first_name: str | None
     last_name: str | None
     address_line: str | None
+    home_access_instructions: str | None
     postal_code: str | None
     city: str | None
     address_country: str
@@ -989,6 +990,7 @@ class AdminClientUpdateRequest(BaseModel):
     first_name: str | None = Field(default=None, min_length=1, max_length=100)
     last_name: str | None = Field(default=None, min_length=1, max_length=100)
     address_line: str | None = Field(default=None, min_length=1, max_length=255)
+    home_access_instructions: str | None = Field(default=None, min_length=1, max_length=2000)
     postal_code: str | None = Field(default=None, min_length=1, max_length=20)
     city: str | None = Field(default=None, min_length=1, max_length=120)
     address_country: str | None = Field(default=None, min_length=2, max_length=2)
@@ -1019,6 +1021,7 @@ class AdminClientCreateRequest(BaseModel):
     first_name: str = Field(min_length=1, max_length=100)
     last_name: str = Field(min_length=1, max_length=100)
     address_line: str | None = Field(default=None, min_length=1, max_length=255)
+    home_access_instructions: str | None = Field(default=None, min_length=1, max_length=2000)
     postal_code: str | None = Field(default=None, min_length=1, max_length=20)
     city: str | None = Field(default=None, min_length=1, max_length=120)
     address_country: str = Field(default="FR", min_length=2, max_length=2)

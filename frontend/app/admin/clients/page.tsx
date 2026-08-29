@@ -987,6 +987,16 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
                   {uiText(language, "client.address_label")}
                   <input type="text" name="address_line" maxLength={255} />
                 </label>
+                <label className="span-3">
+                  {t("admin.clients.home_access_instructions")}
+                  <textarea
+                    name="home_access_instructions"
+                    rows={2}
+                    maxLength={2000}
+                    placeholder={t("admin.clients.home_access_instructions_placeholder")}
+                  />
+                  <span className="muted">{t("admin.clients.home_access_instructions_help")}</span>
+                </label>
                 <label>
                   {uiText(language, "client.postal_code_label")}
                   <input type="text" name="postal_code" maxLength={20} />
@@ -1134,6 +1144,16 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
                     <label className="span-2">
                       {t("admin.clients.parent_address")}
                       <input type="text" name="adult_address_line" maxLength={255} />
+                    </label>
+                    <label className="span-3">
+                      {t("admin.clients.parent_home_access_instructions")}
+                      <textarea
+                        name="adult_home_access_instructions"
+                        rows={2}
+                        maxLength={2000}
+                        placeholder={t("admin.clients.home_access_instructions_placeholder")}
+                      />
+                      <span className="muted">{t("admin.clients.home_access_instructions_help")}</span>
                     </label>
                     <label>
                       {t("admin.clients.parent_postal_code")}

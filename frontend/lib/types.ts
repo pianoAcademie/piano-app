@@ -379,6 +379,7 @@ export type AdminClientOut = {
   group_ids: string[];
   group_names: string[];
   address_line: string | null;
+  home_access_instructions: string | null;
   postal_code: string | null;
   city: string | null;
   address_country: string;

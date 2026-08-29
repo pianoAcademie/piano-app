@@ -4744,6 +4744,13 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 <p className="muted">{t("admin.client_detail.private_note_hidden")}</p>
                 <p>{client.private_note ?? t("admin.client_detail.no_private_note")}</p>
               </article>
+              {client.client_kind === "ADULT" ? (
+                <article className="item top-gap-sm">
+                  <h4>{t("admin.clients.home_access_instructions")}</h4>
+                  <p className="muted">{t("admin.clients.home_access_instructions_help")}</p>
+                  <p>{client.home_access_instructions ?? t("admin.clients.no_home_access_instructions")}</p>
+                </article>
+              ) : null}
             </article>
           </section>
 
@@ -4797,6 +4804,20 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                       {t("admin.client_detail.postal_address")}
                       <input type="text" name="address_line" defaultValue={client.address_line ?? ""} maxLength={255} />
                     </label>
+
+                    {client.client_kind === "ADULT" ? (
+                      <label className="span-2">
+                        {t("admin.clients.home_access_instructions")}
+                        <textarea
+                          name="home_access_instructions"
+                          defaultValue={client.home_access_instructions ?? ""}
+                          rows={3}
+                          maxLength={2000}
+                          placeholder={t("admin.clients.home_access_instructions_placeholder")}
+                        />
+                        <span className="muted">{t("admin.clients.home_access_instructions_help")}</span>
+                      </label>
+                    ) : null}
 
                     <label>
                       {t("admin.client_detail.postal_code")}
@@ -5313,6 +5334,16 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 <label className="span-2">
                   {t("admin.client_detail.address")}
                   <input type="text" name="adult_address_line" maxLength={255} />
+                </label>
+                <label className="span-3">
+                  {t("admin.clients.parent_home_access_instructions")}
+                  <textarea
+                    name="adult_home_access_instructions"
+                    rows={2}
+                    maxLength={2000}
+                    placeholder={t("admin.clients.home_access_instructions_placeholder")}
+                  />
+                  <span className="muted">{t("admin.clients.home_access_instructions_help")}</span>
                 </label>
                 <label>
                   {t("admin.client_detail.postal_code")}
