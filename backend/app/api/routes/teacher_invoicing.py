@@ -4,7 +4,7 @@ import base64
 import csv
 import re
 import unicodedata
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from io import StringIO
 from typing import Any
@@ -45,7 +45,6 @@ from app.services.teacher_invoice_documents import (
     render_teacher_invoice_pdf_from_html,
 )
 from app.services.teacher_statement_documents import render_teacher_statement_pdf
-from app.services.teacher_statement_notifications import expected_payment_date, invoice_deadline
 from app.services.teacher_invoicing import (
     ComputedStatement,
     PARIS_TIMEZONE,
@@ -64,8 +63,12 @@ TEACHER_I18N = {
         "delivery_any": "Tous modes",
         "professor_not_found": "Profil professeur introuvable",
         "siret_pending": "en cours d'immatriculation",
-        "payment_instructions": "Paiement par virement bancaire a la date d echeance indiquee.",
-        "late_payment_penalty_text": "Penalites de retard conformement aux CGV.",
+        "payment_instructions": "Paiement par virement bancaire à 30 jours à compter de la date d’émission.",
+        "late_payment_penalty_text": (
+            "En cas de retard de paiement, pénalités exigibles dès le lendemain de l’échéance "
+            "au taux de trois fois le taux d’intérêt légal, ainsi qu’une indemnité forfaitaire "
+            "de 40 € pour frais de recouvrement (article D. 441-5 du Code de commerce)."
+        ),
         "dispute_subject": "Litige releve professeur {name} - {period}",
         "attendance_incomplete": "Presences incompletes. Completez les seances manquantes avant validation.",
         "statement_blocked": "Le releve est bloque par un litige ouvert ou un signalement de prestation manquante.",
@@ -118,8 +121,12 @@ TEACHER_I18N = {
         "delivery_any": "All modes",
         "professor_not_found": "Professor profile not found",
         "siret_pending": "registration pending",
-        "payment_instructions": "Payment by bank transfer on the due date shown.",
-        "late_payment_penalty_text": "Late-payment penalties apply according to the terms and conditions.",
+        "payment_instructions": "Payment by bank transfer within 30 days of the invoice date.",
+        "late_payment_penalty_text": (
+            "Late-payment penalties are due from the day after the due date at three times the French "
+            "statutory interest rate, together with a fixed EUR 40 recovery fee (Article D. 441-5 of the "
+            "French Commercial Code)."
+        ),
         "dispute_subject": "Teacher statement dispute {name} - {period}",
         "attendance_incomplete": "Attendance is incomplete. Complete missing sessions before approval.",
         "statement_blocked": "The statement is blocked by an open dispute or a missing-service report.",
@@ -236,6 +243,10 @@ def _quantize(value: Decimal) -> Decimal:
 
 def _format_money(value: Decimal | None) -> str:
     return f"{_quantize(value or Decimal('0'))}"
+
+
+def _teacher_invoice_due_date(invoice_date: date) -> date:
+    return invoice_date + timedelta(days=30)
 
 
 def _safe_filename_component(value: str, *, fallback: str = "professeur") -> str:
@@ -620,7 +631,7 @@ def _invoice_pdf_bytes(
             "vat_summary": (
                 f"TVA ({_format_money(invoice.vat_rate or 0)} %): {_format_money(invoice.totals_vat)}"
                 if invoice.is_vat_applicable
-                else "TVA non applicable, article 293 B du CGI"
+                else "TVA non applicable · article 293 B du CGI"
             ),
             "amount_payable": _format_money(invoice.totals_ttc if invoice.is_vat_applicable else invoice.totals_ht),
             "payment_instructions": _teacher_text("payment_instructions", language=normalized_language),
@@ -795,13 +806,7 @@ def _generate_invoices_for_period(
 
         invoice_number = f"PROF-{str(locked_professor.id).split('-')[0].upper()}-{counter:06d}"
         counter += 1
-        due_date = expected_payment_date(
-            invoice_deadline(
-                period_year=year,
-                period_month=month,
-                notification_date=invoice_date,
-            )
-        )
+        due_date = _teacher_invoice_due_date(invoice_date)
         teacher_siret_display = (locked_professor.teacher_siret or "").strip() or _teacher_text("siret_pending", language=language)
         teacher_iban = (
             (locked_professor.teacher_iban or "").strip()
@@ -876,6 +881,15 @@ def _generate_invoices_for_period(
                 "totals_ht": _format_money(computed.totals_ht),
                 "totals_vat": _format_money(computed.totals_vat),
                 "totals_ttc": _format_money(computed.totals_ttc),
+                "vat_summary": (
+                    f"TVA ({_format_money(locked_professor.teacher_vat_rate or 0)} %) : "
+                    f"{_format_money(computed.totals_vat)}"
+                    if locked_professor.teacher_is_vat_applicable
+                    else "TVA non applicable · article 293 B du CGI"
+                ),
+                "amount_payable": _format_money(
+                    computed.totals_ttc if locked_professor.teacher_is_vat_applicable else computed.totals_ht
+                ),
                 "payment_instructions": _teacher_text("payment_instructions", language=language),
                 "late_payment_penalty_text": _teacher_text("late_payment_penalty_text", language=language),
                 "comptability_email": _resolve_accounting_email(db, payor=payor),

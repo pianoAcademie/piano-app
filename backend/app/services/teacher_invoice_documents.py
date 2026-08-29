@@ -220,6 +220,43 @@ def _render_template(template: str, context: dict[str, Any]) -> str:
     return rendered
 
 
+def _prepare_teacher_invoice_template(template: str) -> str:
+    prepared = template or ""
+    if not re.search(r"\{\{\s*vat_summary\s*\}\}", prepared, flags=re.IGNORECASE):
+        total_ttc_row = re.compile(
+            r"(<tr>\s*<td>\s*TOTAL TTC\s*</td>.*?</tr>)",
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        vat_row = (
+            r"\1"
+            '<tr><td colspan="2" style="padding-top:8px;font-weight:600;">'
+            "{{ vat_summary }}"
+            "</td></tr>"
+        )
+        prepared, replacements = total_ttc_row.subn(vat_row, prepared, count=1)
+        if not replacements:
+            vat_paragraph = '<p style="font-weight:600;">{{ vat_summary }}</p>'
+            if "</body>" in prepared.lower():
+                prepared = re.sub(r"</body>", vat_paragraph + "</body>", prepared, count=1, flags=re.IGNORECASE)
+            else:
+                prepared += vat_paragraph
+
+    # The historical production template uses Flexbox and fixed A4 dimensions,
+    # which xhtml2pdf does not handle reliably. These exact replacements keep
+    # legacy templates on one page without changing their browser preview.
+    prepared = prepared.replace(
+        ".row { display:flex; gap:16px; }",
+        ".row { display:table; width:100%; }",
+    ).replace(
+        ".col { flex:1; }",
+        ".col { display:table-cell; width:50%; vertical-align:top; padding-right:8px; }",
+    ).replace(
+        ".page { width: 210mm; min-height: 297mm; padding: 16mm; margin: 0 auto; box-sizing: border-box; }",
+        ".page { width:auto; min-height:0; padding:10mm; margin:0; box-sizing:border-box; }",
+    ).replace("width:52px;", "width:76px;")
+    return prepared
+
+
 def get_teacher_invoice_template(db: Session, *, language: str | None = None) -> tuple[str, int, Any]:
     row = db.scalar(select(DocumentTemplate).where(DocumentTemplate.key == TEACHER_INVOICE_TEMPLATE_KEY))
     if row is None:
@@ -281,14 +318,25 @@ def default_teacher_invoice_context(*, language: str | None = None) -> dict[str,
         "totals_ttc": f"{Decimal('168.00')}",
         "vat_summary": "TVA (20 %): 28.00" if normalized_language == "fr" else "VAT (20%): 28.00",
         "amount_payable": f"{Decimal('168.00')}",
-        "payment_instructions": "Payment by bank transfer within 30 days." if normalized_language == "en" else "Paiement par virement sous 30 jours.",
-        "late_payment_penalty_text": "Late-payment penalties apply according to the terms and conditions." if normalized_language == "en" else "Penalites de retard conformement aux CGV.",
+        "payment_instructions": (
+            "Payment by bank transfer within 30 days of the invoice date."
+            if normalized_language == "en"
+            else "Paiement par virement bancaire à 30 jours à compter de la date d’émission."
+        ),
+        "late_payment_penalty_text": (
+            "Late-payment penalties are due from the day after the due date at three times the French statutory "
+            "interest rate, together with a fixed EUR 40 recovery fee (Article D. 441-5 of the French Commercial Code)."
+            if normalized_language == "en"
+            else "En cas de retard de paiement, pénalités exigibles dès le lendemain de l’échéance au taux de trois "
+            "fois le taux d’intérêt légal, ainsi qu’une indemnité forfaitaire de 40 € pour frais de recouvrement "
+            "(article D. 441-5 du Code de commerce)."
+        ),
         "comptability_email": "comptabilite@piano-academie.com",
     }
 
 
 def render_teacher_invoice_html(*, html_template: str, context: dict[str, Any]) -> str:
-    return _render_template(html_template, context)
+    return _render_template(_prepare_teacher_invoice_template(html_template), context)
 
 
 def _ensure_full_html_document(rendered_html: str) -> str:
