@@ -46,6 +46,7 @@ from app.services.automation_triggers import schedule_plan_purchase_triggers
 from app.services.notifications.application.orchestrator import enqueue_notifications
 from app.services.messaging_templates import resolve_frontend_base_url
 from app.services.payment_provider import PaymentProvider, resolve_webhook_secret
+from app.services.pending_plan_purchases import has_unresolved_pending_plan_purchase
 from app.services.plan_entitlements import effective_entitlements_by_plan
 from app.services.pricing import compute_tax_totals, plan_service_code, resolve_plan_price, resolve_vat_rate
 from app.services.client_status import promote_client_to_active_student
@@ -1157,6 +1158,16 @@ def purchase_plan(
             )
         subscription_started_at = datetime.combine(payload.start_date, datetime.min.time(), tzinfo=timezone.utc)
     _lock_user_purchase_scope(db, owner.id)
+
+    if plan.kind == PlanKind.PACK and has_unresolved_pending_plan_purchase(
+        db,
+        user_id=owner.id,
+        plan_id=plan.id,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Un paiement est déjà en cours pour cette formule. Attendez sa confirmation avant de réessayer.",
+        )
 
     if plan.is_trial_offer:
         trial_course_type_ids = trial_plan_course_type_ids(db, plan_id=plan.id)

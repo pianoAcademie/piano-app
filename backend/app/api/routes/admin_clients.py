@@ -69,6 +69,7 @@ from app.models.quote import Prospect, Quote, QuoteLine
 from app.models.referral import ReferralReward
 from app.models.notification_engine import ContactDeliveryStatus, Notification
 from app.models.user import ClientKind, ClientStatus, StudentSite, User, UserRole
+from app.services.pending_plan_purchases import has_unresolved_pending_plan_purchase
 from app.schemas.admin import (
     AdminClientBulkAction,
     AdminClientBulkOut,
@@ -16132,6 +16133,16 @@ def admin_purchase_plan_for_client(
     elif plan.kind == PlanKind.FORFAIT:
         subscription_started_at, _ = _forfait_period_bounds(plan)
     _lock_user_purchase_scope(db, client.id)
+
+    if plan.kind == PlanKind.PACK and has_unresolved_pending_plan_purchase(
+        db,
+        user_id=client.id,
+        plan_id=plan.id,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Un paiement est déjà en cours pour cette formule. Attendez sa confirmation avant de réessayer.",
+        )
 
     if plan.kind == PlanKind.SUBSCRIPTION and _has_same_subscription_in_current_month(
         db,

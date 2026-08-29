@@ -2682,7 +2682,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const openManualTransactionEditModal = paymentModalAction === "edit_manual" && selectedManualTransactionForEdit !== null;
   const openPaymentFiltersModal = paymentModalAction === "filters";
 
-  const totalRemainingCredits = visibleCurrentSubscriptions.reduce((acc, sub) => {
+  const totalRemainingCredits = [...activeSubscriptions, ...endingSubscriptions].reduce((acc, sub) => {
     if (sub.plan.kind !== "PACK") {
       return acc;
     }
