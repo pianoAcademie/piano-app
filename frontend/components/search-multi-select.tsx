@@ -8,6 +8,7 @@ type Option = {
   id: string;
   label: string;
   sortLabel?: string;
+  description?: string;
 };
 
 type Props = {
@@ -26,7 +27,11 @@ type Props = {
   availableOptionsLabel?: string;
   noResultsLabel?: string;
   limitResultsLabel?: string;
+  minimumQueryLabel?: string;
   maxSelections?: number;
+  minimumQueryLength?: number;
+  resultLimit?: number;
+  autoFocus?: boolean;
   requiredSelection?: boolean;
   requiredSelectionMessage?: string;
   onSelectionChange?: (ids: string[]) => void;
@@ -62,7 +67,11 @@ export default function SearchMultiSelect({
   availableOptionsLabel,
   noResultsLabel,
   limitResultsLabel,
+  minimumQueryLabel,
   maxSelections,
+  minimumQueryLength = 0,
+  resultLimit = 120,
+  autoFocus = false,
   requiredSelection = false,
   requiredSelectionMessage,
   onSelectionChange,
@@ -79,7 +88,8 @@ export default function SearchMultiSelect({
         clear: "Clear all",
         available: `Available ${label.toLowerCase()}`,
         noResult: "No results.",
-        resultLimit: "Display limited to 120 results.",
+        resultLimit: (limit: number) => `Display limited to ${limit} results.`,
+        minimumQuery: (count: number) => `Type at least ${count} characters to search.`,
       }
     : {
         emptySelection: "Aucune selection.",
@@ -90,7 +100,8 @@ export default function SearchMultiSelect({
         clear: "Tout effacer",
         available: `${label} disponibles`,
         noResult: "Aucun resultat.",
-        resultLimit: "Affichage limite a 120 resultats.",
+        resultLimit: (limit: number) => `Affichage limite a ${limit} resultats.`,
+        minimumQuery: (count: number) => `Saisissez au moins ${count} caracteres pour rechercher.`,
       };
   const rootRef = useRef<HTMLDivElement | null>(null);
   const optionById = useMemo(() => new Map(options.map((option) => [option.id, option])), [options]);
@@ -120,15 +131,19 @@ export default function SearchMultiSelect({
   const matchingOptions = useMemo(() => {
     const normalizedQuery = normalize(query.trim(), resolvedLanguage);
     const candidates = sortedOptions.filter((option) => !selectedSet.has(option.id));
+    if (normalizedQuery.length < minimumQueryLength) {
+      return [];
+    }
     if (!normalizedQuery) {
       return candidates;
     }
     return candidates.filter((option) =>
-      normalize(`${option.label} ${option.sortLabel ?? ""}`, resolvedLanguage).includes(normalizedQuery),
+      normalize(`${option.label} ${option.sortLabel ?? ""} ${option.description ?? ""}`, resolvedLanguage).includes(normalizedQuery),
     );
-  }, [query, resolvedLanguage, selectedSet, sortedOptions]);
-  const filteredOptions = matchingOptions.slice(0, 120);
+  }, [minimumQueryLength, query, resolvedLanguage, selectedSet, sortedOptions]);
+  const filteredOptions = matchingOptions.slice(0, resultLimit);
   const hasHiddenOptions = matchingOptions.length > filteredOptions.length;
+  const queryIsTooShort = normalize(query.trim(), resolvedLanguage).length < minimumQueryLength;
   const singleSelection = maxSelections === 1;
   const [selectionError, setSelectionError] = useState("");
   const resolvedEmptySelectionLabel = emptySelectionLabel ?? text.emptySelection;
@@ -221,6 +236,7 @@ export default function SearchMultiSelect({
         <input
           type="search"
           className="planning-multi-search-input"
+          autoFocus={autoFocus}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           onKeyDown={(event) => {
@@ -243,7 +259,11 @@ export default function SearchMultiSelect({
       </div>
 
       <div className="planning-multi-search-options" role="listbox" aria-label={availableOptionsText}>
-        {filteredOptions.length === 0 ? (
+        {queryIsTooShort ? (
+          <small className="muted planning-multi-search-prompt">
+            {minimumQueryLabel ?? text.minimumQuery(minimumQueryLength)}
+          </small>
+        ) : filteredOptions.length === 0 ? (
           <small className="muted">{noResultsLabel ?? text.noResult}</small>
         ) : (
           filteredOptions.map((option) => (
@@ -256,11 +276,12 @@ export default function SearchMultiSelect({
                 setQuery("");
               }}
             >
-              {option.label}
+              <span>{option.label}</span>
+              {option.description ? <small>{option.description}</small> : null}
             </button>
           ))
         )}
-        {hasHiddenOptions ? <small className="muted">{limitResultsLabel ?? text.resultLimit}</small> : null}
+        {hasHiddenOptions ? <small className="muted">{limitResultsLabel ?? text.resultLimit(resultLimit)}</small> : null}
       </div>
 
       {selectionError ? (

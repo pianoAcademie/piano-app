@@ -4790,16 +4790,73 @@ button.danger:focus-visible {
 }
 
 .planning-filters-modal {
-  width: min(720px, 96vw);
+  width: min(680px, 96vw);
+  max-height: 88vh;
 }
 
-.planning-filters-modal form {
-  gap: 12px;
+.planning-filters-form {
+  display: grid;
+  gap: 14px;
 }
 
 .planning-filters-modal label {
   display: grid;
   gap: 6px;
+}
+
+.planning-student-filter {
+  border-color: #d7a14d;
+  background: #fff8e9;
+  box-shadow: 0 6px 18px rgba(111, 72, 20, 0.08);
+  padding: 14px;
+}
+
+.planning-student-filter .planning-multi-search-head strong {
+  font-size: 19px;
+}
+
+.planning-student-filter .planning-multi-search-input {
+  min-height: 48px;
+  font-size: 16px;
+  border-color: #d7a14d;
+}
+
+.planning-student-filter .planning-multi-search-options {
+  min-height: 76px;
+  max-height: 260px;
+}
+
+.planning-filter-secondary {
+  display: grid;
+  gap: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+
+.planning-filter-secondary > h3 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.planning-filter-secondary .planning-multi-search-options {
+  min-height: 76px;
+  max-height: 150px;
+}
+
+.planning-filter-status-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.planning-filters-actions {
+  position: sticky;
+  bottom: -10px;
+  z-index: 3;
+  margin: 0 -10px -10px;
+  padding: 12px 10px 10px;
+  border-top: 1px solid var(--border);
+  background: rgba(255, 253, 249, 0.97);
 }
 
 .planning-multi-search {
@@ -4900,6 +4957,23 @@ button.danger:focus-visible {
   font-weight: 500;
 }
 
+.planning-multi-search-option > span,
+.planning-multi-search-option > small {
+  display: block;
+}
+
+.planning-multi-search-option > small {
+  margin-top: 2px;
+  color: #667386;
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.planning-multi-search-prompt {
+  align-self: center;
+  padding: 10px;
+}
+
 .planning-multi-search-option:hover,
 .planning-multi-search-option:focus-visible {
   border-color: #6ab0ff;
@@ -4914,16 +4988,16 @@ button.danger:focus-visible {
 }
 
 @media (max-width: 900px) {
-  .planning-filters-modal .span-2 {
-    grid-column: span 1;
-  }
-
   .planning-multi-search-options {
     min-height: 108px;
     max-height: 180px;
   }
 
   .planning-multi-search-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .planning-filter-status-grid {
     grid-template-columns: 1fr;
   }
 }

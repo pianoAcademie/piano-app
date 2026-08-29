@@ -1385,7 +1385,6 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const clientsSorted = [...clients]
     .filter((client) => client.is_active)
     .sort((a, b) => clientDisplayName(a).localeCompare(clientDisplayName(b), "fr"));
-  const locationFilterOptions = locations.map((location) => ({ id: location.id, label: location.name }));
   const professorFilterOptions = professors.map((professor) => ({
     id: professor.id,
     label: `${professor.first_name} ${professor.last_name}`.trim(),
@@ -1393,6 +1392,19 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const clientFilterOptions = clientsSorted.map((client) => ({
     id: client.id,
     label: clientDisplayName(client),
+    sortLabel: [
+      client.email,
+      client.mobile_phone_1,
+      client.mobile_phone_2,
+      client.home_phone,
+      client.phone,
+      client.family_name,
+      ...client.linked_adult_names,
+      ...client.linked_children_names,
+    ]
+      .filter(Boolean)
+      .join(" "),
+    description: [client.email, client.mobile_phone_1 || client.phone].filter(Boolean).join(" · "),
   }));
   const bookingClientOptions = clientsSorted.map((client) => ({
     id: client.id,
@@ -1654,12 +1666,14 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
         clientStatus: "Client status",
         noAdvancedFilters: "No advanced filters active.",
         filtersTitle: "Schedule filters",
-        filtersHelp: "You can filter by multiple activities, rooms, teachers and students.",
+        filtersHelp: "Find a student first. Location and course type remain available in the main filter bar.",
         courseType: "Course type",
         byActivities: "By activities",
         byRooms: "By rooms",
         byTeachers: "By teachers",
-        byStudents: "By students",
+        byStudents: "Find a student",
+        otherCriteria: "Other criteria",
+        studentQueryPrompt: "Type at least 2 characters (name, email or phone).",
         searchActivity: "Search an activity...",
         searchRoom: "Search a room...",
         searchTeacher: "Search a teacher...",
@@ -1703,12 +1717,14 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
         clientStatus: "Statut adherent",
         noAdvancedFilters: "Aucun filtre avance actif.",
         filtersTitle: "Filtres planning",
-        filtersHelp: "Vous pouvez filtrer sur plusieurs activites, salles, professeurs et eleves.",
+        filtersHelp: "Recherchez d'abord un eleve. Le lieu et le type de cours restent accessibles dans la barre principale.",
         courseType: "Type de cours",
         byActivities: "Par activites",
         byRooms: "Par salles",
         byTeachers: "Par professeurs",
-        byStudents: "Par eleves",
+        byStudents: "Rechercher un eleve",
+        otherCriteria: "Autres criteres",
+        studentQueryPrompt: "Saisissez au moins 2 caracteres (nom, e-mail ou telephone).",
         searchActivity: "Rechercher une activite...",
         searchRoom: "Rechercher une salle...",
         searchTeacher: "Rechercher un professeur...",
@@ -1860,88 +1876,73 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
             </a>
             <h2 className="modal-title">{planningText.filtersTitle}</h2>
             <p className="muted">{planningText.filtersHelp}</p>
-            <form method="get" className="grid cols-2">
+            <form method="get" className="planning-filters-form">
               {language === "en" ? <input type="hidden" name="lang" value="en" /> : null}
               <input type="hidden" name="location_id" value={focusedLocationId} />
+              <input type="hidden" name="course_type_id" value={selectedCourseType} />
               <input type="hidden" name="agenda_view" value={agendaView} />
               <input type="hidden" name="agenda_date" value={agendaDate} />
               <input type="hidden" name="timezone" value={timezone} />
               {dayDetails ? <input type="hidden" name="day_details" value={dayDetails} /> : null}
-
-              <label className="span-2">
-                {planningText.courseType}
-                <select name="course_type_id" defaultValue={selectedCourseType}>
-                  <option value="">{isEnglish ? "All" : "Tous"}</option>
-                  {courseTypes.map((row) => (
-                    <option key={row.id} value={row.id}>
-                      {row.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              {selectedActivityIds.map((activityId) => (
+                <input key={`modal-activity-${activityId}`} type="hidden" name="activity_ids" value={activityId} />
+              ))}
+              {selectedLocationIdsFromQuery.map((locationId) => (
+                <input key={`modal-location-${locationId}`} type="hidden" name="location_ids" value={locationId} />
+              ))}
 
               <SearchMultiSelect
-                className="span-2"
-                label={planningText.byActivities}
-                name="activity_ids"
-                options={courseTypes.map((row) => ({ id: row.id, label: row.name }))}
-                selectedIds={selectedActivityIds}
-                placeholder={planningText.searchActivity}
-                emptySelectionLabel={planningText.noActivitySelected}
-              />
-
-              <SearchMultiSelect
-                label={planningText.byRooms}
-                name="location_ids"
-                options={locationFilterOptions}
-                selectedIds={selectedLocationIdsFromQuery}
-                placeholder={planningText.searchRoom}
-                emptySelectionLabel={planningText.noRoomSelected}
-              />
-
-              <SearchMultiSelect
-                label={planningText.byTeachers}
-                name="professor_ids"
-                options={professorFilterOptions}
-                selectedIds={selectedProfessorIds}
-                placeholder={planningText.searchTeacher}
-                emptySelectionLabel={planningText.noTeacherSelected}
-              />
-
-              <SearchMultiSelect
-                className="span-2"
+                className="planning-student-filter"
                 label={planningText.byStudents}
                 name="client_ids"
                 options={clientFilterOptions}
                 selectedIds={selectedClientIds}
                 placeholder={planningText.searchStudent}
                 emptySelectionLabel={planningText.noStudentSelected}
+                minimumQueryLength={2}
+                minimumQueryLabel={planningText.studentQueryPrompt}
+                resultLimit={30}
+                autoFocus
               />
 
-              <label>
-                {planningText.sessionStatus}
-                <select name="status" defaultValue={selectedStatus}>
-                  <option value="ALL">{t("common.all")}</option>
-                  <option value="SCHEDULED">{t("admin.planning.status.scheduled")}</option>
-                  <option value="CANCELLED">{t("admin.planning.status.cancelled")}</option>
-                  <option value="COMPLETED">{t("admin.planning.status.completed")}</option>
-                </select>
-              </label>
+              <section className="planning-filter-secondary" aria-labelledby="planning-other-filters">
+                <h3 id="planning-other-filters">{planningText.otherCriteria}</h3>
+                <SearchMultiSelect
+                  label={planningText.byTeachers}
+                  name="professor_ids"
+                  options={professorFilterOptions}
+                  selectedIds={selectedProfessorIds}
+                  placeholder={planningText.searchTeacher}
+                  emptySelectionLabel={planningText.noTeacherSelected}
+                />
 
-              <label>
-                {planningText.clientStatus}
-                <select name="client_status" defaultValue={selectedClientStatus}>
-                  <option value="ALL">{t("common.all")}</option>
-                  <option value="ACTIVE">{t("admin.clients.status_active")}</option>
-                  <option value="RESPONSABLE">{t("admin.clients.status_responsable")}</option>
-                  <option value="TRIAL">{t("admin.clients.status_trial")}</option>
-                  <option value="PENDING">{t("admin.clients.status_pending")}</option>
-                  <option value="INACTIVE">{t("admin.clients.status_inactive")}</option>
-                  <option value="ARCHIVED">{t("admin.clients.status_archived")}</option>
-                </select>
-              </label>
+                <div className="planning-filter-status-grid">
+                  <label>
+                    {planningText.sessionStatus}
+                    <select name="status" defaultValue={selectedStatus}>
+                      <option value="ALL">{t("common.all")}</option>
+                      <option value="SCHEDULED">{t("admin.planning.status.scheduled")}</option>
+                      <option value="CANCELLED">{t("admin.planning.status.cancelled")}</option>
+                      <option value="COMPLETED">{t("admin.planning.status.completed")}</option>
+                    </select>
+                  </label>
 
-              <div className="row span-2">
+                  <label>
+                    {planningText.clientStatus}
+                    <select name="client_status" defaultValue={selectedClientStatus}>
+                      <option value="ALL">{t("common.all")}</option>
+                      <option value="ACTIVE">{t("admin.clients.status_active")}</option>
+                      <option value="RESPONSABLE">{t("admin.clients.status_responsable")}</option>
+                      <option value="TRIAL">{t("admin.clients.status_trial")}</option>
+                      <option value="PENDING">{t("admin.clients.status_pending")}</option>
+                      <option value="INACTIVE">{t("admin.clients.status_inactive")}</option>
+                      <option value="ARCHIVED">{t("admin.clients.status_archived")}</option>
+                    </select>
+                  </label>
+                </div>
+              </section>
+
+              <div className="row planning-filters-actions">
                 <button type="submit">{t("common.apply")}</button>
                 <a className="reset-link" href={filtersResetHref}>
                   {planningText.reset}
