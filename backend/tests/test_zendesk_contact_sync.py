@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from contextlib import contextmanager
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 from uuid import uuid4
 
 from app.services.zendesk_contact_sync import (
@@ -10,6 +13,7 @@ from app.services.zendesk_contact_sync import (
     find_shared_phones,
     normalize_email,
     normalize_phone,
+    run_zendesk_contact_sync_job,
 )
 
 
@@ -92,6 +96,71 @@ class ZendeskContactSyncTests(unittest.TestCase):
         )["user"]
         self.assertLessEqual(len(payload["user_fields"]["piano_app_schedule"]), 5_000)
         self.assertTrue(payload["user_fields"]["piano_app_schedule"].endswith("…"))
+
+    def test_apply_releases_database_transaction_before_zendesk_calls(self) -> None:
+        class FakeDb:
+            def __init__(self) -> None:
+                self.commits = 0
+
+            def commit(self) -> None:
+                self.commits += 1
+
+            def rollback(self) -> None:
+                pass
+
+            def get(self, _model, _identifier):
+                return job_run
+
+        @contextmanager
+        def acquired_lock(*_args, **_kwargs):
+            yield True
+
+        db = FakeDb()
+        job_run = SimpleNamespace(id=uuid4())
+
+        class FakeZendeskClient:
+            def __enter__(self):
+                self.assert_database_was_released()
+                return self
+
+            def __exit__(self, *_args):
+                pass
+
+            def assert_database_was_released(self) -> None:
+                self_outer.assertEqual(db.commits, 1)
+
+            def check_connection(self) -> None:
+                pass
+
+            def ensure_user_fields(self) -> None:
+                pass
+
+            def create_or_update_user(self, _payload) -> int:
+                return 123
+
+            def ensure_secondary_identities(self, **_kwargs) -> None:
+                pass
+
+        self_outer = self
+        with (
+            patch("app.services.zendesk_contact_sync.get_job_cursor", return_value=None),
+            patch("app.services.zendesk_contact_sync.redis_lock", acquired_lock),
+            patch("app.services.zendesk_contact_sync.start_job_run", return_value=job_run),
+            patch("app.services.zendesk_contact_sync.build_zendesk_contact_candidates", return_value=[_candidate()]),
+            patch("app.services.zendesk_contact_sync.find_shared_phones", return_value={}),
+            patch("app.services.zendesk_contact_sync.ZendeskClient", FakeZendeskClient),
+            patch("app.services.zendesk_contact_sync.upsert_job_cursor"),
+            patch("app.services.zendesk_contact_sync.finish_job_run"),
+        ):
+            result = run_zendesk_contact_sync_job(
+                db,
+                now=datetime(2026, 8, 29, 10, 0, tzinfo=UTC),
+                dry_run=False,
+                full=True,
+                check_connection=True,
+            )
+
+        self.assertEqual(result.created_or_updated, 1)
 
 
 if __name__ == "__main__":

@@ -675,6 +675,7 @@ def run_zendesk_contact_sync_job(
             started_at=ts,
             metadata_json={"limit": limit, "dry_run": dry_run, "full": full, "since": since.isoformat() if since else None},
         )
+        job_run_id = job_run.id
         checked = processed = synced = skipped = failed = 0
         conflicts = 0
         try:
@@ -690,6 +691,14 @@ def run_zendesk_contact_sync_job(
                     message=f"Numéro partagé non synchronisé comme identité : {phone}",
                     context_json={"phone": phone, "contacts": list(owners)},
                 )
+
+            # Do not keep a PostgreSQL transaction open while Zendesk is being
+            # called. A full first sync can take several minutes and production
+            # deliberately terminates sessions that remain idle in a transaction.
+            # Persist the running job and its conflict logs, then release the DB
+            # connection until results need to be recorded.
+            if not dry_run:
+                db.commit()
 
             if dry_run:
                 if check_connection:
@@ -730,6 +739,7 @@ def run_zendesk_contact_sync_job(
                                 message=f"Échec synchro Zendesk pour {candidate.external_id}",
                                 context_json={"external_id": candidate.external_id, "error": str(exc)},
                             )
+                            db.commit()
                 skipped = max(checked - processed, 0)
                 upsert_job_cursor(db, job_name=JOB_NAME, last_processed_at=ts, updated_at=ts)
                 if full:
@@ -742,9 +752,10 @@ def run_zendesk_contact_sync_job(
             status = "success"
             if failed:
                 status = "warning" if synced else "failed"
+            persisted_job_run = db.get(type(job_run), job_run_id) or job_run
             finish_job_run(
                 db,
-                job_run=job_run,
+                job_run=persisted_job_run,
                 status=status,
                 finished_at=datetime.now(UTC),
                 items_scanned=checked,
@@ -762,21 +773,25 @@ def run_zendesk_contact_sync_job(
                 failed=failed,
                 conflicts=conflicts,
                 dry_run=dry_run,
-                job_run_id=job_run.id,
+                job_run_id=job_run_id,
             )
         except Exception as exc:
-            finish_job_run(
-                db,
-                job_run=job_run,
-                status="failed",
-                finished_at=datetime.now(UTC),
-                items_scanned=checked,
-                items_processed=processed,
-                items_sent=synced,
-                items_skipped=skipped,
-                items_failed=failed + 1,
-                error_text=str(exc),
-            )
+            db.rollback()
+            persisted_job_run = db.get(type(job_run), job_run_id)
+            if persisted_job_run is not None:
+                finish_job_run(
+                    db,
+                    job_run=persisted_job_run,
+                    status="failed",
+                    finished_at=datetime.now(UTC),
+                    items_scanned=checked,
+                    items_processed=processed,
+                    items_sent=synced,
+                    items_skipped=skipped,
+                    items_failed=failed + 1,
+                    error_text=str(exc),
+                )
+                db.commit()
             raise
 
 
