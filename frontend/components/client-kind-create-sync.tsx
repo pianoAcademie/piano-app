@@ -29,6 +29,7 @@ export default function ClientKindCreateSync({ formId }: ClientKindCreateSyncPro
     const checkboxes = COMMUNICATION_FIELD_NAMES.map((fieldName) =>
       form.querySelector(`input[name="${fieldName}"]`),
     ).filter((element): element is HTMLInputElement => element instanceof HTMLInputElement);
+    const adultOnlyContainers = Array.from(form.querySelectorAll<HTMLElement>('[data-adult-only="true"]'));
 
     const applyRules = (): void => {
       const isChild = kindSelect.value.trim().toUpperCase() === "CHILD";
@@ -46,6 +47,18 @@ export default function ClientKindCreateSync({ formId }: ClientKindCreateSyncPro
         checkbox.disabled = isChild;
         if (isChild) {
           checkbox.checked = false;
+        }
+      }
+      for (const container of adultOnlyContainers) {
+        container.hidden = isChild;
+        for (const field of Array.from(container.querySelectorAll("input, select, textarea"))) {
+          if (
+            field instanceof HTMLInputElement
+            || field instanceof HTMLSelectElement
+            || field instanceof HTMLTextAreaElement
+          ) {
+            field.disabled = isChild;
+          }
         }
       }
     };

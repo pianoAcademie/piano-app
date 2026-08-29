@@ -987,7 +987,7 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
                   {uiText(language, "client.address_label")}
                   <input type="text" name="address_line" maxLength={255} />
                 </label>
-                <label className="span-3">
+                <label className="span-3" data-adult-only="true">
                   {t("admin.clients.home_access_instructions")}
                   <textarea
                     name="home_access_instructions"
