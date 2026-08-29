@@ -622,6 +622,69 @@ def _quote_line_recommendation_key_for_monthly_schedule(line: QuoteLine) -> str 
     return f"{activity_id}:{automatic_key}" if automatic_key else activity_id
 
 
+def _planned_session_quantities(calendar_snapshot: object | None) -> dict[str, Decimal]:
+    quantities: dict[str, Decimal] = {}
+    for raw_session in _json_list(_json_object(calendar_snapshot).get("sessions")):
+        if not isinstance(raw_session, dict):
+            continue
+        activity_id = str(raw_session.get("activity_id") or "").strip()
+        recommendation_key = str(raw_session.get("recommendation_key") or "").strip()
+        for key in {activity_id, recommendation_key} - {""}:
+            quantities[key] = quantities.get(key, Decimal("0.00")) + Decimal("1.00")
+    return quantities
+
+
+def _sync_typeform_planned_quote_line_quantities(
+    lines: list[QuoteLine],
+    *,
+    calendar_snapshot: object | None,
+) -> bool:
+    """Keep intake-generated activity quantities aligned with the saved planning.
+
+    Typeform quote lines marked as planning-derived must follow the final calendar
+    snapshot. This deliberately leaves manual quote lines untouched.
+    """
+    planned_quantities = _planned_session_quantities(calendar_snapshot)
+    if not planned_quantities:
+        return False
+
+    changed = False
+    now = _utcnow()
+    for line in lines:
+        meta = _json_object(line.meta)
+        if not bool(meta.get("typeform_planned_quantity_applied")):
+            continue
+        if line.line_category != "service" or line.line_type != "item" or line.pricing_unit != "session":
+            continue
+        recommendation_key = _quote_line_recommendation_key_for_monthly_schedule(line)
+        activity_id = str(line.activity_id or "").strip()
+        planned_quantity = planned_quantities.get(recommendation_key or "")
+        if planned_quantity is None and activity_id:
+            planned_quantity = planned_quantities.get(activity_id)
+        if planned_quantity is None or planned_quantity <= Decimal("0.00"):
+            continue
+
+        normalized_quantity = _q2(planned_quantity)
+        next_meta = {
+            **meta,
+            "typeform_planned_quantity_applied": True,
+            "typeform_planned_quantity": str(normalized_quantity),
+        }
+        quantity_changed = _q2(Decimal(line.quantity or 0)) != normalized_quantity
+        meta_changed = next_meta != meta
+        if not quantity_changed and not meta_changed:
+            continue
+
+        line.quantity = normalized_quantity
+        line.amount_ht = _q2(Decimal(line.unit_price_ht or 0) * normalized_quantity)
+        line.amount_vat = _q2(Decimal(line.unit_vat_amount or 0) * normalized_quantity)
+        line.amount_ttc = _q2(line.amount_ht + line.amount_vat)
+        line.meta = next_meta
+        line.updated_at = now
+        changed = True
+    return changed
+
+
 def _month_key_from_session_date(value: object | None) -> str | None:
     raw = str(value or "").strip()
     if len(raw) < 7:
@@ -6188,7 +6251,28 @@ def update_quote(
             computed_total = _q2(Decimal(row.total_ttc or 0))
             document_dirty = True
 
-    if payment_plan_changed or payload.lines is not None or adjustment_changed or deposit_changed or activity_lines_removed:
+    planned_quantities_changed = False
+    if payload.calendar_snapshot is not None or payload.lines is not None:
+        planned_quantities_changed = _sync_typeform_planned_quote_line_quantities(
+            _load_quote_lines(db, row.id),
+            calendar_snapshot=row.calendar_snapshot,
+        )
+        if planned_quantities_changed:
+            db.flush()
+            lines_total = _quote_lines_total_ttc(db, quote_id=row.id)
+            computed_total = _quote_total_with_adjustment(lines_total_ttc=lines_total, meta=row.meta or {})
+            row.total_ttc = computed_total
+            row.updated_at = _utcnow()
+            document_dirty = True
+
+    if (
+        payment_plan_changed
+        or payload.lines is not None
+        or adjustment_changed
+        or deposit_changed
+        or activity_lines_removed
+        or planned_quantities_changed
+    ):
         total_for_schedule = computed_total if computed_total is not None else _q2(Decimal(row.total_ttc or 0))
         if payload.payment_terms_snapshot is None or not _payment_terms_snapshot_matches_total(
             row.payment_terms_snapshot,
@@ -6196,7 +6280,12 @@ def update_quote(
         ):
             row.payment_terms_snapshot = _build_payment_terms_snapshot_for_quote(db, row, total_ttc=total_for_schedule)
 
-    if payload.price_snapshot is None and (payload.lines is not None or adjustment_changed or activity_lines_removed):
+    if payload.price_snapshot is None and (
+        payload.lines is not None
+        or adjustment_changed
+        or activity_lines_removed
+        or planned_quantities_changed
+    ):
         lines_total_ttc = _quote_lines_total_ttc(db, quote_id=row.id)
         row.price_snapshot = {
             "catalog_id": str(row.pricing_catalog_id) if row.pricing_catalog_id else None,
