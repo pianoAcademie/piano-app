@@ -8681,11 +8681,13 @@ def _expected_activity_dates_from_snapshot(
     normalized_expected_series_key = str(expected_series_key or "").strip()
 
     def _row_matches(row: dict[str, object], *, allow_series_fallback: bool = False) -> bool:
-        if _parse_uuid_value(row.get("activity_id")) != activity_id:
+        activity_matches = _parse_uuid_value(row.get("activity_id")) == activity_id
+        recommendation_key = str(row.get("recommendation_key") or "").strip()
+        schedule_alias_matches = bool(schedule_key) and recommendation_key == schedule_key
+        if not activity_matches and not schedule_alias_matches:
             return False
         if allow_series_fallback or not schedule_key:
             return _row_matches_expected_series(row)
-        recommendation_key = str(row.get("recommendation_key") or "").strip()
         automatic_line = str(row.get("typeform_automatic_line") or "").strip()
         row_key = recommendation_key or (f"{activity_id}:{automatic_line}" if automatic_line else str(activity_id))
         return row_key == schedule_key and _row_matches_expected_series(row)
@@ -8775,11 +8777,13 @@ def _expected_activity_time_window_from_snapshot(
     normalized_expected_series_key = str(expected_series_key or "").strip()
 
     def _row_matches(row: dict[str, object], *, allow_series_fallback: bool = False) -> bool:
-        if _parse_uuid_value(row.get("activity_id")) != activity_id:
+        activity_matches = _parse_uuid_value(row.get("activity_id")) == activity_id
+        recommendation_key = str(row.get("recommendation_key") or "").strip()
+        schedule_alias_matches = bool(schedule_key) and recommendation_key == schedule_key
+        if not activity_matches and not schedule_alias_matches:
             return False
         if allow_series_fallback or not schedule_key:
             return _row_matches_expected_series(row)
-        recommendation_key = str(row.get("recommendation_key") or "").strip()
         automatic_line = str(row.get("typeform_automatic_line") or "").strip()
         row_key = recommendation_key or (f"{activity_id}:{automatic_line}" if automatic_line else str(activity_id))
         return row_key == schedule_key and _row_matches_expected_series(row)
