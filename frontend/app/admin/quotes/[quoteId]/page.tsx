@@ -115,6 +115,7 @@ type QuoteLineOut = {
   kit_id: string | null;
   title: string;
   quantity: string;
+  pricing_unit: string;
   vat_rate: string;
   unit_price_ht: string;
   unit_vat_amount: string;
@@ -1071,7 +1072,14 @@ function quoteLinePlanningLimit(line: QuoteLineOut): number {
   const template = readObject(meta.typeform_template) || {};
   const explicit = positiveInt(meta.planning_session_limit)
     || positiveInt(template.planning_session_limit);
-  return explicit > 0 ? explicit : 0;
+  if (explicit > 0) {
+    return explicit;
+  }
+  if (String(line.pricing_unit || "").trim().toLowerCase() !== "session") {
+    return 0;
+  }
+  const quantity = Number(line.quantity);
+  return Number.isInteger(quantity) && quantity > 1 ? quantity : 0;
 }
 
 function inferUniqueActivityPlanningLimit(activityId: string, lines: QuoteLineOut[]): number {
@@ -1083,6 +1091,33 @@ function inferUniqueActivityPlanningLimit(activityId: string, lines: QuoteLineOu
     .filter((limit) => limit > 0);
   const unique = Array.from(new Set(candidates));
   return unique.length === 1 ? unique[0] : 0;
+}
+
+function matchingPlanningBlockStartDate({
+  snapshot,
+  activityId,
+  locationId,
+  weekday,
+  startTime,
+  endTime,
+}: {
+  snapshot: Record<string, unknown>;
+  activityId: string;
+  locationId: string;
+  weekday: number;
+  startTime: string;
+  endTime: string;
+}): string | null {
+  const candidates = getPlanningBlocks(snapshot)
+    .filter((block) => String(block.activity_id ?? "").trim() === activityId)
+    .filter((block) => String(block.location_id ?? "").trim() === locationId)
+    .filter((block) => Number.parseInt(String(block.weekday ?? ""), 10) === weekday)
+    .filter((block) => String(block.start_time ?? "").trim() === startTime)
+    .filter((block) => String(block.end_time ?? "").trim() === endTime)
+    .map((block) => String(block.start_date ?? "").trim())
+    .filter((value) => /^\d{4}-\d{2}-\d{2}$/.test(value));
+  const unique = Array.from(new Set(candidates));
+  return unique.length === 1 ? unique[0] : null;
 }
 
 function dateOnly(value: string): Date | null {
@@ -1204,6 +1239,7 @@ async function loadLivePlanningSeriesOptions({
   schoolYearLabel,
   activities,
   lines,
+  planningSnapshot,
   calendarPresets,
   language,
 }: {
@@ -1211,6 +1247,7 @@ async function loadLivePlanningSeriesOptions({
   schoolYearLabel: string | null;
   activities: AdminActivityOut[];
   lines: QuoteLineOut[];
+  planningSnapshot: Record<string, unknown>;
   calendarPresets: PlanningCalendarPreset[];
   language: UiLanguage;
 }): Promise<LivePlanningSeriesOption[]> {
@@ -1301,9 +1338,22 @@ async function loadLivePlanningSeriesOptions({
       continue;
     }
     const planningSessionLimit = inferUniqueActivityPlanningLimit(session.course_type_id, lines);
+    const existingBlockStartDate = matchingPlanningBlockStartDate({
+      snapshot: planningSnapshot,
+      activityId: session.course_type_id,
+      locationId: session.location_id,
+      weekday: firstCapped.local.weekday,
+      startTime: firstCapped.local.start_time,
+      endTime: firstCapped.local.end_time,
+    });
+    const planningStartDate = existingBlockStartDate
+      && existingBlockStartDate >= firstCapped.local.date
+      && existingBlockStartDate <= seriesTeachingEndDate
+      ? existingBlockStartDate
+      : firstCapped.local.date;
     const expectedDates = planningSessionLimit > 0
       ? expectedWeeklyDates({
-        startDate: firstCapped.local.date,
+        startDate: planningStartDate,
         endDate: seriesTeachingEndDate,
         weekday: firstCapped.local.weekday,
         excludedDates,
@@ -2293,6 +2343,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
       schoolYearLabel: planningEditorSchoolYearLabel,
       activities,
       lines: detail.lines,
+      planningSnapshot: planningSnapshotForEditor,
       calendarPresets: planningCalendarPresets,
       language,
     })
