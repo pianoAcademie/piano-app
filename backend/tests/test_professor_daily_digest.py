@@ -11,6 +11,7 @@ from uuid import uuid4
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.models.product_catalog import ProductRequestStatus
+from app.models.catalog import BookingStatus
 from app.services.professor_daily_digest import (
     _build_digest_body,
     product_request_is_ready_for_notification,
@@ -55,6 +56,38 @@ def _professor() -> SimpleNamespace:
 
 
 class ProfessorDailyDigestTests(unittest.TestCase):
+    def test_trial_session_roster_uses_trial_label_for_legacy_booking(self) -> None:
+        professor = SimpleNamespace(id=uuid4(), first_name="Mi-Young")
+        session_obj = SimpleNamespace(
+            id=uuid4(),
+            title="Cours d'essai",
+            start_at_utc=datetime(2026, 8, 29, 9, 0, tzinfo=timezone.utc),
+            end_at_utc=datetime(2026, 8, 29, 10, 0, tzinfo=timezone.utc),
+        )
+        course_type = SimpleNamespace(name="Cours d'essai collectif", code="TRIAL_GROUP")
+        location = SimpleNamespace(name="Rue Scheffer")
+        booking = SimpleNamespace(status=BookingStatus.BOOKED, is_trial_course=False)
+        student = SimpleNamespace(first_name="Hanna", last_name="TAIEB", email="hanna@example.test")
+        db = _DigestSession(
+            [
+                [(session_obj, course_type, location)],
+                [(booking, student)],
+                [],
+            ]
+        )
+
+        _, body, session_count = _build_digest_body(
+            db,  # type: ignore[arg-type]
+            professor=professor,  # type: ignore[arg-type]
+            day_start_utc=datetime(2026, 8, 28, 22, 0, tzinfo=timezone.utc),
+            day_end_utc=datetime(2026, 8, 29, 22, 0, tzinfo=timezone.utc),
+            digest_date=datetime(2026, 8, 29, tzinfo=timezone.utc).date(),
+        )
+
+        self.assertEqual(session_count, 1)
+        self.assertIn("Hanna TAIEB (Essai)", body)
+        self.assertNotIn("Hanna TAIEB (Prévu)", body)
+
     def test_masterclass_is_listed_in_each_associated_professor_digest(self) -> None:
         professor_id = uuid4()
         professor = SimpleNamespace(id=professor_id, first_name="Alice")

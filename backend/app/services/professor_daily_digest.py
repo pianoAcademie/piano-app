@@ -43,7 +43,9 @@ def _parse_hhmm(value: str) -> time | None:
     return time(hour=hour, minute=minute)
 
 
-def _attendance_label(status: BookingStatus) -> str:
+def _attendance_label(status: BookingStatus, *, is_trial_course: bool = False) -> str:
+    if status == BookingStatus.BOOKED and is_trial_course:
+        return "Essai"
     labels = {
         BookingStatus.BOOKED: "Prévu",
         BookingStatus.WAITLISTED: "Liste d’attente",
@@ -52,6 +54,25 @@ def _attendance_label(status: BookingStatus) -> str:
         BookingStatus.EXCUSED_ABSENCE: "Absent excusé",
     }
     return labels.get(status, status.value)
+
+
+def _is_trial_roster_booking(
+    booking: Booking,
+    *,
+    session_obj: CourseSession,
+    course_type: CourseType,
+) -> bool:
+    if bool(getattr(booking, "is_trial_course", False)):
+        return True
+    haystack = " ".join(
+        str(value or "").strip().casefold()
+        for value in (
+            getattr(session_obj, "title", None),
+            getattr(course_type, "name", None),
+            getattr(course_type, "code", None),
+        )
+    )
+    return "essai" in haystack or "trial" in haystack
 
 
 def product_request_is_ready_for_notification(request_row: ProductRequest, product: CatalogProduct) -> bool:
@@ -126,7 +147,15 @@ def _build_digest_body(
             roster_labels: list[str] = []
             for booking, user in roster_rows:
                 display_name = f"{(user.first_name or '').strip()} {(user.last_name or '').strip()}".strip() or user.email
-                roster_labels.append(f"{display_name} ({_attendance_label(booking.status)})")
+                attendance_label = _attendance_label(
+                    booking.status,
+                    is_trial_course=_is_trial_roster_booking(
+                        booking,
+                        session_obj=session_obj,
+                        course_type=course_type,
+                    ),
+                )
+                roster_labels.append(f"{display_name} ({attendance_label})")
             roster = ", ".join(roster_labels)
 
         delivery_rows = db.execute(
