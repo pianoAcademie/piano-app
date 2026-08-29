@@ -85,5 +85,13 @@ class Settings:
     firebase_client_email: str = os.getenv("FIREBASE_CLIENT_EMAIL", "")
     firebase_private_key: str = os.getenv("FIREBASE_PRIVATE_KEY", "")
 
+    # One-way contact synchronization from Piano Academie to Zendesk. The
+    # scheduled worker stays dormant until an initial explicit apply run has
+    # created the synchronization cursor.
+    zendesk_subdomain: str = os.getenv("ZENDESK_SUBDOMAIN", "")
+    zendesk_admin_email: str = os.getenv("ZENDESK_ADMIN_EMAIL", "")
+    zendesk_api_token: str = os.getenv("ZENDESK_API_TOKEN", "")
+    zendesk_sync_interval_minutes: int = int(os.getenv("ZENDESK_SYNC_INTERVAL_MINUTES", "15"))
+
 
 settings = Settings()

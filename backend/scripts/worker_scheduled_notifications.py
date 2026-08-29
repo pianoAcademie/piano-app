@@ -24,6 +24,13 @@ from app.services.professor_attendance_reminders import run_send_professor_atten
 from app.services.session_automation import run_auto_cancel_empty_sessions_job, run_expire_pending_payment_bookings_job
 from app.services.notifications.application.orchestrator import enqueue_notifications
 from app.services.subscription_payment_reminders import run_subscription_payment_action_reminder_job
+from app.services.zendesk_contact_sync import (
+    DEFAULT_LIMIT as ZENDESK_SYNC_LIMIT,
+    run_zendesk_contact_sync_job,
+    zendesk_credentials_complete,
+    zendesk_full_sync_due,
+    zendesk_sync_due,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +70,19 @@ def main() -> None:
             ):
                 jobs.append(("subscription_payment_action_reminders", run_subscription_payment_action_reminder_job))
                 last_subscription_payment_reminder_at = cycle_now
+            if zendesk_credentials_complete() and zendesk_sync_due(db, now=cycle_now):
+                run_full_zendesk_sync = zendesk_full_sync_due(db, now=cycle_now)
+                jobs.append(
+                    (
+                        "zendesk_contact_sync",
+                        lambda active_db, *, now, limit: run_zendesk_contact_sync_job(
+                            active_db,
+                            now=now,
+                            limit=max(limit, ZENDESK_SYNC_LIMIT),
+                            full=run_full_zendesk_sync,
+                        ),
+                    )
+                )
             jobs.extend((
                 ("scheduled_notification_dispatch", run_scheduled_notification_dispatch_job),
                 ("invoice_due_reminders", run_invoice_due_reminder_job),

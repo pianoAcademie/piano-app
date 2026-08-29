@@ -116,9 +116,12 @@ jobs:
           APNS_PRIVATE_KEY: ${{ secrets.APNS_PRIVATE_KEY }}
           APNS_CLIENT_BUNDLE_ID: ${{ secrets.APNS_CLIENT_BUNDLE_ID }}
           APNS_USE_SANDBOX: ${{ secrets.APNS_USE_SANDBOX }}
+          ZENDESK_SUBDOMAIN: ${{ secrets.ZENDESK_SUBDOMAIN }}
+          ZENDESK_ADMIN_EMAIL: ${{ secrets.ZENDESK_ADMIN_EMAIL }}
+          ZENDESK_API_TOKEN: ${{ secrets.ZENDESK_API_TOKEN }}
         run: |
           set -euo pipefail
-          for variable in GIFT_CARD_CODE_PEPPER PUSH_NOTIFICATIONS_ENABLED APNS_TEAM_ID APNS_KEY_ID APNS_PRIVATE_KEY APNS_CLIENT_BUNDLE_ID APNS_USE_SANDBOX; do
+          for variable in GIFT_CARD_CODE_PEPPER PUSH_NOTIFICATIONS_ENABLED APNS_TEAM_ID APNS_KEY_ID APNS_PRIVATE_KEY APNS_CLIENT_BUNDLE_ID APNS_USE_SANDBOX ZENDESK_SUBDOMAIN ZENDESK_ADMIN_EMAIL ZENDESK_API_TOKEN; do
             test -n "${!variable:-}" || { echo "Missing production secret: ${variable}"; exit 1; }
           done
 
@@ -135,6 +138,9 @@ jobs:
               "APNS_PRIVATE_KEY",
               "APNS_CLIENT_BUNDLE_ID",
               "APNS_USE_SANDBOX",
+              "ZENDESK_SUBDOMAIN",
+              "ZENDESK_ADMIN_EMAIL",
+              "ZENDESK_API_TOKEN",
           )
           payload = json.dumps({key: os.environ[key] for key in keys}).encode()
           print(base64.b64encode(payload).decode())
@@ -234,6 +240,15 @@ jobs:
             [ \"\$code\" = \"200\" ] || { echo \"Frontend failed during deploy step: \$code\"; docker compose ps frontend || true; docker compose logs --tail=200 frontend || true; exit 1; }
 
             docker compose ps
+          "
+
+      - name: Zendesk read-only connection and scope check
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_ed25519 -p "${VPS_PORT:-22}" "${VPS_USER}@${VPS_HOST}" "
+            set -euo pipefail
+            cd '${VPS_PATH}'
+            docker compose exec -T backend python scripts/sync_zendesk_contacts.py --full --limit 10000 --check-connection
           "
 
       - name: Healthchecks on VPS

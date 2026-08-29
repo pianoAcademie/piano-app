@@ -1,0 +1,87 @@
+name: Synchroniser les contacts Zendesk
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Contrôle sans écriture ou application réelle"
+        required: true
+        default: dry-run
+        type: choice
+        options:
+          - dry-run
+          - apply
+      full:
+        description: "Recontrôler toute la base (recommandé au premier lancement)"
+        required: true
+        default: true
+        type: boolean
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+concurrency:
+  group: zendesk-contact-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    env:
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_PORT: ${{ secrets.VPS_PORT }}
+      VPS_PATH: ${{ secrets.VPS_PATH }}
+      VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+
+    steps:
+      - name: Validate inputs and secrets
+        run: |
+          set -euo pipefail
+          test -n "${VPS_HOST}" || { echo "Missing VPS_HOST"; exit 1; }
+          test -n "${VPS_USER}" || { echo "Missing VPS_USER"; exit 1; }
+          test -n "${VPS_PATH}" || { echo "Missing VPS_PATH"; exit 1; }
+          if [ -z "${{ secrets.VPS_SSH_KEY }}" ] && [ -z "${{ secrets.SSH_PRIVATE_KEY }}" ]; then
+            echo "Missing SSH private key"
+            exit 1
+          fi
+
+      - name: Setup SSH
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          SSH_KEY_CONTENT="${{ secrets.VPS_SSH_KEY }}"
+          if [ -z "${SSH_KEY_CONTENT}" ]; then
+            SSH_KEY_CONTENT="${{ secrets.SSH_PRIVATE_KEY }}"
+          fi
+          printf '%s\n' "${SSH_KEY_CONTENT}" | tr -d '\r' > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          : > ~/.ssh/known_hosts
+          ssh-keyscan -p "${VPS_PORT:-22}" -H "${VPS_HOST}" >> ~/.ssh/known_hosts 2>/dev/null || true
+          if [ -n "${VPS_KNOWN_HOSTS}" ]; then
+            printf '%s\n' "${VPS_KNOWN_HOSTS}" >> ~/.ssh/known_hosts
+          fi
+          test -s ~/.ssh/known_hosts || { echo "known_hosts is empty"; exit 1; }
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Run Zendesk contact synchronization
+        env:
+          SYNC_MODE: ${{ inputs.mode }}
+          SYNC_FULL: ${{ inputs.full }}
+        run: |
+          set -euo pipefail
+          arguments="--limit 10000 --check-connection"
+          if [ "${SYNC_MODE}" = "apply" ]; then
+            arguments="${arguments} --apply"
+          fi
+          if [ "${SYNC_FULL}" = "true" ]; then
+            arguments="${arguments} --full"
+          fi
+          ssh -i ~/.ssh/id_ed25519 -p "${VPS_PORT:-22}" "${VPS_USER}@${VPS_HOST}" "
+            set -euo pipefail
+            cd '${VPS_PATH}'
+            docker compose exec -T backend python scripts/sync_zendesk_contacts.py ${arguments}
+          "
