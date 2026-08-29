@@ -13640,6 +13640,35 @@ export async function duplicateQuoteAction(formData: FormData): Promise<void> {
   redirect(withUiMessageCode(detailPath, "ok", "quote_duplicated", { lang: language }));
 }
 
+export async function createQuoteVariantAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+  const language = await ensureAdminAndGetLanguage(token);
+
+  const quoteId = String(formData.get("quote_id") ?? "").trim();
+  const returnTo = safeAdminQuotesPath(String(formData.get("return_to") ?? "/admin/quotes"));
+  const successReturnTo = withUiLanguage(returnTo, language);
+  if (!quoteId) {
+    redirect(withUiMessageCode(successReturnTo, "error", "quote_not_found", { lang: language }));
+  }
+
+  const result = await backendRequest<{ quote: { id: string } }>(
+    `/api/v1/quotes/${encodeURIComponent(quoteId)}/duplicate?as_variant=true`,
+    { method: "POST" },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(successReturnTo, "error", result.message));
+  }
+  revalidatePath("/admin/quotes");
+  revalidatePath(`/admin/quotes/${quoteId}`);
+  const detailPath = withUiLanguage(`/admin/quotes/${encodeURIComponent(result.data.quote.id)}?back=${encodeURIComponent(successReturnTo)}`, language);
+  redirect(withUiMessageCode(detailPath, "ok", "quote_variant_created", { lang: language }));
+}
+
 export async function duplicateQuoteForChildAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {

@@ -9,9 +9,12 @@ from types import SimpleNamespace
 from unittest.mock import patch
 from uuid import uuid4
 
+from fastapi import HTTPException
+
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.api.routes.quotes import (
+    _cancel_unselected_quote_variants,
     _create_quote_revision_from_change_request,
     _quote_admin_stats,
     _quote_list_stmt,
@@ -128,7 +131,11 @@ class QuoteDuplicationTests(unittest.TestCase):
             payment_terms_snapshot={"plan": "monthly"},
             cgv_snapshot={"version": "v1"},
             price_snapshot={"catalog": "2026"},
-            meta={"foo": "bar"},
+            meta={
+                "foo": "bar",
+                "variant_group_id": str(uuid4()),
+                "planning_hold_released": True,
+            },
         )
         line = SimpleNamespace(
             line_category="service",
@@ -187,6 +194,8 @@ class QuoteDuplicationTests(unittest.TestCase):
         self.assertEqual(clone.version_number, 3)
         self.assertIsNone(clone.expires_at)
         self.assertEqual(clone.meta.get("duplicated_from"), str(source_id))
+        self.assertNotIn("variant_group_id", clone.meta)
+        self.assertNotIn("planning_hold_released", clone.meta)
 
         self.assertEqual(duplicated_line.vat_rate, Decimal("20.000"))
         self.assertEqual(duplicated_line.unit_price_ht, Decimal("31.67"))
@@ -198,6 +207,107 @@ class QuoteDuplicationTests(unittest.TestCase):
 
         self.assertEqual(duplicate_event.event_type, "quote_duplicated")
         self.assertEqual(duplicate_event.payload.get("source_quote_id"), str(source_id))
+
+    def test_duplicate_as_variant_links_quotes_without_releasing_the_shared_hold(self) -> None:
+        source_id = uuid4()
+        current_user = SimpleNamespace(id=uuid4())
+        db = _FakeSession()
+        source = Quote(
+            id=source_id,
+            quote_number="DV-SOURCE",
+            context_type="acquisition",
+            quote_type="forfait",
+            status="sent",
+            version_number=1,
+            currency="EUR",
+            total_ttc=Decimal("1200.00"),
+            expiry_days=10,
+            meta={"foo": "bar"},
+        )
+        expected_response = {"quote": {"id": "variant"}}
+
+        with patch("app.api.routes.quotes._load_quote", return_value=source), patch(
+            "app.api.routes.quotes._load_quote_lines", return_value=[]
+        ), patch("app.api.routes.quotes._quote_detail_out", return_value=expected_response), patch(
+            "app.api.routes.quotes._new_quote_number", return_value="DV-VARIANT"
+        ):
+            result = duplicate_quote(source_id, as_variant=True, db=db, current_user=current_user)
+
+        clone = next(item for item in db.added if isinstance(item, Quote) and item is not source)
+        group_id = source.meta.get("variant_group_id")
+        self.assertEqual(result, expected_response)
+        self.assertTrue(group_id)
+        self.assertEqual(clone.meta.get("variant_group_id"), group_id)
+        self.assertEqual(clone.meta.get("variant_of_quote_id"), str(source_id))
+        self.assertNotIn("planning_hold_released", source.meta)
+        self.assertNotIn("planning_hold_released", clone.meta)
+        self.assertIn(
+            "quote_variant_created",
+            {item.event_type for item in db.added if isinstance(item, QuoteEvent)},
+        )
+
+    def test_approving_variant_cancels_other_pending_variants(self) -> None:
+        group_id = str(uuid4())
+        selected = Quote(
+            id=uuid4(),
+            quote_number="DV-A",
+            context_type="acquisition",
+            status="sent",
+            meta={"variant_group_id": group_id},
+        )
+        sibling = Quote(
+            id=uuid4(),
+            quote_number="DV-B",
+            context_type="acquisition",
+            status="sent",
+            meta={"variant_group_id": group_id},
+        )
+        db = _FakeSession()
+        now = datetime(2026, 8, 29, 10, 0, tzinfo=timezone.utc)
+
+        cancelled = _cancel_unselected_quote_variants(
+            db,
+            selected=selected,
+            variants=[selected, sibling],
+            cancelled_at=now,
+        )
+
+        self.assertEqual(cancelled, [sibling])
+        self.assertEqual(sibling.status, "cancelled")
+        self.assertEqual(sibling.cancelled_at, now)
+        self.assertIs(sibling.meta.get("planning_hold_released"), True)
+        self.assertEqual(sibling.meta.get("variant_selected_quote_id"), str(selected.id))
+        event = next(item for item in db.added if isinstance(item, QuoteEvent))
+        self.assertEqual(event.event_type, "quote_variant_cancelled")
+
+    def test_variant_cannot_be_approved_after_another_variant(self) -> None:
+        group_id = str(uuid4())
+        selected = Quote(
+            id=uuid4(),
+            quote_number="DV-B",
+            context_type="acquisition",
+            status="sent",
+            meta={"variant_group_id": group_id},
+        )
+        approved = Quote(
+            id=uuid4(),
+            quote_number="DV-A",
+            context_type="acquisition",
+            status="approved",
+            meta={"variant_group_id": group_id},
+        )
+        db = _FakeSession()
+
+        with self.assertRaises(HTTPException) as raised:
+            _cancel_unselected_quote_variants(
+                db,
+                selected=selected,
+                variants=[selected, approved],
+                cancelled_at=datetime(2026, 8, 29, 10, 0, tzinfo=timezone.utc),
+            )
+
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertEqual(selected.status, "sent")
 
     def test_change_request_revision_creates_editable_draft_and_locks_source(self) -> None:
         source_id = uuid4()

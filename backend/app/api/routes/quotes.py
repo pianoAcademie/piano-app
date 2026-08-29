@@ -217,6 +217,10 @@ QUOTE_REPLACED_BY_NUMBER_META_KEY = "replaced_by_quote_number"
 QUOTE_REPLACED_AT_META_KEY = "replaced_at"
 QUOTE_PLANNING_HOLD_RELEASED_META_KEY = "planning_hold_released"
 QUOTE_PLANNING_HOLD_RELEASED_AT_META_KEY = "planning_hold_released_at"
+QUOTE_VARIANT_GROUP_ID_META_KEY = "variant_group_id"
+QUOTE_VARIANT_OF_META_KEY = "variant_of_quote_id"
+QUOTE_VARIANT_SELECTED_QUOTE_ID_META_KEY = "variant_selected_quote_id"
+QUOTE_VARIANT_CANCEL_REASON = "Une autre variante de ce devis a ete acceptee"
 QUOTE_TRANSFORMATION_PAYLOAD_KEY = "quote_to_enrollment"
 QUOTE_TRANSFORMATION_EXECUTION_KEY = "quote_to_enrollment_execution"
 QUOTE_MONTHLY_CARD_BILLING_START_DATE = date(2026, 9, 1)
@@ -283,6 +287,32 @@ def _set_quote_admin_hold_note(quote: Quote, value: object | None) -> bool:
 def _quote_meta_without_admin_hold_note(meta: object | None) -> dict[str, object]:
     next_meta = _normalize_quote_meta(meta)
     next_meta.pop(QUOTE_ADMIN_HOLD_NOTE_META_KEY, None)
+    return next_meta
+
+
+def _quote_variant_group_id(quote: Quote | object) -> str | None:
+    meta = getattr(quote, "meta", None)
+    source = meta if isinstance(meta, dict) else {}
+    value = str(source.get(QUOTE_VARIANT_GROUP_ID_META_KEY) or "").strip()
+    if not value:
+        return None
+    try:
+        return str(UUID(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _quote_meta_without_variant_link(meta: object | None) -> dict[str, object]:
+    next_meta = _quote_meta_without_admin_hold_note(meta)
+    for key in (
+        QUOTE_VARIANT_GROUP_ID_META_KEY,
+        QUOTE_VARIANT_OF_META_KEY,
+        QUOTE_VARIANT_SELECTED_QUOTE_ID_META_KEY,
+        QUOTE_PLANNING_HOLD_RELEASED_META_KEY,
+        QUOTE_PLANNING_HOLD_RELEASED_AT_META_KEY,
+        "cancel_reason",
+    ):
+        next_meta.pop(key, None)
     return next_meta
 
 
@@ -6537,12 +6567,38 @@ def update_quote_admin_hold_note(
 @router.post("/quotes/{quote_id}/duplicate", response_model=QuoteDetailOut, status_code=status.HTTP_201_CREATED)
 def duplicate_quote(
     quote_id: UUID,
+    as_variant: bool = False,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> QuoteDetailOut:
     source = _load_quote(db, quote_id)
     lines = _load_quote_lines(db, quote_id)
     now = _utcnow()
+    if as_variant and str(source.status or "").strip().lower() not in {"created", "sent", "change_requested"}:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A variant can only be created from an editable quote or a quote awaiting the client's response",
+        )
+
+    if as_variant:
+        variant_group_id = _quote_variant_group_id(source) or str(uuid4())
+        source_meta = _quote_meta_without_admin_hold_note(source.meta)
+        source_meta[QUOTE_VARIANT_GROUP_ID_META_KEY] = variant_group_id
+        source.meta = source_meta
+        source.updated_at = now
+        db.add(source)
+        clone_meta = {
+            **_quote_meta_without_admin_hold_note(source.meta),
+            "duplicated_from": str(source.id),
+            QUOTE_VARIANT_GROUP_ID_META_KEY: variant_group_id,
+            QUOTE_VARIANT_OF_META_KEY: str(source.id),
+        }
+    else:
+        variant_group_id = None
+        clone_meta = {
+            **_quote_meta_without_variant_link(source.meta),
+            "duplicated_from": str(source.id),
+        }
 
     clone = Quote(
         quote_number=_new_quote_number(),
@@ -6576,7 +6632,7 @@ def duplicate_quote(
         payment_terms_snapshot=source.payment_terms_snapshot,
         cgv_snapshot=source.cgv_snapshot,
         price_snapshot=source.price_snapshot,
-        meta={**_quote_meta_without_admin_hold_note(source.meta), "duplicated_from": str(source.id)},
+        meta=clone_meta,
         created_by_user_id=current_user.id,
         created_at=now,
         updated_at=now,
@@ -6618,12 +6674,30 @@ def duplicate_quote(
     db.add(
         QuoteEvent(
             quote_id=clone.id,
-            event_type="quote_duplicated",
+            event_type="quote_variant_created" if as_variant else "quote_duplicated",
             actor_type="admin",
             actor_id=current_user.id,
-            payload={"source_quote_id": str(source.id)},
+            payload={
+                "source_quote_id": str(source.id),
+                "variant_group_id": variant_group_id,
+            },
         )
     )
+    if as_variant:
+        db.add(
+            QuoteEvent(
+                quote_id=source.id,
+                event_type="quote_variant_group_created",
+                actor_type="admin",
+                actor_id=current_user.id,
+                payload={
+                    "variant_quote_id": str(clone.id),
+                    "variant_quote_number": clone.quote_number,
+                    "variant_group_id": variant_group_id,
+                },
+                created_at=now,
+            )
+        )
     db.commit()
     db.refresh(clone)
     return _quote_detail_out(db, clone)
@@ -11560,6 +11634,82 @@ def _rollback_quote_followup_transformation(
     return execution
 
 
+def _lock_public_quote_variant_group(db: Session, quote_id: UUID) -> tuple[Quote, list[Quote]]:
+    preview = _load_quote(db, quote_id)
+    variant_group_id = _quote_variant_group_id(preview)
+    if variant_group_id is None:
+        locked = _load_quote(db, quote_id, lock=True)
+        return locked, [locked]
+
+    variants = db.scalars(
+        select(Quote)
+        .where(Quote.meta[QUOTE_VARIANT_GROUP_ID_META_KEY].astext == variant_group_id)
+        .order_by(Quote.id.asc())
+        .with_for_update()
+    ).all()
+    selected = next((candidate for candidate in variants if candidate.id == quote_id), None)
+    if selected is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote variant not found")
+    return selected, variants
+
+
+def _cancel_unselected_quote_variants(
+    db: Session,
+    *,
+    selected: Quote,
+    variants: list[Quote],
+    cancelled_at: datetime,
+) -> list[Quote]:
+    already_approved = next(
+        (
+            candidate
+            for candidate in variants
+            if candidate.id != selected.id and str(candidate.status or "").strip().lower() == "approved"
+        ),
+        None,
+    )
+    if already_approved is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Another variant ({already_approved.quote_number}) has already been approved",
+        )
+
+    cancelled: list[Quote] = []
+    for candidate in variants:
+        if candidate.id == selected.id:
+            continue
+        if str(candidate.status or "").strip().lower() not in {"created", "sent", "change_requested"}:
+            continue
+        candidate.status = "cancelled"
+        candidate.cancelled_at = cancelled_at
+        candidate.approved_at = None
+        candidate.rejected_at = None
+        candidate.updated_at = cancelled_at
+        candidate.meta = {
+            **_quote_meta_dict(candidate),
+            QUOTE_VARIANT_SELECTED_QUOTE_ID_META_KEY: str(selected.id),
+            QUOTE_PLANNING_HOLD_RELEASED_META_KEY: True,
+            QUOTE_PLANNING_HOLD_RELEASED_AT_META_KEY: cancelled_at.isoformat(),
+            "cancel_reason": QUOTE_VARIANT_CANCEL_REASON,
+        }
+        db.add(candidate)
+        db.add(
+            QuoteEvent(
+                quote_id=candidate.id,
+                event_type="quote_variant_cancelled",
+                actor_type="system",
+                payload={
+                    "selected_quote_id": str(selected.id),
+                    "selected_quote_number": selected.quote_number,
+                    "reason": QUOTE_VARIANT_CANCEL_REASON,
+                },
+                created_at=cancelled_at,
+            )
+        )
+        cancelled.append(candidate)
+    return cancelled
+
+
 @router.post("/public/quotes/{quote_id}/approve", response_model=QuotePublicOut)
 def public_approve_quote(
     quote_id: UUID,
@@ -11567,7 +11717,7 @@ def public_approve_quote(
     t: str = Query(..., min_length=10),
     db: Session = Depends(get_db),
 ) -> QuotePublicOut:
-    quote = _load_quote(db, quote_id, lock=True)
+    quote, quote_variants = _lock_public_quote_variant_group(db, quote_id)
     if quote.public_token != t:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid quote token")
     if quote.status not in {"sent", "change_requested"}:
@@ -11581,6 +11731,12 @@ def public_approve_quote(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="A solfege slot must be selected before approval")
 
     now = _utcnow()
+    cancelled_variants = _cancel_unselected_quote_variants(
+        db,
+        selected=quote,
+        variants=quote_variants,
+        cancelled_at=now,
+    )
     previous_status = str(quote.status or "").strip().lower()
     quote.selected_solfege_slot = resolved_selected_slot or {}
     if resolved_selected_slot:
@@ -11624,6 +11780,7 @@ def public_approve_quote(
                 "document_snapshot_id": str(snapshot.id),
                 "document_hash": snapshot.document_hash,
                 "selected_solfege_slot": resolved_selected_slot or None,
+                "cancelled_variant_quote_ids": [str(candidate.id) for candidate in cancelled_variants],
             },
             created_at=now,
         )

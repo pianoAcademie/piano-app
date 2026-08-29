@@ -18,6 +18,8 @@ from app.api.routes.admin import (
     _planning_simulation_location_name_key,
     _planning_simulation_is_online_solfege,
     _planning_simulation_quote_person_key,
+    _planning_simulation_quote_capacity_key,
+    _planning_simulation_add_quote_capacity,
     _planning_simulation_quote_reserves_capacity,
     _planning_simulation_quote_location_name,
     _planning_simulation_resolve_live_slot_for_quote,
@@ -67,6 +69,51 @@ class AdminPlanningSimulationTests(unittest.TestCase):
         self.assertTrue(_planning_simulation_quote_reserves_capacity(sent_revision))
         self.assertTrue(_planning_simulation_quote_reserves_capacity(regular_draft))
         self.assertFalse(_planning_simulation_quote_reserves_capacity(replaced_source))
+
+    def test_quote_variants_share_one_capacity_key(self) -> None:
+        group_id = str(uuid4())
+        first = SimpleNamespace(id=uuid4(), meta={"variant_group_id": group_id})
+        second = SimpleNamespace(id=uuid4(), meta={"variant_group_id": group_id})
+        independent = SimpleNamespace(id=uuid4(), meta={})
+
+        self.assertEqual(
+            _planning_simulation_quote_capacity_key(first),
+            _planning_simulation_quote_capacity_key(second),
+        )
+        self.assertNotEqual(
+            _planning_simulation_quote_capacity_key(first),
+            _planning_simulation_quote_capacity_key(independent),
+        )
+
+    def test_quote_variant_capacity_uses_highest_status_once(self) -> None:
+        entry = {
+            "_draft_quote_ids": set(),
+            "_draft_quote_students": {},
+            "_pending_quote_ids": set(),
+            "_pending_quote_students": {},
+            "_approved_quote_ids": set(),
+            "_approved_quote_students": {},
+        }
+        capacity_key = f"variant:{uuid4()}"
+
+        _planning_simulation_add_quote_capacity(
+            entry,
+            bucket_name="_draft_quote_ids",
+            bucket_people_name="_draft_quote_students",
+            capacity_key=capacity_key,
+            student_name="Eleve",
+        )
+        _planning_simulation_add_quote_capacity(
+            entry,
+            bucket_name="_pending_quote_ids",
+            bucket_people_name="_pending_quote_students",
+            capacity_key=capacity_key,
+            student_name="Eleve",
+        )
+
+        self.assertEqual(entry["_draft_quote_ids"], set())
+        self.assertEqual(entry["_pending_quote_ids"], {capacity_key})
+        self.assertEqual(entry["_approved_quote_ids"], set())
 
     @staticmethod
     def _teacher_need_slot(

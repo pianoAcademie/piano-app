@@ -1657,6 +1657,57 @@ def _planning_simulation_quote_reserves_capacity(quote: Quote) -> bool:
     return str(released or "").strip().lower() not in {"1", "true", "yes"}
 
 
+def _planning_simulation_quote_capacity_key(quote: Quote) -> str:
+    """Count linked quote variants once for each common planning slot."""
+    meta = quote.meta if isinstance(quote.meta, dict) else {}
+    variant_group_id = str(meta.get("variant_group_id") or "").strip()
+    if variant_group_id:
+        try:
+            return f"variant:{UUID(variant_group_id)}"
+        except (TypeError, ValueError):
+            pass
+    return str(quote.id)
+
+
+def _planning_simulation_add_quote_capacity(
+    entry: dict[str, object],
+    *,
+    bucket_name: str,
+    bucket_people_name: str,
+    capacity_key: str,
+    student_name: str,
+) -> None:
+    bucket_priority = {
+        "_draft_quote_ids": 1,
+        "_pending_quote_ids": 2,
+        "_approved_quote_ids": 3,
+    }
+    people_bucket_by_id_bucket = {
+        "_draft_quote_ids": "_draft_quote_students",
+        "_pending_quote_ids": "_pending_quote_students",
+        "_approved_quote_ids": "_approved_quote_students",
+    }
+    current_priority = bucket_priority[bucket_name]
+    for other_bucket_name, other_priority in bucket_priority.items():
+        other_bucket = entry[other_bucket_name]
+        if not isinstance(other_bucket, set) or capacity_key not in other_bucket:
+            continue
+        if other_priority > current_priority:
+            return
+        if other_bucket_name != bucket_name:
+            other_bucket.discard(capacity_key)
+            other_people = entry[people_bucket_by_id_bucket[other_bucket_name]]
+            if isinstance(other_people, dict):
+                other_people.pop(capacity_key, None)
+
+    target_bucket = entry[bucket_name]
+    target_people = entry[bucket_people_name]
+    if isinstance(target_bucket, set):
+        target_bucket.add(capacity_key)
+    if isinstance(target_people, dict):
+        target_people[capacity_key] = student_name
+
+
 def _planning_simulation_search_text(value: str) -> str:
     return "".join(
         char for char in unicodedata.normalize("NFD", value.casefold()) if unicodedata.category(char) != "Mn"
@@ -3956,11 +4007,17 @@ def get_planning_simulation(
                 while occurrence_date <= occurrence_end:
                     entry["_occurrence_dates"].add(occurrence_date)
                     occurrence_date += timedelta(days=7)
-            entry[bucket_name].add(str(quote.id))
-            entry[bucket_people_name][str(quote.id)] = _planning_simulation_quote_student_name(
-                quote=quote,
-                prospect=prospect,
-                client=quote_client,
+            capacity_key = _planning_simulation_quote_capacity_key(quote)
+            _planning_simulation_add_quote_capacity(
+                entry,
+                bucket_name=bucket_name,
+                bucket_people_name=bucket_people_name,
+                capacity_key=capacity_key,
+                student_name=_planning_simulation_quote_student_name(
+                    quote=quote,
+                    prospect=prospect,
+                    client=quote_client,
+                ),
             )
 
     slot_payloads: list[AdminPlanningSimulationSlotOut] = []

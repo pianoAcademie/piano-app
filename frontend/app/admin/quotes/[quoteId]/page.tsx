@@ -25,6 +25,7 @@ import RichMessageEditor from "../../../../components/rich-message-editor";
 import {
   cancelQuoteAction,
   changeQuoteFollowupPaymentMethodAction,
+  createQuoteVariantAction,
   duplicateQuoteAction,
   duplicateQuoteForChildAction,
   finalizeQuoteFollowupAction,
@@ -2462,6 +2463,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
       || inferredParentFromFamily?.adult.home_phone
       || "-";
   const quoteStatus = String(detail.quote.status || "").trim().toLowerCase();
+  const variantGroupId = readStringMeta(detail.quote.meta || {}, "variant_group_id", "").trim();
   const publicResponseLastAction = readStringMeta(detail.quote.meta || {}, "public_response_last_action", "")
     .trim()
     .toLowerCase();
@@ -2490,6 +2492,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const showMissingKitWarning = !quoteHasKitLine;
   const canCancelQuote = !["cancelled", "approved", "replaced"].includes(quoteStatus);
   const canReopenCancelledQuote = quoteStatus === "cancelled";
+  const canCreateVariant = ["created", "sent", "change_requested"].includes(quoteStatus);
   const canRestorePublicResponse = ["approved", "rejected", "change_requested"].includes(quoteStatus);
   const canResendPublicConfirmation = ["approved", "rejected", "change_requested"].includes(quoteStatus);
   const restoreTargetStatusRaw = readStringMeta(detail.quote.meta || {}, "public_response_previous_status", "").trim().toLowerCase();
@@ -3937,11 +3940,23 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                 ) : null}
 
                 {!canReopenCancelledQuote ? (
-                  <form action={duplicateQuoteAction}>
-                    <input type="hidden" name="quote_id" value={detail.quote.id} />
-                    <input type="hidden" name="return_to" value={selfPath} />
-	                    <button type="submit" className="ghost">{t("admin.quote_detail.duplicate_new_version")}</button>
-	                  </form>
+                  <div className="grid gap-sm">
+                    {canCreateVariant ? (
+                      <form action={createQuoteVariantAction}>
+                        <input type="hidden" name="quote_id" value={detail.quote.id} />
+                        <input type="hidden" name="return_to" value={selfPath} />
+                        <button type="submit">{t("admin.quote_detail.create_variant")}</button>
+                      </form>
+                    ) : null}
+                    <form action={duplicateQuoteAction}>
+                      <input type="hidden" name="quote_id" value={detail.quote.id} />
+                      <input type="hidden" name="return_to" value={selfPath} />
+                      <button type="submit" className="ghost">{t("admin.quote_detail.duplicate_new_version")}</button>
+                    </form>
+                    {variantGroupId ? (
+                      <small className="muted">{t("admin.quote_detail.variant_group_help")}</small>
+                    ) : null}
+                  </div>
                 ) : null}
 
                 {detail.quote.public_token ? (
