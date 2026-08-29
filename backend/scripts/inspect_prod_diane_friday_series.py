@@ -142,8 +142,13 @@ def _candidate_series(db) -> list[dict[str, Any]]:
         db.scalars(
             select(ClientInvoiceLine.source_payment_id).where(
                 ClientInvoiceLine.source == "BOOKING",
-                func.lower(ClientInvoiceLine.label).contains("diane"),
-                func.lower(ClientInvoiceLine.label).contains("bernard"),
+                or_(
+                    (
+                        func.lower(ClientInvoiceLine.label).contains("diane")
+                        & func.lower(ClientInvoiceLine.label).contains("bernard")
+                    ),
+                    ClientInvoiceLine.total_incl_vat == Decimal("64.00"),
+                ),
             )
         ).all()
     )
@@ -175,7 +180,8 @@ def _candidate_series(db) -> list[dict[str, Any]]:
                     (booking, session_obj, course_type, location)
                 )
         for (student_id, _, _), group_rows in grouped_by_student.items():
-            if len(group_rows) < 20:
+            current_dates = {_local_start(row[1]).date() for row in group_rows}
+            if len(group_rows) < 20 or max(current_dates) != date(2027, 6, 4):
                 continue
             student = db.get(User, student_id)
             if student is not None:
