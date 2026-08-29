@@ -283,8 +283,9 @@ def main(argv: list[str] | None = None) -> int:
         if source_quote_id and source_quote_id != str(quote.id):
             _abort("invoice_has_conflicting_quote_link")
         execution_invoice_note_ids = set(_json_uuid_list(execution.get("created_annual_invoice_note_ids")))
-        if note.id not in execution_invoice_note_ids:
-            _abort("invoice_missing_from_quote_execution")
+        execution_booking_ids = set(_json_uuid_list(execution.get("created_booking_ids")))
+        if note.id not in execution_invoice_note_ids and not booking_ids.issubset(execution_booking_ids):
+            _abort("invoice_and_bookings_missing_from_quote_execution")
 
         target_unit = (
             _money(course_line.unit_price_ht),
