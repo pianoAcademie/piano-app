@@ -302,9 +302,10 @@ def _subscription_amount(db: Session, *, subscription: ClientPlanSubscription, p
 
 def _admin_recipients_for_notification(db: Session, *, notification_type: str) -> list[str]:
     recipients = list_admin_recipients_for_type(db, notification_type=notification_type)
-    fallback = _get_setting_text(db, "config_account_contact_email", "")
-    if fallback:
-        recipients.append(fallback.strip().lower())
+    if not recipients:
+        fallback = _get_setting_text(db, "config_account_contact_email", "")
+        if fallback:
+            recipients.append(fallback.strip().lower())
 
     uniq: list[str] = []
     seen: set[str] = set()
