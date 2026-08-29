@@ -383,7 +383,6 @@ def diagnose_legacy_friday_series() -> None:
 
 if __name__ == "__main__":
     main()
-    diagnose_legacy_friday_series()
-    from scripts.inspect_prod_diane_friday_series import main as inspect_diane_friday_series
+    from scripts.repair_prod_diane_ceroux_friday_series import main as repair_diane_friday_series
 
-    inspect_diane_friday_series()
+    repair_diane_friday_series([])
