@@ -637,6 +637,21 @@ class ZendeskClient:
                 continue
             if normalize_phone(str(user.get("phone") or "")) == phone:
                 exact_users.append(user)
+                continue
+            # Zendesk search can return a user whose matching number is a
+            # secondary identity while `user.phone` exposes another primary
+            # number. Inspect identities before deciding the number is free.
+            user_id = user.get("id")
+            if not isinstance(user_id, int):
+                continue
+            identities = self._request("GET", f"/users/{user_id}/identities.json").get("identities", [])
+            if any(
+                isinstance(identity, dict)
+                and identity.get("type") == "phone_number"
+                and normalize_phone(str(identity.get("value") or "")) == phone
+                for identity in identities
+            ):
+                exact_users.append(user)
         return exact_users
 
     def _merge_unique_talk_placeholder(self, *, target_user_id: int, phone: str) -> tuple[bool, bool]:
@@ -710,17 +725,23 @@ class ZendeskClient:
             if blocked:
                 unresolved_phones.append(value)
                 continue
-            self._request(
-                "POST",
-                f"/users/{user_id}/identities.json",
-                json={
-                    "identity": {
-                        "type": "phone_number",
-                        "value": value,
-                        "skip_verify_email": True,
-                    }
-                },
-            )
+            try:
+                self._request(
+                    "POST",
+                    f"/users/{user_id}/identities.json",
+                    json={
+                        "identity": {
+                            "type": "phone_number",
+                            "value": value,
+                            "skip_verify_email": True,
+                        }
+                    },
+                )
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code == 422:
+                    unresolved_phones.append(value)
+                    continue
+                raise
             existing.add(("phone_number", normalized_value))
         return merged_callers, tuple(unresolved_phones)
 
