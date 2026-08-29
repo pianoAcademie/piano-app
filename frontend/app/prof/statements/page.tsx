@@ -375,20 +375,16 @@ export default async function TeacherStatementsPage({
 
   const activitiesMap = new Map<string, MissingServiceActivityOption>();
   if (courseTypesResult.ok && courseTypesResult.data.length > 0) {
-    const restrictToProfessorActivities = gridLineByCourseTypeId.size > 0;
     for (const courseType of courseTypesResult.data) {
-      if (restrictToProfessorActivities && !gridLineByCourseTypeId.has(courseType.id)) {
-        continue;
-      }
       const line = gridLineByCourseTypeId.get(courseType.id);
-        activitiesMap.set(courseType.id, {
-          id: courseType.id,
-          label: (line?.course_type_name || courseType.name || "").trim() || t("teacher.service_type"),
-          duration_minutes: Number(line?.reference_duration_minutes ?? courseType.duration_minutes ?? 60) || 60,
-          mode_label: modeLabel(line?.mode ?? courseType.mode, language),
-          default_hourly_rate: line?.default_hourly_rate ?? courseType.default_hourly_rate,
-          rules: line?.rules ?? [],
-        });
+      activitiesMap.set(courseType.id, {
+        id: courseType.id,
+        label: (line?.course_type_name || courseType.name || "").trim() || t("teacher.service_type"),
+        duration_minutes: Number(line?.reference_duration_minutes ?? courseType.duration_minutes ?? 60) || 60,
+        mode_label: modeLabel(line?.mode ?? courseType.mode, language),
+        default_hourly_rate: line?.default_hourly_rate ?? courseType.default_hourly_rate,
+        rules: line?.rules ?? [],
+      });
     }
   }
 
