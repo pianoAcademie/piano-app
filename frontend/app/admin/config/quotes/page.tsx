@@ -920,6 +920,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
   const activeActivities = activities
     .filter((row) => row.active)
     .sort((a, b) => a.name.localeCompare(b.name, sortLocale));
+  const priceableActivities = activeActivities.filter((row) => row.code !== "VACATION_DAY");
   const activityFamilies = Array.from(
     new Set(
       activities
@@ -1013,7 +1014,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
         .filter((price) => price.price_channel === "ANNUAL_FORFAIT")
         .map((price) => price.activity_id),
     );
-    const fallbackActivities = activeActivities
+    const fallbackActivities = priceableActivities
       .filter((activity) => !explicitActivityIds.has(activity.id))
       .map((activity) => ({
         activity,
@@ -1515,7 +1516,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                       {t("admin.quote_config.activity_price_activity")}
                       <select name="activity_id" required>
                         <option value="">{t("admin.quote_config.select_option")}</option>
-                        {activeActivities.map((activity) => (
+                        {priceableActivities.map((activity) => (
                           <option key={`${selectedCatalog.id}-activity-price-${activity.id}`} value={activity.id}>
                             {activity.name}
                           </option>
