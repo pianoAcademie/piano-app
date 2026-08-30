@@ -9,7 +9,7 @@ from app.models.user import User, UserRole
 from app.models.quote import QuoteEvent
 from app.models.annual_pricing import AnnualFamilyReference
 from app.services.annual_pricing_review import (
-    AnnualReviewRequest, KEY, quote_students, family_members, reviewed_lines, prepare_review, apply_review,
+    AnnualReviewRequest, KEY, quote_students, family_members, reviewed_lines, prepare_review, apply_review, is_annual_quote,
 )
 
 router = APIRouter()
@@ -37,7 +37,7 @@ def context(quote_id: UUID, db: Session = Depends(get_db), _: User = Depends(req
         )).all()
         primary_courses[str(student.id)] = [{"id": t["course_key"], "label": t["title"]}
             for sub in subscriptions for t in (sub.annual_pricing_terms or []) if t.get("primary")]
-    return {"students": [{"id": str(s.id), "label": f"{s.first_name or ''} {s.last_name or ''}".strip()} for s in students],
+    return {"applicable": is_annual_quote(db, quote), "students": [{"id": str(s.id), "label": f"{s.first_name or ''} {s.last_name or ''}".strip()} for s in students],
         "families": families, "references": references, "primary_courses": primary_courses, "review": (quote.meta or {}).get(KEY),
         "lines": [{"id": str(l.id), "title": l.title, "quantity": str(l.quantity)} for l, _, _ in reviewed_lines(db, quote, _load_quote_lines(db, quote_id))]}
 

@@ -116,6 +116,36 @@ def test_cannot_stack_legacy_discounts(case):
         prepare_review(db, q, lines, request)
 
 
+@pytest.mark.parametrize("named_type", ["Forfait 2026-2027", "FORFAIT_2026_2027", "Custom annual tuition"])
+def test_named_annual_quote_types_use_linked_formula(case, named_type):
+    from app.models.quote import QuoteType
+    from app.models.plan import Plan, PlanKind
+    db, q, lines, request, _, reference = case
+    plan = Plan(code=str(uuid4()), name="Année 2026-2027", kind=PlanKind.FORFAIT)
+    db.add(plan); db.flush()
+    kind = QuoteType(code=str(uuid4()), name=named_type, formula_id=plan.id)
+    db.add(kind); db.flush()
+    q.quote_type = named_type
+    q.quote_type_id = kind.id
+    reference.quote_type = named_type
+    reference.quote_type_id = kind.id
+    db.flush()
+    assert prepare_review(db, q, lines, request)["total"] == "2016.00"
+
+
+def test_named_pack_is_not_an_annual_quote(case):
+    from app.models.quote import QuoteType
+    from app.models.plan import Plan, PlanKind
+    db, q, lines, request, _, _ = case
+    plan = Plan(code=str(uuid4()), name="Carnet", kind=PlanKind.PACK)
+    db.add(plan); db.flush()
+    kind = QuoteType(code="FORFAIT_2026_2027", name="Forfait 2026-2027", formula_id=plan.id)
+    db.add(kind); db.flush()
+    q.quote_type_id = kind.id
+    with pytest.raises(HTTPException, match="uniquement le forfait"):
+        prepare_review(db, q, lines, request)
+
+
 def test_reviewed_discounts_never_collapse_into_legacy_activity_wide_rates(case):
     from types import SimpleNamespace
     from app.api.routes.quotes import _apply_followup_forfait_discount_rows

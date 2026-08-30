@@ -15,7 +15,7 @@ from app.models.annual_pricing import AnnualFamilyReference
 from app.models.catalog import CourseType, Location
 from app.models.family import ClientFamilyLink
 from app.models.plan import ClientPlanSubscription, Plan, PlanKind, SubscriptionStatus
-from app.models.quote import Quote, QuoteLine
+from app.models.quote import Quote, QuoteLine, QuoteType
 from app.models.user import User, ClientKind
 from app.services.annual_discounts import AnnualEligibility, annual_discount_price, POLICY_VERSION
 from app.services.client_pricing import build_price_version, split_tax
@@ -48,7 +48,7 @@ def quote_fingerprint(quote, lines):
         return str(Decimal(str(value or 0)).quantize(Decimal("0.001")))
     return build_price_version("quote-review", season=quote.school_year_label, client=quote.client_id,
         location=quote.location_id, catalog=quote.pricing_catalog_id, currency=quote.currency,
-        prospect=quote.prospect_id, total=numeric(quote.total_ttc),
+        prospect=quote.prospect_id, total=numeric(quote.total_ttc), quote_type=quote.quote_type, quote_type_id=quote.quote_type_id,
         adjustment=(quote.meta or {}).get("financial_adjustment"),
         calendar=quote.calendar_snapshot, lines=[{
             "id": str(l.id), "activity": l.activity_id, "quantity": numeric(l.quantity),
@@ -82,6 +82,15 @@ def quote_students(db, quote):
     ids = {client_id}
     ids.update(db.scalars(select(ClientFamilyLink.child_user_id).where(ClientFamilyLink.adult_user_id == client_id)).all())
     return db.scalars(select(User).where(User.id.in_(ids), User.client_kind == ClientKind.CHILD).order_by(User.last_name, User.first_name)).all()
+
+
+def is_annual_quote(db, quote):
+    quote_type = db.get(QuoteType, quote.quote_type_id) if quote.quote_type_id else None
+    if quote_type and quote_type.formula_id:
+        plan = db.get(Plan, quote_type.formula_id)
+        return bool(plan and plan.kind == PlanKind.FORFAIT)
+    code = normalized(quote_type.code if quote_type else quote.quote_type).replace("-", "_").replace(" ", "_")
+    return code in {"forfait", "forfait_2026_2027"}
 
 
 def activity_family(activity):
@@ -134,15 +143,15 @@ def reference_has_engagement(db, quote, reference_id):
         ClientPlanSubscription.status == SubscriptionStatus.ACTIVE,
     ).limit(1))
     quotes = db.scalars(select(Quote).where(Quote.school_year_label == quote.school_year_label,
-        Quote.quote_type == "forfait", Quote.total_ttc > 0,
+        Quote.total_ttc > 0,
         Quote.status.in_(["created", "sent", "approved", "accepted"]), Quote.id != quote.id)).all()
-    return bool(subscription or any(q.client_id == reference_id or (q.meta or {}).get(KEY, {}).get("student_id") == str(reference_id) for q in quotes))
+    return bool(subscription or any((q.client_id == reference_id or (q.meta or {}).get(KEY, {}).get("student_id") == str(reference_id)) and is_annual_quote(db, q) for q in quotes))
 
 
 def prepare_review(db: Session, quote: Quote, lines: list[QuoteLine], request: AnnualReviewRequest):
     if quote.sent_at or quote.approved_at or quote.status != "created":
         fail("Les devis déjà envoyés ou acceptés sont conservés. Créez une révision pour changer le prix.")
-    if quote.quote_type != "forfait" or quote.school_year_label != "2026-2027" or quote.currency != "EUR":
+    if not is_annual_quote(db, quote) or quote.school_year_label != "2026-2027" or quote.currency != "EUR":
         fail("Ces règles concernent uniquement le forfait annuel 2026-2027 en EUR.")
     adjustment = (quote.meta or {}).get("financial_adjustment") or {}
     if Decimal(str(adjustment.get("amount_ttc") or 0)) != 0:

@@ -6,6 +6,7 @@ import { annualPricingAction } from "../lib/actions";
 
 type Option = { id: string; label: string };
 type Context = {
+  applicable: boolean;
   students: Option[]; families: Record<string, Option[]>; references: Record<string, string | null>;
   primary_courses: Record<string, Option[]>;
   lines: { id: string; title: string; quantity: string }[];
@@ -15,7 +16,7 @@ type Preview = { version: string; previous_total: string; total: string; returni
   decisions: { line_id: string; title: string; quantity: string; base: string; net: string;
     pricing: { components: { code: string; label: string; amount_ttc: string }[] } }[] };
 
-export default function AnnualPricingReview({ quoteId, editable, revision }: { quoteId: string; editable: boolean; revision: string }): JSX.Element {
+export default function AnnualPricingReview({ quoteId, editable, revision }: { quoteId: string; editable: boolean; revision: string }): JSX.Element | null {
   const router = useRouter();
   const [context, setContext] = useState<Context | null>(null);
   const [student, setStudent] = useState("");
@@ -60,6 +61,7 @@ export default function AnnualPricingReview({ quoteId, editable, revision }: { q
       } else setPreview(result.data as Preview);
     } finally { setBusy(false); }
   }
+  if (context && !context.applicable) return null;
   return <details className="card top-gap-sm">
     <summary><strong>Vérifier et calculer les remises annuelles</strong>{context?.review ? " · Décision enregistrée" : ""}</summary>
     <p>Prix issus de la grille, remises détaillées par séance et conservées à l'inscription. Les remises manuelles ne sont jamais cumulées automatiquement.</p>

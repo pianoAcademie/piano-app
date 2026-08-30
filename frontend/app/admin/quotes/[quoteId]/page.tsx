@@ -4463,7 +4463,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
 	          <h3>{t("admin.quote_detail.billed_lines_title")}</h3>
 	          <p className="muted">{t("admin.quote_detail.billed_lines_subtitle", { count: detail.lines.length })}</p>
 	        </div>
-        {detail.quote.quote_type === "forfait" && detail.quote.school_year_label === "2026-2027" ? (
+        {detail.quote.school_year_label === "2026-2027" ? (
           <AnnualPricingReview revision={detail.quote.updated_at} quoteId={detail.quote.id} editable={canEditQuote && !detail.quote.sent_at} />
         ) : null}
         <QuoteLinesEditor
