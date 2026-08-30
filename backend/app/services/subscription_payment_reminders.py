@@ -54,6 +54,7 @@ SUCCESSFUL_INITIAL_PAYMENT_STATUSES = {
     "AUTHORIZED",
     "CAPTURED",
 }
+SUPPORTED_RECURRING_PAYMENT_METHODS = {"CARD_ONLINE", "SEPA_DEBIT"}
 
 
 @dataclass(frozen=True)
@@ -112,6 +113,22 @@ def _has_valid_stripe_card(subscription: ClientPlanSubscription) -> bool:
     )
 
 
+def _has_valid_stripe_recurring_method(subscription: ClientPlanSubscription) -> bool:
+    method_code = str(subscription.billing_method_code or "").strip().upper()
+    if method_code not in SUPPORTED_RECURRING_PAYMENT_METHODS:
+        return False
+    provider = str(subscription.payment_provider_code or "").strip().upper()
+    payment_method_ref = str(subscription.payment_provider_payment_method_ref or "").strip()
+    payment_method_type = str(subscription.payment_method_type or "").strip().lower()
+    expected_type = "sepa_debit" if method_code == "SEPA_DEBIT" else "card"
+    return bool(
+        provider == "STRIPE"
+        and payment_method_ref.startswith("pm_")
+        and payment_method_type == expected_type
+        and not subscription.payment_method_setup_required
+    )
+
+
 def _initial_payment_is_complete(subscription: ClientPlanSubscription) -> bool:
     status = str(subscription.last_payment_status or "").strip().upper()
     return bool(
@@ -132,7 +149,7 @@ def _payment_issue_and_due_at(
 
     if status not in {SubscriptionStatus.ACTIVE, SubscriptionStatus.PAYMENT_ALERT}:
         return None
-    if _has_valid_stripe_card(subscription):
+    if _has_valid_stripe_recurring_method(subscription):
         return None
     due_at = subscription.next_payment_at or subscription.current_period_end
     if due_at is None:
@@ -263,11 +280,103 @@ def build_subscription_payment_reminder_email(
             issue=issue,
         )
 
-    action_url = _client_url(
-        path="/client",
-        query={"tab": "offers", "offer_detail_id": str(subscription.id)},
-    )
-    if english:
+    is_sepa = str(subscription.billing_method_code or "").strip().upper() == "SEPA_DEBIT"
+    sepa_instalment_due = is_sepa and phase in {"due_today", "overdue"}
+    if sepa_instalment_due:
+        action_url = _client_url(
+            path="/client",
+            query={
+                "tab": "finance",
+                "finance_view": "transactions",
+                "source": "PLAN_PURCHASE",
+                "payment_id": str(subscription.id),
+            },
+        )
+    else:
+        action_url = _client_url(
+            path="/client",
+            query={"tab": "offers", "offer_detail_id": str(subscription.id)},
+        )
+
+    if sepa_instalment_due and english:
+        subject = "Action required – pay your subscription instalment by card"
+        body = render_branded_email(
+            preview="Your subscription instalment must now be paid by card.",
+            eyebrow="SUBSCRIPTION",
+            title="Pay your instalment now",
+            greeting=f"Hello {name},",
+            intro=f"The instalment dated {due_label} for your “{plan.name}” subscription has not been paid. Please pay it now by card to restore your subscription and lesson bookings.",
+            rows=[
+                ("Subscription", plan.name),
+                ("Instalment date", due_label),
+                ("Status", status_label),
+                *([("Amount", amount_label)] if amount_label else []),
+                ("Immediate payment", "Bank card secured by Stripe"),
+            ],
+            message="Step 1: click the button below and pay this instalment by card. Step 2: after the payment is confirmed, return to your client area and register your SEPA mandate. The mandate will be used only for subsequent monthly instalments.",
+            button_url=action_url,
+            button_label="PAY NOW BY CARD",
+            footer="This service email was sent automatically by Piano Academie. Never send your card or bank details by email.",
+        )
+    elif sepa_instalment_due:
+        subject = "Action requise – réglez votre échéance d’abonnement par carte"
+        body = render_branded_email(
+            preview="Votre échéance d’abonnement doit maintenant être réglée par carte.",
+            eyebrow="ABONNEMENT",
+            title="Réglez votre échéance maintenant",
+            greeting=f"Bonjour {name},",
+            intro=f"L’échéance du {due_label} de votre abonnement « {plan.name} » n’a pas été réglée. Merci de la payer maintenant par carte afin de rétablir votre abonnement et l’accès aux réservations.",
+            rows=[
+                ("Abonnement", plan.name),
+                ("Date de l’échéance", due_label),
+                ("Statut", status_label),
+                *([("Montant", amount_label)] if amount_label else []),
+                ("Paiement immédiat", "Carte bancaire sécurisée par Stripe"),
+            ],
+            message="Étape 1 : cliquez sur le bouton ci-dessous et réglez cette échéance par carte. Étape 2 : après confirmation du paiement, revenez dans votre espace client et enregistrez votre mandat SEPA. Ce mandat servira uniquement aux prélèvements mensuels suivants.",
+            button_url=action_url,
+            button_label="RÉGLER MAINTENANT PAR CARTE",
+            footer="Cet e-mail de service a été envoyé automatiquement par Piano Académie. Ne transmettez jamais vos coordonnées bancaires par e-mail.",
+        )
+    elif is_sepa and english:
+        subject = "Action required – register your SEPA mandate for your Piano Academie subscription"
+        body = render_branded_email(
+            preview="A SEPA mandate is required for your next subscription renewal.",
+            eyebrow="SUBSCRIPTION",
+            title="Register your SEPA mandate",
+            greeting=f"Hello {name},",
+            intro=f"No valid Stripe SEPA mandate is currently linked to your “{plan.name}” subscription. Please register it {action_timing} to avoid interrupting your subscription and lesson bookings.",
+            rows=[
+                ("Subscription", plan.name),
+                ("Next due date", due_label),
+                ("Status", status_label),
+                ("Secure direct debit", "Stripe SEPA"),
+            ],
+            message="Click the button below, sign in, open the subscription and select Register my SEPA mandate. No payment is taken now: the mandate will be used for the next monthly instalment.",
+            button_url=action_url,
+            button_label="REGISTER MY SEPA MANDATE",
+            footer="This service email was sent automatically by Piano Academie. Piano Academie never has access to your full bank details.",
+        )
+    elif is_sepa:
+        subject = "Action requise – enregistrez votre mandat SEPA pour votre abonnement Piano Académie"
+        body = render_branded_email(
+            preview="Un mandat SEPA est nécessaire pour votre prochaine échéance.",
+            eyebrow="ABONNEMENT",
+            title="Enregistrez votre mandat SEPA",
+            greeting=f"Bonjour {name},",
+            intro=f"Aucun mandat SEPA Stripe valide n’est actuellement associé à votre abonnement « {plan.name} ». Merci de l’enregistrer {action_timing} afin d’éviter l’interruption de votre abonnement et de vos réservations.",
+            rows=[
+                ("Abonnement", plan.name),
+                ("Prochaine échéance", due_label),
+                ("Statut", status_label),
+                ("Prélèvement sécurisé par", "Stripe SEPA"),
+            ],
+            message="Cliquez sur le bouton ci-dessous, connectez-vous, ouvrez l’abonnement puis choisissez Enregistrer mon mandat SEPA. Aucun paiement n’est effectué maintenant : le mandat servira à la prochaine échéance mensuelle.",
+            button_url=action_url,
+            button_label="ENREGISTRER MON MANDAT SEPA",
+            footer="Cet e-mail de service a été envoyé automatiquement par Piano Académie. Piano Académie n’a jamais accès à l’intégralité de vos coordonnées bancaires.",
+        )
+    elif english:
         subject = "Action required – add a card for your Piano Academie subscription"
         body = render_branded_email(
             preview="A payment card is required for your next subscription renewal.",
@@ -371,7 +480,7 @@ def run_subscription_payment_action_reminder_job(
                 .join(User, User.id == ClientPlanSubscription.user_id)
                 .where(
                     Plan.kind == PlanKind.SUBSCRIPTION,
-                    ClientPlanSubscription.billing_method_code == "CARD_ONLINE",
+                    ClientPlanSubscription.billing_method_code.in_(SUPPORTED_RECURRING_PAYMENT_METHODS),
                     ClientPlanSubscription.status.in_(
                         [SubscriptionStatus.PENDING, SubscriptionStatus.ACTIVE, SubscriptionStatus.PAYMENT_ALERT]
                     ),
@@ -391,7 +500,14 @@ def run_subscription_payment_action_reminder_job(
                                 ClientPlanSubscription.payment_provider_payment_method_ref.is_(None),
                                 ~ClientPlanSubscription.payment_provider_payment_method_ref.like("pm_%"),
                                 ClientPlanSubscription.payment_method_type.is_(None),
-                                ClientPlanSubscription.payment_method_type != "card",
+                                and_(
+                                    ClientPlanSubscription.billing_method_code == "CARD_ONLINE",
+                                    ClientPlanSubscription.payment_method_type != "card",
+                                ),
+                                and_(
+                                    ClientPlanSubscription.billing_method_code == "SEPA_DEBIT",
+                                    ClientPlanSubscription.payment_method_type != "sepa_debit",
+                                ),
                             ),
                             _due_date_window_condition(
                                 func.coalesce(

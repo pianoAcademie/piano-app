@@ -9,6 +9,7 @@ from uuid import uuid4
 from app.models.plan import SubscriptionStatus
 from app.services.subscription_payment_reminders import (
     _has_valid_stripe_card,
+    _has_valid_stripe_recurring_method,
     _payment_issue_and_due_at,
     _reminder_phase,
     build_subscription_payment_reminder_email,
@@ -29,6 +30,7 @@ def _subscription(**overrides):
         "payment_provider_payment_method_ref": "pm_saved",
         "payment_method_type": "card",
         "payment_method_setup_required": False,
+        "billing_method_code": "CARD_ONLINE",
         "initial_total_incl_vat": "125.00",
         "initial_currency_code": "EUR",
     }
@@ -66,6 +68,28 @@ class SubscriptionPaymentReminderTests(unittest.TestCase):
     def test_active_subscription_with_valid_stripe_card_needs_no_reminder(self) -> None:
         subscription = _subscription(status=SubscriptionStatus.ACTIVE)
         self.assertIsNone(_payment_issue_and_due_at(subscription))
+
+    def test_active_subscription_with_valid_stripe_sepa_mandate_needs_no_reminder(self) -> None:
+        subscription = _subscription(
+            status=SubscriptionStatus.ACTIVE,
+            billing_method_code="SEPA_DEBIT",
+            payment_method_type="sepa_debit",
+        )
+        self.assertTrue(_has_valid_stripe_recurring_method(subscription))
+        self.assertIsNone(_payment_issue_and_due_at(subscription))
+
+    def test_active_subscription_without_sepa_mandate_requires_payment_method(self) -> None:
+        subscription = _subscription(
+            status=SubscriptionStatus.ACTIVE,
+            billing_method_code="SEPA_DEBIT",
+            payment_provider_payment_method_ref=None,
+            payment_method_type=None,
+            payment_method_setup_required=True,
+        )
+        self.assertEqual(
+            _payment_issue_and_due_at(subscription),
+            ("payment_method", subscription.next_payment_at),
+        )
 
     def test_active_subscription_without_card_requires_payment_method(self) -> None:
         subscription = _subscription(
@@ -133,6 +157,75 @@ class SubscriptionPaymentReminderTests(unittest.TestCase):
 
         self.assertIn("add a card", rendered.subject)
         self.assertIn("ADD MY CARD", rendered.body)
+        self.assertIn("tab=offers", rendered.body)
+        self.assertIn(f"offer_detail_id={subscription.id}", rendered.body)
+
+    @patch("app.services.subscription_payment_reminders.resolve_frontend_base_url", return_value="https://piano-academie.example")
+    def test_french_overdue_sepa_email_requests_card_then_future_mandate(self, _base_url) -> None:
+        subscription = _subscription(
+            status=SubscriptionStatus.ACTIVE,
+            billing_method_code="SEPA_DEBIT",
+            payment_provider_payment_method_ref=None,
+            payment_method_type=None,
+            payment_method_setup_required=True,
+        )
+        plan = SimpleNamespace(name="Abonnement mensuel présentiel", monthly_price_value="125.00", currency_code="EUR")
+        recipient = SimpleNamespace(
+            id=uuid4(),
+            email="client@example.test",
+            first_name="Gwendoline",
+            last_name="Gautier",
+            preferred_language="fr",
+        )
+
+        rendered = build_subscription_payment_reminder_email(
+            subscription=subscription,
+            plan=plan,
+            recipient=recipient,
+            issue="payment_method",
+            phase="overdue",
+            due_at=subscription.next_payment_at,
+        )
+
+        self.assertIn("par carte", rendered.subject)
+        self.assertIn("RÉGLER MAINTENANT PAR CARTE", rendered.body)
+        self.assertIn("Carte bancaire sécurisée par Stripe", rendered.body)
+        self.assertIn("Étape 1", rendered.body)
+        self.assertIn("Étape 2", rendered.body)
+        self.assertIn("prélèvements mensuels suivants", rendered.body)
+        self.assertIn("tab=finance", rendered.body)
+        self.assertIn(f"payment_id={subscription.id}", rendered.body)
+
+    @patch("app.services.subscription_payment_reminders.resolve_frontend_base_url", return_value="https://piano-academie.example")
+    def test_french_upcoming_sepa_email_requests_mandate_without_payment(self, _base_url) -> None:
+        subscription = _subscription(
+            status=SubscriptionStatus.ACTIVE,
+            billing_method_code="SEPA_DEBIT",
+            payment_provider_payment_method_ref=None,
+            payment_method_type=None,
+            payment_method_setup_required=True,
+        )
+        plan = SimpleNamespace(name="Abonnement mensuel présentiel", monthly_price_value="125.00", currency_code="EUR")
+        recipient = SimpleNamespace(
+            id=uuid4(),
+            email="client@example.test",
+            first_name="Gwendoline",
+            last_name="Gautier",
+            preferred_language="fr",
+        )
+
+        rendered = build_subscription_payment_reminder_email(
+            subscription=subscription,
+            plan=plan,
+            recipient=recipient,
+            issue="payment_method",
+            phase="before_due",
+            due_at=subscription.next_payment_at,
+        )
+
+        self.assertIn("mandat SEPA", rendered.subject)
+        self.assertIn("ENREGISTRER MON MANDAT SEPA", rendered.body)
+        self.assertIn("Aucun paiement n’est effectué maintenant", rendered.body)
         self.assertIn("tab=offers", rendered.body)
         self.assertIn(f"offer_detail_id={subscription.id}", rendered.body)
 

@@ -525,6 +525,34 @@ def _subscription_payment_status(subscription: ClientPlanSubscription) -> str:
     return "PENDING"
 
 
+def _sepa_setup_checkout_is_allowed(
+    subscription: ClientPlanSubscription,
+    *,
+    now: datetime,
+) -> bool:
+    """Use a SetupIntent only while the next SEPA instalment is not yet due.
+
+    Once the instalment is due, the client must first settle it immediately by
+    card.  The successful card payment advances the subscription period while
+    keeping the SEPA setup requirement, so the mandate can then be registered
+    for subsequent renewals.
+    """
+    method_code = (subscription.billing_method_code or "").strip().upper()
+    normalized_status = (
+        subscription.status.value
+        if hasattr(subscription.status, "value")
+        else str(subscription.status)
+    ).strip().upper()
+    if (
+        method_code != "SEPA_DEBIT"
+        or not subscription.payment_method_setup_required
+        or normalized_status not in {"ACTIVE", "PAYMENT_ALERT"}
+    ):
+        return False
+    due_at = subscription.next_payment_at or subscription.current_period_end or subscription.ends_at
+    return due_at is None or due_at > now
+
+
 def _sportigo_opening_balance_has_new_app_payment(subscription: ClientPlanSubscription) -> bool:
     if (subscription.migration_source_code or "").strip().upper() != SPORTIGO_OPENING_BALANCE_SOURCE_CODE:
         return True
@@ -3903,11 +3931,9 @@ def create_client_payment_checkout(
     if method_code not in ONLINE_COLLECTION_METHOD_CODES:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Ce paiement n'utilise pas un moyen en ligne")
     now = _utcnow()
-    is_sepa_setup = (
-        plan.kind == PlanKind.SUBSCRIPTION
-        and subscription.payment_method_setup_required
-        and subscription.status == SubscriptionStatus.ACTIVE
-        and method_code == "SEPA_DEBIT"
+    is_sepa_setup = plan.kind == PlanKind.SUBSCRIPTION and _sepa_setup_checkout_is_allowed(
+        subscription,
+        now=now,
     )
     if is_sepa_setup:
         customer_reference = (subscription.payment_provider_customer_ref or "").strip()
@@ -4048,6 +4074,15 @@ def create_client_subscription_payment_method_setup(
     method_code = (billing_method_code or existing_method_code).strip().upper()
     if method_code not in {"CARD_ONLINE", "SEPA_DEBIT"} or (configured_methods and method_code not in configured_methods):
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Moyen de paiement non autorise pour cet abonnement")
+    if (
+        method_code == "SEPA_DEBIT"
+        and subscription.payment_method_setup_required
+        and not _sepa_setup_checkout_is_allowed(subscription, now=_utcnow())
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Reglez d'abord l'echeance en retard par carte, puis enregistrez le mandat SEPA pour les suivantes",
+        )
     payment_method_type = "sepa_debit" if method_code == "SEPA_DEBIT" else "card"
     setup_return_path = _safe_client_payment_setup_return_path(return_to)
     setup_query = f"source=PAYMENT_METHOD_SETUP&payment_id={subscription.id}"

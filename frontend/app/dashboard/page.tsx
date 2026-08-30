@@ -277,6 +277,19 @@ function safeDate(value: string | null | undefined): Date | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
+function requiresCurrentSepaInstalmentByCard(subscription: SubscriptionOut, now: Date): boolean {
+  if (
+    !subscription.payment_method_setup_required
+    || normalizeStatus(subscription.billing_method_code || "") !== "SEPA_DEBIT"
+  ) {
+    return false;
+  }
+  const dueAt = safeDate(
+    subscription.next_payment_at || subscription.current_period_end || subscription.ends_at,
+  );
+  return dueAt !== null && dueAt.getTime() <= now.getTime();
+}
+
 function parseTab(value: string): DashboardTab {
   if (value === "transactions") {
     return "finance";
@@ -2928,6 +2941,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     return null;
   };
   const selectedSessionRenewalSubscription = selectedSessionPlanningState?.renewalSubscription ?? null;
+  const selectedSessionRequiresCurrentSepaCardPayment = selectedSessionRenewalSubscription
+    ? requiresCurrentSepaInstalmentByCard(selectedSessionRenewalSubscription, now)
+    : false;
   const selectedSessionRenewalPaymentMethods = selectedSessionRenewalSubscription
     ? renewalPaymentMethodsForSubscription(selectedSessionRenewalSubscription)
     : [];
@@ -3370,34 +3386,47 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
             <section className="flash-warn">
               {paymentMethodSetupSubscriptions.map((sub) => {
                 const isSepaSetup = normalizeStatus(sub.billing_method_code || "") === "SEPA_DEBIT";
+                const requiresCardPaymentNow = requiresCurrentSepaInstalmentByCard(sub, now);
                 const renewalDate = formatDate(sub.next_payment_at || sub.current_period_end, language);
                 const renewalPaymentMethods = renewalPaymentMethodsForSubscription(sub);
                 return (
                   <div key={`payment-method-setup-${sub.id}`}>
                     <p>
-                      {isSepaSetup
+                      {requiresCardPaymentNow
+                        ? t("client.sepa_overdue_card_then_mandate", { date: renewalDate })
+                        : isSepaSetup
                         ? t("client.sepa_mandate_required_for_renewal", { date: renewalDate })
                         : t("client.payment_method_required_at_renewal", { date: renewalDate })}
                     </p>
-                    <form action={openClientPaymentMethodSetupAction}>
-                      <input type="hidden" name="subscription_id" value={sub.id} />
-                      <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "offers", offer_detail_id: sub.id })} />
-                      {renewalPaymentMethods.length > 1 ? (
-                        <label>
-                          {t("client.catalog_renewal_method")}
-                          <select name="billing_method_code" defaultValue={sub.billing_method_code || "CARD_ONLINE"}>
-                            {renewalPaymentMethods.map((method) => (
-                              <option key={method} value={method}>{paymentMethodLabel(method, language)}</option>
-                            ))}
-                          </select>
-                        </label>
-                      ) : (
-                        <input type="hidden" name="billing_method_code" value={renewalPaymentMethods[0]} />
-                      )}
-                      <button type="submit" className="client-pay-cta">
-                        {t(isSepaSetup && renewalPaymentMethods.length === 1 ? "client.register_sepa_mandate" : "client.enter_payment_method")} · {sub.owner_display_name}
-                      </button>
-                    </form>
+                    {requiresCardPaymentNow ? (
+                      <form action={openClientPaymentCheckoutAction}>
+                        <input type="hidden" name="payment_id" value={sub.id} />
+                        <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "transactions" })} />
+                        <button type="submit" className="client-pay-cta">
+                          {t("client.pay_now_by_card")} · {sub.owner_display_name}
+                        </button>
+                      </form>
+                    ) : (
+                      <form action={openClientPaymentMethodSetupAction}>
+                        <input type="hidden" name="subscription_id" value={sub.id} />
+                        <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "offers", offer_detail_id: sub.id })} />
+                        {renewalPaymentMethods.length > 1 ? (
+                          <label>
+                            {t("client.catalog_renewal_method")}
+                            <select name="billing_method_code" defaultValue={sub.billing_method_code || "CARD_ONLINE"}>
+                              {renewalPaymentMethods.map((method) => (
+                                <option key={method} value={method}>{paymentMethodLabel(method, language)}</option>
+                              ))}
+                            </select>
+                          </label>
+                        ) : (
+                          <input type="hidden" name="billing_method_code" value={renewalPaymentMethods[0]} />
+                        )}
+                        <button type="submit" className="client-pay-cta">
+                          {t(isSepaSetup && renewalPaymentMethods.length === 1 ? "client.register_sepa_mandate" : "client.enter_payment_method")} · {sub.owner_display_name}
+                        </button>
+                      </form>
+                    )}
                   </div>
                 );
               })}
@@ -4436,42 +4465,58 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 
                     {!selectedSessionHasBooking && selectedSessionRenewalSubscription ? (
                       <section className="modal-card client-session-inline-warning">
-                        <strong>{t("client.renewal_required_title")}</strong>
+                        <strong>
+                          {t(selectedSessionRequiresCurrentSepaCardPayment
+                            ? "client.sepa_overdue_title"
+                            : "client.renewal_required_title")}
+                        </strong>
                         <p>
-                          {t("client.renewal_required_for_future_booking", {
+                          {t(selectedSessionRequiresCurrentSepaCardPayment
+                            ? "client.sepa_overdue_booking_help"
+                            : "client.renewal_required_for_future_booking", {
                             date: formatDate(
                               selectedSessionRenewalSubscription.next_payment_at || selectedSessionRenewalSubscription.ends_at,
                               language,
                             ),
                           })}
                         </p>
-                        <form action={openClientPaymentMethodSetupAction}>
-                          <input type="hidden" name="subscription_id" value={selectedSessionRenewalSubscription.id} />
-                          <input type="hidden" name="return_to" value={selectedSessionReturnTo} />
-                          {selectedSessionRenewalPaymentMethods.length > 1 ? (
-                            <label>
-                              {t("client.catalog_renewal_method")}
-                              <select
-                                name="billing_method_code"
-                                defaultValue={selectedSessionRenewalSubscription.billing_method_code || "CARD_ONLINE"}
-                              >
-                                {selectedSessionRenewalPaymentMethods.map((method) => (
-                                  <option key={method} value={method}>{paymentMethodLabel(method, language)}</option>
-                                ))}
-                              </select>
-                            </label>
-                          ) : (
-                            <input type="hidden" name="billing_method_code" value={selectedSessionRenewalPaymentMethods[0]} />
-                          )}
-                          <button type="submit" className="client-session-primary-button">
-                            {t(
-                              selectedSessionRenewalPaymentMethods.length === 1
-                                && selectedSessionRenewalPaymentMethods[0] === "SEPA_DEBIT"
-                                ? "client.register_sepa_mandate"
-                                : "client.enter_payment_method",
+                        {selectedSessionRequiresCurrentSepaCardPayment ? (
+                          <form action={openClientPaymentCheckoutAction}>
+                            <input type="hidden" name="payment_id" value={selectedSessionRenewalSubscription.id} />
+                            <input type="hidden" name="return_to" value={selectedSessionReturnTo} />
+                            <button type="submit" className="client-session-primary-button">
+                              {t("client.pay_now_by_card")}
+                            </button>
+                          </form>
+                        ) : (
+                          <form action={openClientPaymentMethodSetupAction}>
+                            <input type="hidden" name="subscription_id" value={selectedSessionRenewalSubscription.id} />
+                            <input type="hidden" name="return_to" value={selectedSessionReturnTo} />
+                            {selectedSessionRenewalPaymentMethods.length > 1 ? (
+                              <label>
+                                {t("client.catalog_renewal_method")}
+                                <select
+                                  name="billing_method_code"
+                                  defaultValue={selectedSessionRenewalSubscription.billing_method_code || "CARD_ONLINE"}
+                                >
+                                  {selectedSessionRenewalPaymentMethods.map((method) => (
+                                    <option key={method} value={method}>{paymentMethodLabel(method, language)}</option>
+                                  ))}
+                                </select>
+                              </label>
+                            ) : (
+                              <input type="hidden" name="billing_method_code" value={selectedSessionRenewalPaymentMethods[0]} />
                             )}
-                          </button>
-                        </form>
+                            <button type="submit" className="client-session-primary-button">
+                              {t(
+                                selectedSessionRenewalPaymentMethods.length === 1
+                                  && selectedSessionRenewalPaymentMethods[0] === "SEPA_DEBIT"
+                                  ? "client.register_sepa_mandate"
+                                  : "client.enter_payment_method",
+                              )}
+                            </button>
+                          </form>
+                        )}
                       </section>
                     ) : null}
 
@@ -6459,6 +6504,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       <div className="list client-mobile-list">
                         {paymentMethodSubscriptions.map((sub) => {
                           const expiry = paymentMethodExpiryLabel(sub.payment_method_exp_month, sub.payment_method_exp_year);
+                          const requiresCardPaymentNow = requiresCurrentSepaInstalmentByCard(sub, now);
+                          const isSepaSetup = normalizeStatus(sub.billing_method_code || "") === "SEPA_DEBIT";
                           return (
                             <article key={`mobile-payment-method-${sub.id}`} className="item client-payment-method-card">
                               <div className="row spread">
@@ -6475,14 +6522,28 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                               {expiry ? <p className="muted">{t("client.expires_on", { date: expiry })}</p> : null}
                             {sub.payment_method_setup_required ? (
                                 <div className="stack-sm">
-                                  <p className="muted">{t("client.payment_method_will_be_requested")}</p>
-                                  <form action={openClientPaymentMethodSetupAction}>
-                                    <input type="hidden" name="subscription_id" value={sub.id} />
-                                    <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "account" })} />
-                                    <button type="submit" className="mode-link client-payment-method-action">
-                                      {t("client.enter_payment_method")}
-                                    </button>
-                                  </form>
+                                  <p className="muted">
+                                    {t(requiresCardPaymentNow
+                                      ? "client.sepa_overdue_card_then_mandate_short"
+                                      : "client.payment_method_will_be_requested")}
+                                  </p>
+                                  {requiresCardPaymentNow ? (
+                                    <form action={openClientPaymentCheckoutAction}>
+                                      <input type="hidden" name="payment_id" value={sub.id} />
+                                      <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "account" })} />
+                                      <button type="submit" className="mode-link client-payment-method-action">
+                                        {t("client.pay_now_by_card")}
+                                      </button>
+                                    </form>
+                                  ) : (
+                                    <form action={openClientPaymentMethodSetupAction}>
+                                      <input type="hidden" name="subscription_id" value={sub.id} />
+                                      <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "account" })} />
+                                      <button type="submit" className="mode-link client-payment-method-action">
+                                        {t(isSepaSetup ? "client.register_sepa_mandate" : "client.enter_payment_method")}
+                                      </button>
+                                    </form>
+                                  )}
                                 </div>
                               ) : (
                                 <form action={openClientPaymentMethodSetupAction}>
@@ -6722,6 +6783,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                   <div className="client-payment-method-grid">
                     {paymentMethodSubscriptions.map((sub) => {
                       const expiry = paymentMethodExpiryLabel(sub.payment_method_exp_month, sub.payment_method_exp_year);
+                      const requiresCardPaymentNow = requiresCurrentSepaInstalmentByCard(sub, now);
+                      const isSepaSetup = normalizeStatus(sub.billing_method_code || "") === "SEPA_DEBIT";
                       return (
                         <article key={`desktop-payment-method-${sub.id}`} className="item client-payment-method-card">
                           <div className="row spread">
@@ -6738,14 +6801,28 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           {expiry ? <p className="muted">{t("client.expires_on", { date: expiry })}</p> : null}
                           {sub.payment_method_setup_required ? (
                             <div className="stack-sm">
-                              <p className="muted">{t("client.payment_method_will_be_requested")}</p>
-                              <form action={openClientPaymentMethodSetupAction}>
-                                <input type="hidden" name="subscription_id" value={sub.id} />
-                                <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "account" })} />
-                                <button type="submit" className="mode-link client-payment-method-action">
-                                  {t("client.enter_payment_method")}
-                                </button>
-                              </form>
+                              <p className="muted">
+                                {t(requiresCardPaymentNow
+                                  ? "client.sepa_overdue_card_then_mandate_short"
+                                  : "client.payment_method_will_be_requested")}
+                              </p>
+                              {requiresCardPaymentNow ? (
+                                <form action={openClientPaymentCheckoutAction}>
+                                  <input type="hidden" name="payment_id" value={sub.id} />
+                                  <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "account" })} />
+                                  <button type="submit" className="mode-link client-payment-method-action">
+                                    {t("client.pay_now_by_card")}
+                                  </button>
+                                </form>
+                              ) : (
+                                <form action={openClientPaymentMethodSetupAction}>
+                                  <input type="hidden" name="subscription_id" value={sub.id} />
+                                  <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "account" })} />
+                                  <button type="submit" className="mode-link client-payment-method-action">
+                                    {t(isSepaSetup ? "client.register_sepa_mandate" : "client.enter_payment_method")}
+                                  </button>
+                                </form>
+                              )}
                             </div>
                           ) : (
                             <form action={openClientPaymentMethodSetupAction}>

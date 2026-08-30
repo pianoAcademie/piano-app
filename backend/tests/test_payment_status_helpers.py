@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import sys
 import unittest
@@ -17,6 +18,7 @@ from app.api.routes.clients import (
     _invoice_status_from_payment_status,
     _is_failed_payment_status as _client_is_failed_payment_status,
     _manual_transaction_client_display,
+    _sepa_setup_checkout_is_allowed,
     _subscription_payment_status as _client_subscription_payment_status,
     _sportigo_opening_balance_has_new_app_payment,
     _subscription_payment_occurred_at,
@@ -25,6 +27,40 @@ from app.services.payment_checkout import _looks_like_local_callback_url, _paypl
 
 
 class PaymentStatusHelpersTests(unittest.TestCase):
+    def test_future_sepa_instalment_uses_mandate_setup_checkout(self) -> None:
+        now = datetime(2026, 8, 20, tzinfo=timezone.utc)
+        subscription = type(
+            "Subscription",
+            (),
+            {
+                "billing_method_code": "SEPA_DEBIT",
+                "payment_method_setup_required": True,
+                "status": type("Status", (), {"value": "ACTIVE"})(),
+                "next_payment_at": now + timedelta(days=7),
+                "current_period_end": None,
+                "ends_at": None,
+            },
+        )()
+
+        self.assertTrue(_sepa_setup_checkout_is_allowed(subscription, now=now))
+
+    def test_overdue_sepa_instalment_requires_card_checkout(self) -> None:
+        now = datetime(2026, 8, 30, tzinfo=timezone.utc)
+        subscription = type(
+            "Subscription",
+            (),
+            {
+                "billing_method_code": "SEPA_DEBIT",
+                "payment_method_setup_required": True,
+                "status": type("Status", (), {"value": "ACTIVE"})(),
+                "next_payment_at": now - timedelta(days=8),
+                "current_period_end": None,
+                "ends_at": None,
+            },
+        )()
+
+        self.assertFalse(_sepa_setup_checkout_is_allowed(subscription, now=now))
+
     def test_manual_refunds_are_negative_client_movements(self) -> None:
         self.assertEqual(_manual_transaction_client_display("PAYMENT"), ("MANUAL", Decimal("1")))
         self.assertEqual(_manual_transaction_client_display("REFUND"), ("REFUND", Decimal("-1")))
