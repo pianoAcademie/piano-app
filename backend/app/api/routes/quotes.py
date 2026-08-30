@@ -10041,6 +10041,9 @@ def _apply_followup_forfait_discount_rows(
     service_line_totals_by_activity: dict[UUID, dict[str, Decimal]] = {}
     course_type_by_id: dict[UUID, CourseType] = {}
     for line in service_lines:
+        if (line.meta or {}).get("annual_decision"):
+            # Per-course contractual terms replace legacy activity-wide discounts.
+            continue
         if line.activity_id is None:
             continue
         course_type = course_type_by_id.get(line.activity_id)
@@ -10108,6 +10111,11 @@ def _apply_followup_forfait_discount_rows(
 
         source_line = line_by_id.get(_source_line_id_from_billing_row(row))
         source_meta = _json_object(source_line.meta if source_line is not None else None)
+        if source_meta.get("annual_auto_discount"):
+            row_id = str(row.get("rowId") or "").strip()
+            if row_id:
+                consumed_row_ids.add(row_id)
+            continue
         discount_code = _normalize_discount_label(source_meta.get("discount_rule_code"))
         normalized_label = _normalize_discount_label(source_line.title if source_line is not None else row.get("label"))
         if _is_second_course_discount_token(normalized_label) or _is_second_course_discount_token(discount_code):
@@ -10156,7 +10164,7 @@ def _apply_followup_forfait_discount_rows(
             consumed_row_ids.add(row_id)
 
     if not adjustments_by_activity:
-        return set()
+        return consumed_row_ids
 
     now = _utcnow()
     for activity_id, values in adjustments_by_activity.items():

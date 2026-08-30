@@ -116,6 +116,23 @@ def test_cannot_stack_legacy_discounts(case):
         prepare_review(db, q, lines, request)
 
 
+def test_reviewed_discounts_never_collapse_into_legacy_activity_wide_rates(case):
+    from types import SimpleNamespace
+    from app.api.routes.quotes import _apply_followup_forfait_discount_rows
+    from app.models.plan import PlanKind
+    db, q, lines, request, actor, _ = case
+    request.expected_version = prepare_review(db, q, lines, request)["version"]
+    apply_review(db, q, lines, request, actor)
+    db.flush()
+    discounts = db.scalars(select(QuoteLine).where(QuoteLine.quote_id == q.id, QuoteLine.line_type == "discount")).all()
+    rows = [{"rowId": f"extra-{d.id}", "sourceLineId": str(d.id), "type": "discount", "amountTtc": str(d.amount_ttc)} for d in discounts]
+    consumed = _apply_followup_forfait_discount_rows(db, quote=q, subscription=SimpleNamespace(id=uuid4()),
+        plan=SimpleNamespace(kind=PlanKind.FORFAIT), transformation_payload={"billingResolution": {"rows": rows}})
+    assert consumed == {r["rowId"] for r in rows}
+    # The fake subscription ID has no row in the DB: attempting any legacy write would fail.
+    db.flush()
+
+
 def test_review_invalidates_after_exceptional_financial_adjustment(case):
     db, q, lines, request, actor, _ = case
     request.expected_version = prepare_review(db, q, lines, request)["version"]
