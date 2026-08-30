@@ -58,7 +58,7 @@ def upgrade() -> None:
             f"stdout:\n{result.stdout}\n"
             f"stderr:\n{result.stderr}"
         )
-    if "|summary|result=applied|" not in result.stdout and "|summary|result=already_repaired|" not in result.stdout:
+    if "summary|result=applied|" not in result.stdout and "summary|result=already_repaired|" not in result.stdout:
         raise RuntimeError("Meline Flot June repair returned without a verified apply summary.")
 
 
