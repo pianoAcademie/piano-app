@@ -11,7 +11,7 @@ if str(ROOT_DIR) not in sys.path:
 
 from app.db.session import SessionLocal
 from app.services.notifications.domain.constants import SOURCE_ADMIN_BO
-from app.services.zendesk_contact_sync import DEFAULT_LIMIT, run_zendesk_contact_sync_job
+from app.services.zendesk_contact_sync import DEFAULT_LIMIT, ZendeskClient, run_zendesk_contact_sync_job
 
 
 def _arguments() -> argparse.Namespace:
@@ -36,6 +36,20 @@ def main() -> int:
     if args.limit < 1 or args.limit > 10_000:
         print("[ERROR] --limit doit être compris entre 1 et 10000.", file=sys.stderr)
         return 2
+
+    # The deployment pipeline only needs to validate the configured Zendesk
+    # credentials and read scope. Building every contact candidate for a dry
+    # run at that point duplicates the scheduled sync and can exhaust the small
+    # production VPS while the freshly built containers are all resident.
+    if args.check_connection and not args.apply:
+        try:
+            with ZendeskClient() as zendesk:
+                zendesk.check_connection()
+        except Exception as exc:
+            print(f"[ERROR] Connexion Zendesk impossible : {exc}", file=sys.stderr)
+            return 1
+        print("[OK] Connexion Zendesk et accès en lecture validés.")
+        return 0
 
     db = SessionLocal()
     try:
