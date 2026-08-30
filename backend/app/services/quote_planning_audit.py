@@ -102,6 +102,28 @@ def _money(value: object) -> Decimal:
     return Decimal(str(value or "0")).quantize(Decimal("0.01"))
 
 
+def _invoice_line_matches_booking_amount(
+    *,
+    line: ClientInvoiceLine,
+    booking: Booking,
+) -> bool:
+    """Compare the legally meaningful booking amount without false rounding alerts.
+
+    Older annual invoices can distribute the cents between HT and VAT per line
+    differently from the immutable booking snapshot.  When TTC, VAT rate and
+    currency agree, that allocation difference is only rounding and must not be
+    reported as a billing mismatch.
+    """
+
+    return (
+        _money(line.total_incl_vat) == _money(booking.total_incl_vat_snapshot)
+        and Decimal(str(line.vat_rate or "0")).quantize(Decimal("0.001"))
+        == Decimal(str(booking.vat_rate_snapshot or "0")).quantize(Decimal("0.001"))
+        and str(line.currency or "").strip().upper()
+        == str(booking.currency_snapshot or "").strip().upper()
+    )
+
+
 def _int_or_none(value: object) -> int | None:
     try:
         return int(str(value).strip())
@@ -547,11 +569,7 @@ def _audit_candidates(db: Session, *, school_year: str) -> tuple[int, list[Audit
                     for line in invoice_lines_by_booking_id.get(booking.id, []):
                         if line.occurred_at.astimezone(_zone(session_obj.timezone)).date() != session_date:
                             date_mismatch = True
-                        if (
-                            _money(line.amount_excl_vat) != _money(booking.price_excl_vat_snapshot)
-                            or _money(line.vat_amount) != _money(booking.vat_amount_snapshot)
-                            or _money(line.total_incl_vat) != _money(booking.total_incl_vat_snapshot)
-                        ):
+                        if not _invoice_line_matches_booking_amount(line=line, booking=booking):
                             amount_mismatch = True
                 if date_mismatch:
                     issue_codes.append("INVOICE_DATE_MISMATCH")

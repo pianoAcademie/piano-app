@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
+from decimal import Decimal
 from types import SimpleNamespace
 from uuid import uuid4
 
 from app.services.quote_planning_audit import (
     _confirmed_variance_matches,
     _expected_dates,
+    _invoice_line_matches_booking_amount,
     _paris_annual_target_count,
 )
 
@@ -81,6 +83,38 @@ def test_confirmed_variance_only_matches_the_recorded_audit_state() -> None:
         expected_sessions=15,
         booked_sessions=14,
     )
+
+
+def test_invoice_amount_comparison_accepts_only_ht_vat_rounding_distribution() -> None:
+    booking = SimpleNamespace(
+        price_excl_vat_snapshot=Decimal("16.66"),
+        vat_rate_snapshot=Decimal("20.000"),
+        vat_amount_snapshot=Decimal("3.34"),
+        total_incl_vat_snapshot=Decimal("20.00"),
+        currency_snapshot="EUR",
+    )
+    rounded_invoice_line = SimpleNamespace(
+        amount_excl_vat=Decimal("16.67"),
+        vat_rate=Decimal("20.000"),
+        vat_amount=Decimal("3.33"),
+        total_incl_vat=Decimal("20.00"),
+        currency="EUR",
+    )
+
+    assert _invoice_line_matches_booking_amount(line=rounded_invoice_line, booking=booking)
+
+    wrong_total = SimpleNamespace(
+        **{**rounded_invoice_line.__dict__, "total_incl_vat": Decimal("22.00")}
+    )
+    assert not _invoice_line_matches_booking_amount(line=wrong_total, booking=booking)
+
+    wrong_vat_rate = SimpleNamespace(
+        **{**rounded_invoice_line.__dict__, "vat_rate": Decimal("10.000")}
+    )
+    assert not _invoice_line_matches_booking_amount(line=wrong_vat_rate, booking=booking)
+
+    wrong_currency = SimpleNamespace(**{**rounded_invoice_line.__dict__, "currency": "USD"})
+    assert not _invoice_line_matches_booking_amount(line=wrong_currency, booking=booking)
 
 
 def test_expected_dates_follow_the_approved_schedule_key_and_ignore_parallel_group() -> None:
