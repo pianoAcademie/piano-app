@@ -85,6 +85,7 @@ type CreateSessionDraft = {
   visibility_scopes: SessionAudienceScope[];
   booking_scopes: SessionAudienceScope[];
   external_booking_price_ttc: string;
+  external_booking_price_unit: "PER_SESSION" | "PER_HOUR";
   public_description: string;
   private_description: string;
   professor_reminder_note: string;
@@ -913,6 +914,7 @@ function parseCreateSessionDraft(raw: string): CreateSessionDraft | null {
       visibility_scopes: visibilityScopes,
       booking_scopes: bookingScopes,
       external_booking_price_ttc: String(parsed.external_booking_price_ttc ?? ""),
+      external_booking_price_unit: String(parsed.external_booking_price_unit ?? "PER_SESSION") === "PER_HOUR" ? "PER_HOUR" : "PER_SESSION",
       public_description: String(parsed.public_description ?? ""),
       private_description: String(parsed.private_description ?? ""),
       professor_reminder_note: String(parsed.professor_reminder_note ?? ""),
@@ -2166,10 +2168,17 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                       defaultValue={createDraft?.external_booking_price_ttc || ""}
                       placeholder="ex. 35,00"
                     />
+                    <select
+                      name="external_booking_price_unit"
+                      defaultValue={createDraft?.external_booking_price_unit || "PER_SESSION"}
+                    >
+                      <option value="PER_SESSION">{pickText(language, "Prix total du cours", "Total price per session")}</option>
+                      <option value="PER_HOUR">{pickText(language, "Prix par heure", "Hourly price")}</option>
+                    </select>
                     <small className="muted">
                       {language === "en"
-                        ? "Leave empty to keep this slot hidden from the external integration."
-                        : "Laissez vide pour ne pas exposer ce creneau a l integration externe."}
+                        ? "Choose whether this is the full session price or an hourly rate. Leave empty to keep the slot hidden externally."
+                        : "Indiquez s'il s'agit du prix total du cours ou d'un tarif horaire. Laissez vide pour ne pas exposer ce creneau en externe."}
                     </small>
                   </label>
 
@@ -3263,10 +3272,14 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                         defaultValue={selectedSession.external_booking_price_ttc ?? ""}
                         placeholder="ex. 35,00"
                       />
+                      <select name="external_booking_price_unit" defaultValue={selectedSession.external_booking_price_unit || "PER_HOUR"}>
+                        <option value="PER_SESSION">{pickText(language, "Prix total du cours", "Total price per session")}</option>
+                        <option value="PER_HOUR">{pickText(language, "Prix par heure", "Hourly price")}</option>
+                      </select>
                       <small className="muted">
                         {language === "en"
-                          ? "Leave empty to remove this slot from the external iframe."
-                          : "Laissez vide pour retirer ce creneau de l iframe externe."}
+                          ? "Choose whether this is the full session price or an hourly rate. Leave empty to remove the slot from the external iframe."
+                          : "Indiquez s'il s'agit du prix total du cours ou d'un tarif horaire. Laissez vide pour retirer ce creneau de l'iframe externe."}
                       </small>
                     </label>
                   </div>

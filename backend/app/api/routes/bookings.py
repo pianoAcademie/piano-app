@@ -57,6 +57,15 @@ from app.services.notifications.application.orchestrator import (
     schedule_waitlist_promoted_notification,
 )
 from app.services.pricing import resolve_vat_rate
+from app.services.client_pricing import (
+    PriceUnit,
+    PricingChannel,
+    PricingComputation,
+    booking_snapshot_fields,
+    build_price_version,
+    compute_annual_forfait_price,
+    compute_fixed_price,
+)
 from app.services.reminders import ensure_booking_reminder, skip_pending_reminders_for_booking
 from app.services.session_automation import restore_cancelled_booking_credit
 from app.services.session_audience import (
@@ -572,18 +581,17 @@ def _forfait_subscription_pricing_applies(
     return True
 
 
-def _forfait_hourly_ttc_with_overrides(
+def _forfait_adjustment_values(
     *,
-    base_hourly_ttc: Decimal,
     subscription: ClientPlanSubscription | None,
     session_start_at: datetime,
     course_type_id: UUID,
     session_timezone: str,
     booking_id: UUID | None,
     db: Session,
-) -> Decimal:
+) -> tuple[Decimal, Decimal, Decimal, Decimal, bool]:
     if not _forfait_subscription_pricing_applies(subscription, session_start_at=session_start_at):
-        return base_hourly_ttc
+        return Decimal("0.00"), Decimal("0.00"), Decimal("0.00"), Decimal("0.00"), False
 
     loyalty_discount = Decimal("0.00")
     family_discount = Decimal("0.00")
@@ -618,19 +626,47 @@ def _forfait_hourly_ttc_with_overrides(
             booking_id=booking_id,
         )
     )
-    if second_course_weekly_applies and second_course_weekly_discount > loyalty_discount:
-        # "2e cours semaine" replaces fidelity discount when it is more favorable.
-        loyalty_discount = second_course_weekly_discount
-    if (
-        loyalty_discount <= Decimal("0.00")
-        and family_discount <= Decimal("0.00")
-        and short_commitment_supplement <= Decimal("0.00")
-    ):
-        return base_hourly_ttc
-    adjusted = (base_hourly_ttc - loyalty_discount - family_discount + short_commitment_supplement).quantize(Decimal("0.01"))
-    if adjusted < Decimal("0.00"):
-        return Decimal("0.00")
-    return adjusted
+    return (
+        loyalty_discount,
+        family_discount,
+        short_commitment_supplement,
+        second_course_weekly_discount,
+        second_course_weekly_applies,
+    )
+
+
+def _forfait_hourly_ttc_with_overrides(
+    *,
+    base_hourly_ttc: Decimal,
+    subscription: ClientPlanSubscription | None,
+    session_start_at: datetime,
+    course_type_id: UUID,
+    session_timezone: str,
+    booking_id: UUID | None,
+    db: Session,
+) -> Decimal:
+    loyalty, family, supplement, second_course, second_course_applies = _forfait_adjustment_values(
+        subscription=subscription,
+        session_start_at=session_start_at,
+        course_type_id=course_type_id,
+        session_timezone=session_timezone,
+        booking_id=booking_id,
+        db=db,
+    )
+    result = compute_annual_forfait_price(
+        base_hourly_ttc=base_hourly_ttc,
+        duration_hours=Decimal("1.00"),
+        loyalty_discount_per_hour_ttc=loyalty,
+        family_discount_per_hour_ttc=family,
+        second_course_discount_per_hour_ttc=second_course,
+        second_course_applies=second_course_applies,
+        short_commitment_supplement_per_hour_ttc=supplement,
+        vat_rate=Decimal("0.00"),
+        currency="EUR",
+        source=f"course-type:{course_type_id}",
+        version=f"course-type:{course_type_id}:v1",
+    )
+    return result.total_incl_vat
 
 
 def _forfait_week_utc_bounds(*, session_start_at: datetime, session_timezone: str) -> tuple[datetime, datetime]:
@@ -1035,7 +1071,7 @@ def _load_subscription_with_plan_for_update(
     return subscription, plan
 
 
-def _resolve_booking_snapshot(
+def _resolve_booking_pricing(
     db: Session,
     *,
     session_obj: CourseSession,
@@ -1044,18 +1080,60 @@ def _resolve_booking_snapshot(
     subscription: ClientPlanSubscription | None,
     plan: Plan | None,
     covered_by_manual_credit: bool = False,
-) -> tuple[Decimal, Decimal, Decimal, Decimal, str]:
+) -> PricingComputation:
     billing_profile = resolve_billing_profile(db, user)
     currency = (billing_profile.preferred_currency or "EUR").upper()
-
-    # For SUBSCRIPTION/PACK plan-backed bookings, there is no per-session pricing.
-    if covered_by_manual_credit or (plan is not None and plan.kind in (PlanKind.SUBSCRIPTION, PlanKind.PACK)):
-        zero = Decimal("0.00")
-        return zero, zero, zero, zero, currency
 
     course_type = db.scalar(select(CourseType).where(CourseType.id == session_obj.course_type_id))
     if course_type is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Course type not found")
+
+    duration_seconds = int(max((session_obj.end_at_utc - session_obj.start_at_utc).total_seconds(), 0))
+    if duration_seconds <= 0:
+        duration_seconds = int(max(course_type.duration_minutes, 0) * 60)
+    duration_hours = Decimal(duration_seconds) / Decimal("3600")
+    source = f"course-type:{course_type.id}"
+    version = build_price_version(
+        "course-type",
+        course_type_id=course_type.id,
+        default_hourly_rate=course_type.default_hourly_rate,
+        default_course_rate_ttc=course_type.default_course_rate_ttc,
+        duration_minutes=course_type.duration_minutes,
+        service_code=course_type.service_code,
+    )
+
+    # For SUBSCRIPTION/PACK plan-backed bookings, there is no per-session pricing.
+    if covered_by_manual_credit or (plan is not None and plan.kind in (PlanKind.SUBSCRIPTION, PlanKind.PACK)):
+        if covered_by_manual_credit:
+            channel = PricingChannel.MANUAL_CREDIT
+            source = f"manual-credit:course-type:{course_type.id}"
+        elif bool(getattr(plan, "is_trial_offer", False)):
+            channel = PricingChannel.TRIAL
+            source = f"trial-plan:{plan.id}"
+        elif plan is not None and plan.kind == PlanKind.PACK:
+            channel = PricingChannel.PACK
+            source = f"pack-plan:{plan.id}"
+        else:
+            channel = PricingChannel.SUBSCRIPTION
+            source = f"subscription-plan:{plan.id}" if plan is not None else source
+        version = build_price_version(
+            "plan-booking",
+            plan_id=getattr(plan, "id", None),
+            plan_kind=getattr(plan, "kind", None),
+            is_trial_offer=bool(getattr(plan, "is_trial_offer", False)),
+            course_type_version=version,
+        )
+        return compute_fixed_price(
+            channel=channel,
+            amount_ttc=Decimal("0.00"),
+            unit=PriceUnit.PER_SESSION,
+            duration_hours=duration_hours,
+            vat_rate=Decimal("0.00"),
+            currency=currency,
+            source=source,
+            version=version,
+            calculated_at=now,
+        )
 
     vat_country = _booking_vat_country(
         session_obj=session_obj,
@@ -1075,21 +1153,32 @@ def _resolve_booking_snapshot(
     duration_hours = Decimal(duration_seconds) / Decimal("3600")
 
     if subscription is None and plan is None and session_obj.external_booking_price_ttc is not None:
-        total_incl_vat = (Decimal(session_obj.external_booking_price_ttc) * duration_hours).quantize(Decimal("0.01"))
         currency = _account_default_currency(db, fallback=currency)
-        if vat_rate <= Decimal("0.00"):
-            amount_excl_vat = total_incl_vat
-            vat_amount = Decimal("0.00")
-        else:
-            divisor = Decimal("1.00") + (vat_rate / Decimal("100.00"))
-            amount_excl_vat = (total_incl_vat / divisor).quantize(Decimal("0.01")) if divisor > Decimal("0.00") else total_incl_vat
-            vat_amount = (total_incl_vat - amount_excl_vat).quantize(Decimal("0.01"))
-        return amount_excl_vat, vat_rate.quantize(Decimal("0.01")), vat_amount, total_incl_vat, currency
+        raw_unit = str(getattr(session_obj, "external_booking_price_unit", None) or PriceUnit.PER_HOUR.value)
+        unit = PriceUnit.PER_SESSION if raw_unit == PriceUnit.PER_SESSION.value else PriceUnit.PER_HOUR
+        version = build_price_version(
+            "external-session",
+            session_id=session_obj.id,
+            raw_amount_ttc=session_obj.external_booking_price_ttc,
+            unit=unit,
+            vat_rate=vat_rate,
+            course_type_version=version,
+        )
+        return compute_fixed_price(
+            channel=PricingChannel.EXTERNAL_UNIT,
+            amount_ttc=Decimal(session_obj.external_booking_price_ttc),
+            unit=unit,
+            duration_hours=duration_hours,
+            vat_rate=vat_rate,
+            currency=currency,
+            source=f"course-session:{session_obj.id}:external",
+            version=version,
+            calculated_at=now,
+        )
 
     hourly_ttc_decimal = _resolve_activity_base_hourly_ttc(course_type)
     if plan is not None and plan.kind == PlanKind.FORFAIT:
-        hourly_ttc_decimal = _forfait_hourly_ttc_with_overrides(
-            base_hourly_ttc=hourly_ttc_decimal,
+        loyalty, family, supplement, second_course, second_course_applies = _forfait_adjustment_values(
             subscription=subscription,
             session_start_at=session_obj.start_at_utc,
             course_type_id=course_type.id,
@@ -1097,17 +1186,64 @@ def _resolve_booking_snapshot(
             booking_id=None,
             db=db,
         )
-    total_incl_vat = (hourly_ttc_decimal * duration_hours).quantize(Decimal("0.01"))
+        version = build_price_version(
+            "annual-forfait",
+            course_type_version=version,
+            subscription_id=getattr(subscription, "id", None),
+            loyalty_discount=loyalty,
+            family_discount=family,
+            short_commitment_supplement=supplement,
+            second_course_discount=second_course,
+            second_course_applies=second_course_applies,
+            vat_rate=vat_rate,
+        )
+        return compute_annual_forfait_price(
+            base_hourly_ttc=hourly_ttc_decimal,
+            duration_hours=duration_hours,
+            loyalty_discount_per_hour_ttc=loyalty,
+            family_discount_per_hour_ttc=family,
+            second_course_discount_per_hour_ttc=second_course,
+            second_course_applies=second_course_applies,
+            short_commitment_supplement_per_hour_ttc=supplement,
+            vat_rate=vat_rate,
+            currency=currency,
+            source=f"subscription:{subscription.id}:course-type:{course_type.id}" if subscription is not None else source,
+            version=version,
+            calculated_at=now,
+        )
 
-    if vat_rate <= Decimal("0.00"):
-        amount_excl_vat = total_incl_vat
-        vat_amount = Decimal("0.00")
-    else:
-        divisor = Decimal("1.00") + (vat_rate / Decimal("100.00"))
-        amount_excl_vat = (total_incl_vat / divisor).quantize(Decimal("0.01")) if divisor > Decimal("0.00") else total_incl_vat
-        vat_amount = (total_incl_vat - amount_excl_vat).quantize(Decimal("0.01"))
+    return compute_fixed_price(
+        channel=PricingChannel.STANDARD,
+        amount_ttc=hourly_ttc_decimal,
+        unit=PriceUnit.PER_HOUR,
+        duration_hours=duration_hours,
+        vat_rate=vat_rate,
+        currency=currency,
+        source=source,
+        version=version,
+        calculated_at=now,
+    )
 
-    return amount_excl_vat, vat_rate.quantize(Decimal("0.01")), vat_amount, total_incl_vat, currency
+
+def _resolve_booking_snapshot(
+    db: Session,
+    *,
+    session_obj: CourseSession,
+    user: User,
+    now: datetime,
+    subscription: ClientPlanSubscription | None,
+    plan: Plan | None,
+    covered_by_manual_credit: bool = False,
+) -> tuple[Decimal, Decimal, Decimal, Decimal, str]:
+    return _resolve_booking_pricing(
+        db,
+        session_obj=session_obj,
+        user=user,
+        now=now,
+        subscription=subscription,
+        plan=plan,
+        covered_by_manual_credit=covered_by_manual_credit,
+    ).legacy_tuple()
 
 
 def _promote_waitlist_if_possible(
@@ -1450,7 +1586,7 @@ def _book_session_internal(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="No eligible active plan for this session",
         )
-    price, vat_rate, vat_amount, total, currency = _resolve_booking_snapshot(
+    pricing = _resolve_booking_pricing(
         db,
         session_obj=session_obj,
         user=booking_owner,
@@ -1459,6 +1595,8 @@ def _book_session_internal(
         plan=plan,
         covered_by_manual_credit=manual_credit_type_id is not None,
     )
+    price, vat_rate, vat_amount, total, currency = pricing.legacy_tuple()
+    pricing_fields = booking_snapshot_fields(pricing)
     is_trial_booking = bool(plan is not None and plan.is_trial_offer)
     if is_trial_booking and not _session_trial_allowed(session_obj, booking_owner.client_kind):
         raise HTTPException(
@@ -1516,6 +1654,8 @@ def _book_session_internal(
         booking.vat_amount_snapshot = vat_amount
         booking.total_incl_vat_snapshot = total
         booking.currency_snapshot = currency
+        for field_name, field_value in pricing_fields.items():
+            setattr(booking, field_name, field_value)
         booking.payment_hold_expires_at = payment_hold_expiration(now=now) if booking_status == BookingStatus.PENDING_PAYMENT else None
         booking.is_trial_course = is_trial_booking
         booking.trial_course_type_id = session_obj.course_type_id if is_trial_booking else None
@@ -1528,11 +1668,7 @@ def _book_session_internal(
             status=booking_status,
             booked_at=now,
             payment_hold_expires_at=payment_hold_expiration(now=now) if booking_status == BookingStatus.PENDING_PAYMENT else None,
-            price_excl_vat_snapshot=price,
-            vat_rate_snapshot=vat_rate,
-            vat_amount_snapshot=vat_amount,
-            total_incl_vat_snapshot=total,
-            currency_snapshot=currency,
+            **pricing_fields,
             is_trial_course=is_trial_booking,
             trial_course_type_id=session_obj.course_type_id if is_trial_booking else None,
         )
@@ -1603,6 +1739,13 @@ def _book_session_internal(
         vat_amount_snapshot=booking.vat_amount_snapshot,
         total_incl_vat_snapshot=booking.total_incl_vat_snapshot,
         currency_snapshot=booking.currency_snapshot,
+        pricing_snapshot_locked=booking.pricing_snapshot_locked,
+        pricing_channel_snapshot=booking.pricing_channel_snapshot,
+        pricing_source_snapshot=booking.pricing_source_snapshot,
+        pricing_unit_snapshot=booking.pricing_unit_snapshot,
+        price_book_version_snapshot=booking.price_book_version_snapshot,
+        pricing_breakdown_snapshot=booking.pricing_breakdown_snapshot or {},
+        pricing_calculated_at=booking.pricing_calculated_at,
         student_start_at_utc=booking.student_start_at_utc,
         student_end_at_utc=booking.student_end_at_utc,
         waitlist_position=_waitlist_position(db, booking),
@@ -1787,6 +1930,13 @@ def list_my_bookings(
             vat_amount_snapshot=booking.vat_amount_snapshot,
             total_incl_vat_snapshot=booking.total_incl_vat_snapshot,
             currency_snapshot=booking.currency_snapshot,
+            pricing_snapshot_locked=booking.pricing_snapshot_locked,
+            pricing_channel_snapshot=booking.pricing_channel_snapshot,
+            pricing_source_snapshot=booking.pricing_source_snapshot,
+            pricing_unit_snapshot=booking.pricing_unit_snapshot,
+            price_book_version_snapshot=booking.price_book_version_snapshot,
+            pricing_breakdown_snapshot=booking.pricing_breakdown_snapshot or {},
+            pricing_calculated_at=booking.pricing_calculated_at,
             student_start_at_utc=booking.student_start_at_utc,
             student_end_at_utc=booking.student_end_at_utc,
             session=SessionMiniOut(

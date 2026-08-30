@@ -160,6 +160,7 @@ from app.services.payment_receipts import (
 from app.services.payment_provider import PaymentProvider, detect_provider_from_reference, resolve_provider, resolve_webhook_secret
 from app.services.plan_entitlements import effective_entitlements_by_plan
 from app.services.pricing import compute_tax_totals, plan_service_code, resolve_plan_price, resolve_vat_rate
+from app.services.client_pricing import PriceUnit, amount_for_unit, compute_annual_forfait_price
 from app.services.session_audience import (
     allowed_plan_kinds_for_scopes,
     primary_session_audience_scope,
@@ -1306,19 +1307,19 @@ def _forfait_hourly_ttc_with_overrides(
             booking_id=booking_id,
         )
     )
-    if second_course_weekly_applies and second_course_weekly_discount > loyalty_discount:
-        # "2e cours semaine" replaces fidelity discount when it is more favorable.
-        loyalty_discount = second_course_weekly_discount
-    if (
-        loyalty_discount <= Decimal("0.00")
-        and family_discount <= Decimal("0.00")
-        and short_commitment_supplement <= Decimal("0.00")
-    ):
-        return base_hourly_ttc
-    adjusted = (base_hourly_ttc - loyalty_discount - family_discount + short_commitment_supplement).quantize(Decimal("0.01"))
-    if adjusted < Decimal("0.00"):
-        return Decimal("0.00")
-    return adjusted
+    return compute_annual_forfait_price(
+        base_hourly_ttc=base_hourly_ttc,
+        duration_hours=Decimal("1.00"),
+        loyalty_discount_per_hour_ttc=loyalty_discount,
+        family_discount_per_hour_ttc=family_discount,
+        second_course_discount_per_hour_ttc=second_course_weekly_discount,
+        second_course_applies=second_course_weekly_applies,
+        short_commitment_supplement_per_hour_ttc=short_commitment_supplement,
+        vat_rate=Decimal("0.00"),
+        currency="EUR",
+        source=f"course-type:{course_type_id}",
+        version=f"course-type:{course_type_id}:v1",
+    ).total_incl_vat
 
 
 def _forfait_week_utc_bounds(*, session_start_at: datetime, session_timezone: str) -> tuple[datetime, datetime]:
@@ -1737,7 +1738,12 @@ def _session_purchase_catalog(
         if duration_seconds <= 0:
             duration_seconds = int(max(course_type.duration_minutes, 0) * 60)
         duration_hours = Decimal(duration_seconds) / Decimal("3600")
-        direct_payment_amount = (Decimal(session_obj.external_booking_price_ttc) * duration_hours).quantize(Decimal("0.01"))
+        raw_unit = str(getattr(session_obj, "external_booking_price_unit", None) or PriceUnit.PER_HOUR.value)
+        direct_payment_amount = amount_for_unit(
+            Decimal(session_obj.external_booking_price_ttc),
+            unit=PriceUnit.PER_SESSION if raw_unit == PriceUnit.PER_SESSION.value else PriceUnit.PER_HOUR,
+            duration_hours=duration_hours,
+        )
     direct_payment_currency = (
         (getattr(session_obj, "external_booking_currency", None) or _account_default_currency(db)).upper()
         if direct_payment_amount is not None
@@ -2649,12 +2655,23 @@ def list_client_visible_sessions(
         booked = int(booked_count or 0)
         seats_remaining = max(session.capacity_max - booked, 0)
         external_booking_price_ttc = None
+        external_booking_price_unit = str(
+            getattr(session, "external_booking_price_unit", None) or PriceUnit.PER_HOUR.value
+        )
         if session.external_booking_price_ttc is not None:
             duration_seconds = int(max((session.end_at_utc - session.start_at_utc).total_seconds(), 0))
             if duration_seconds <= 0:
                 duration_seconds = int(max(course_type.duration_minutes, 0) * 60)
             duration_hours = Decimal(duration_seconds) / Decimal("3600")
-            external_booking_price_ttc = (Decimal(session.external_booking_price_ttc) * duration_hours).quantize(Decimal("0.01"))
+            external_booking_price_ttc = amount_for_unit(
+                Decimal(session.external_booking_price_ttc),
+                unit=(
+                    PriceUnit.PER_SESSION
+                    if external_booking_price_unit == PriceUnit.PER_SESSION.value
+                    else PriceUnit.PER_HOUR
+                ),
+                duration_hours=duration_hours,
+            )
         payload.append(
             SessionOut(
                 id=session.id,
@@ -2682,6 +2699,7 @@ def list_client_visible_sessions(
                 booking_scope=booking_scope,
                 online_booking_enabled=booking_scopes != [SessionAudienceScope.PRIVATE],
                 external_booking_price_ttc=external_booking_price_ttc,
+                external_booking_price_unit=external_booking_price_unit,
                 external_booking_currency=external_booking_currency if session.external_booking_price_ttc is not None else None,
                 show_external_remaining_seats=bool(session.show_external_remaining_seats),
                 zoom_link=session.zoom_link,
@@ -3186,6 +3204,13 @@ def get_client_family_overview(
                 vat_amount_snapshot=booking.vat_amount_snapshot,
                 total_incl_vat_snapshot=booking.total_incl_vat_snapshot,
                 currency_snapshot=booking.currency_snapshot,
+                pricing_snapshot_locked=booking.pricing_snapshot_locked,
+                pricing_channel_snapshot=booking.pricing_channel_snapshot,
+                pricing_source_snapshot=booking.pricing_source_snapshot,
+                pricing_unit_snapshot=booking.pricing_unit_snapshot,
+                price_book_version_snapshot=booking.price_book_version_snapshot,
+                pricing_breakdown_snapshot=booking.pricing_breakdown_snapshot or {},
+                pricing_calculated_at=booking.pricing_calculated_at,
                 session=FamilySessionMiniOut(
                     id=session.id,
                     title=session.title,

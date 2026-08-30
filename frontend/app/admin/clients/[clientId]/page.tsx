@@ -7985,6 +7985,16 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                   vat: formatVatRateLabel(row.vat_rate_snapshot),
                                 })}
                               </small>
+                              {row.pricing_snapshot_locked ? (
+                                <small
+                                  className="muted"
+                                  title={row.pricing_source_snapshot ?? undefined}
+                                >
+                                  {language === "en" ? "Locked price" : "Tarif figé"}
+                                  {row.pricing_channel_snapshot ? ` · ${row.pricing_channel_snapshot}` : ""}
+                                  {row.price_book_version_snapshot ? ` · ${row.price_book_version_snapshot}` : ""}
+                                </small>
+                              ) : null}
                             </div>
                           </td>
                           <td>

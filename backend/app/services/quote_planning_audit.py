@@ -470,6 +470,7 @@ def _copy_session(db: Session, *, template: CourseSession, target_date: date) ->
         visibility_scope=template.visibility_scope,
         booking_scope=template.booking_scope,
         external_booking_price_ttc=template.external_booking_price_ttc,
+        external_booking_price_unit=template.external_booking_price_unit,
         show_external_remaining_seats=template.show_external_remaining_seats,
         timezone=template.timezone,
         recurrence_group_id=template.recurrence_group_id,

@@ -1720,6 +1720,13 @@ class AdminClientBookingOut(BaseModel):
     vat_amount_snapshot: Decimal
     total_incl_vat_snapshot: Decimal
     currency_snapshot: str
+    pricing_snapshot_locked: bool = False
+    pricing_channel_snapshot: str | None = None
+    pricing_source_snapshot: str | None = None
+    pricing_unit_snapshot: str | None = None
+    price_book_version_snapshot: str | None = None
+    pricing_breakdown_snapshot: dict[str, object] = Field(default_factory=dict)
+    pricing_calculated_at: datetime | None = None
     scheduled_service_date: date | None = None
     service_completed_at: datetime | None = None
     payment_received: bool = False
@@ -2419,6 +2426,7 @@ class AdminSessionCreateRequest(BaseModel):
     is_private: bool | None = None
     allow_online_booking: bool | None = None
     external_booking_price_ttc: Decimal | None = Field(default=None, ge=0)
+    external_booking_price_unit: Literal["PER_SESSION", "PER_HOUR"] = "PER_SESSION"
     show_external_remaining_seats: bool = True
     timezone: str | None = Field(default=None, min_length=2, max_length=100)
     recurrence: AdminSessionRecurrenceRequest | None = None
@@ -2459,6 +2467,7 @@ class AdminSessionUpdateRequest(BaseModel):
     is_private: bool | None = None
     allow_online_booking: bool | None = None
     external_booking_price_ttc: Decimal | None = Field(default=None, ge=0)
+    external_booking_price_unit: Literal["PER_SESSION", "PER_HOUR"] | None = None
     show_external_remaining_seats: bool | None = None
     timezone: str | None = Field(default=None, min_length=2, max_length=100)
     recurrence: AdminSessionRecurrenceRequest | None = None
@@ -2521,6 +2530,7 @@ class AdminSessionOut(BaseModel):
     is_private: bool
     allow_online_booking: bool
     external_booking_price_ttc: Decimal | None
+    external_booking_price_unit: Literal["PER_SESSION", "PER_HOUR"]
     show_external_remaining_seats: bool
     timezone: str
     recurrence_group_id: UUID | None

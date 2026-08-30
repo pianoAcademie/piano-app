@@ -5,7 +5,7 @@ from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.models.catalog import BookingStatus, SessionStatus
 
@@ -46,6 +46,13 @@ class BookingOut(BaseModel):
     vat_amount_snapshot: Decimal
     total_incl_vat_snapshot: Decimal
     currency_snapshot: str
+    pricing_snapshot_locked: bool = False
+    pricing_channel_snapshot: str | None = None
+    pricing_source_snapshot: str | None = None
+    pricing_unit_snapshot: str | None = None
+    price_book_version_snapshot: str | None = None
+    pricing_breakdown_snapshot: dict[str, object] = Field(default_factory=dict)
+    pricing_calculated_at: datetime | None = None
     student_start_at_utc: datetime | None = None
     student_end_at_utc: datetime | None = None
     waitlist_position: int | None = None
@@ -63,6 +70,13 @@ class ClientBookingOut(BaseModel):
     vat_amount_snapshot: Decimal
     total_incl_vat_snapshot: Decimal
     currency_snapshot: str
+    pricing_snapshot_locked: bool = False
+    pricing_channel_snapshot: str | None = None
+    pricing_source_snapshot: str | None = None
+    pricing_unit_snapshot: str | None = None
+    price_book_version_snapshot: str | None = None
+    pricing_breakdown_snapshot: dict[str, object] = Field(default_factory=dict)
+    pricing_calculated_at: datetime | None = None
     student_start_at_utc: datetime | None = None
     student_end_at_utc: datetime | None = None
     session: SessionMiniOut

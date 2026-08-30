@@ -185,6 +185,7 @@ export type SessionOut = {
   booking_scope: SessionAudienceScope;
   online_booking_enabled: boolean;
   external_booking_price_ttc: string | null;
+  external_booking_price_unit: "PER_SESSION" | "PER_HOUR";
   external_booking_currency: string | null;
   show_external_remaining_seats: boolean;
   zoom_link: string | null;
@@ -320,6 +321,13 @@ export type ClientBookingOut = {
   vat_amount_snapshot: string;
   total_incl_vat_snapshot: string;
   currency_snapshot: string;
+  pricing_snapshot_locked: boolean;
+  pricing_channel_snapshot: string | null;
+  pricing_source_snapshot: string | null;
+  pricing_unit_snapshot: string | null;
+  price_book_version_snapshot: string | null;
+  pricing_breakdown_snapshot: Record<string, unknown>;
+  pricing_calculated_at: string | null;
   student_start_at_utc: string | null;
   student_end_at_utc: string | null;
   session: {
@@ -587,6 +595,13 @@ export type AdminClientBookingOut = {
   vat_amount_snapshot: string;
   total_incl_vat_snapshot: string;
   currency_snapshot: string;
+  pricing_snapshot_locked: boolean;
+  pricing_channel_snapshot: string | null;
+  pricing_source_snapshot: string | null;
+  pricing_unit_snapshot: string | null;
+  price_book_version_snapshot: string | null;
+  pricing_breakdown_snapshot: Record<string, unknown>;
+  pricing_calculated_at: string | null;
   scheduled_service_date: string | null;
   service_completed_at: string | null;
   payment_received: boolean;
@@ -1096,6 +1111,13 @@ export type ClientFamilyOverviewOut = {
     vat_amount_snapshot: string;
     total_incl_vat_snapshot: string;
     currency_snapshot: string;
+    pricing_snapshot_locked: boolean;
+    pricing_channel_snapshot: string | null;
+    pricing_source_snapshot: string | null;
+    pricing_unit_snapshot: string | null;
+    price_book_version_snapshot: string | null;
+    pricing_breakdown_snapshot: Record<string, unknown>;
+    pricing_calculated_at: string | null;
     session: {
       id: string;
       title: string;
@@ -1843,6 +1865,7 @@ export type AdminSessionOut = {
   is_private: boolean;
   allow_online_booking: boolean;
   external_booking_price_ttc: string | null;
+  external_booking_price_unit: "PER_SESSION" | "PER_HOUR";
   show_external_remaining_seats: boolean;
   timezone: string;
   recurrence_group_id: string | null;

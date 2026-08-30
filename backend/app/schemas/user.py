@@ -207,6 +207,13 @@ class FamilyBookingOut(BaseModel):
     vat_amount_snapshot: Decimal
     total_incl_vat_snapshot: Decimal
     currency_snapshot: str
+    pricing_snapshot_locked: bool = False
+    pricing_channel_snapshot: str | None = None
+    pricing_source_snapshot: str | None = None
+    pricing_unit_snapshot: str | None = None
+    price_book_version_snapshot: str | None = None
+    pricing_breakdown_snapshot: dict[str, object] = Field(default_factory=dict)
+    pricing_calculated_at: datetime | None = None
     session: FamilySessionMiniOut
 
 

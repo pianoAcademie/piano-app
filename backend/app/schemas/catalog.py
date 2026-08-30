@@ -92,6 +92,7 @@ class SessionOut(BaseModel):
     booking_scope: SessionAudienceScope
     online_booking_enabled: bool
     external_booking_price_ttc: Decimal | None = None
+    external_booking_price_unit: str = "PER_SESSION"
     external_booking_currency: str | None = None
     show_external_remaining_seats: bool = True
     zoom_link: str | None

@@ -180,6 +180,13 @@ def _to_booking_out(booking: Booking) -> BookingOut:
         vat_amount_snapshot=booking.vat_amount_snapshot,
         total_incl_vat_snapshot=booking.total_incl_vat_snapshot,
         currency_snapshot=booking.currency_snapshot,
+        pricing_snapshot_locked=booking.pricing_snapshot_locked,
+        pricing_channel_snapshot=booking.pricing_channel_snapshot,
+        pricing_source_snapshot=booking.pricing_source_snapshot,
+        pricing_unit_snapshot=booking.pricing_unit_snapshot,
+        price_book_version_snapshot=booking.price_book_version_snapshot,
+        pricing_breakdown_snapshot=booking.pricing_breakdown_snapshot or {},
+        pricing_calculated_at=booking.pricing_calculated_at,
         waitlist_position=None,
     )
 

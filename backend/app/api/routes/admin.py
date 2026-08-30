@@ -24,6 +24,7 @@ from app.api.routes.bookings import (
     _next_booking_status,
     _participant_capacity_block_reason,
     _promote_waitlist_if_possible,
+    _resolve_booking_pricing,
     _resolve_booking_snapshot,
     _restore_pack_credit,
     _select_eligible_subscription,
@@ -65,6 +66,13 @@ from app.services.automation_triggers import (
     schedule_trial_attended_triggers,
 )
 from app.services.booking_transfers import bookings_have_equivalent_financial_coverage
+from app.services.client_pricing import (
+    PricingChannel,
+    booking_snapshot_fields,
+    build_price_version,
+    compute_contract_price,
+    copy_booking_pricing_snapshot,
+)
 from app.services.invoice_documents import normalize_billing_entity
 from app.services.notifications.application.orchestrator import (
     cancel_pending_booking_reminder_notifications,
@@ -528,6 +536,7 @@ def _to_admin_session_out(
         is_private=is_private,
         allow_online_booking=allow_online_booking,
         external_booking_price_ttc=session_obj.external_booking_price_ttc,
+        external_booking_price_unit=session_obj.external_booking_price_unit,
         show_external_remaining_seats=bool(session_obj.show_external_remaining_seats),
         timezone=session_obj.timezone,
         recurrence_group_id=session_obj.recurrence_group_id,
@@ -758,12 +767,8 @@ def _copy_booking_payload(source: Booking, target: Booking) -> None:
     target.booked_at = source.booked_at
     target.cancelled_at = None
     target.cancellation_reason = None
-    target.price_excl_vat_snapshot = source.price_excl_vat_snapshot
-    target.vat_rate_snapshot = source.vat_rate_snapshot
-    target.vat_amount_snapshot = source.vat_amount_snapshot
-    target.total_incl_vat_snapshot = source.total_incl_vat_snapshot
-    target.currency_snapshot = source.currency_snapshot
-    target.pricing_snapshot_locked = source.pricing_snapshot_locked
+    for field_name, field_value in copy_booking_pricing_snapshot(source).items():
+        setattr(target, field_name, field_value)
     target.student_note = source.student_note
     target.internal_note = source.internal_note
 
@@ -928,13 +933,28 @@ def _move_planning_reorganization_booking_occurrence(
         moved_booking = target_booking
 
     if target_price_snapshot is not None:
-        (
-            moved_booking.price_excl_vat_snapshot,
-            moved_booking.vat_rate_snapshot,
-            moved_booking.vat_amount_snapshot,
-            moved_booking.total_incl_vat_snapshot,
-            moved_booking.currency_snapshot,
-        ) = target_price_snapshot
+        amount_ht, vat_rate, vat_amount, total_ttc, currency = target_price_snapshot
+        pricing = compute_contract_price(
+            channel=PricingChannel.MANUAL_OVERRIDE,
+            amount_excl_vat=amount_ht,
+            vat_rate=vat_rate,
+            vat_amount=vat_amount,
+            total_incl_vat=total_ttc,
+            currency=currency,
+            source=f"planning-reorganization:session:{target_session.id}",
+            version=build_price_version(
+                "planning-reorganization",
+                target_session_id=target_session.id,
+                amount_excl_vat=amount_ht,
+                vat_rate=vat_rate,
+                vat_amount=vat_amount,
+                total_incl_vat=total_ttc,
+                currency=currency,
+            ),
+            calculated_at=now,
+        )
+        for field_name, field_value in booking_snapshot_fields(pricing).items():
+            setattr(moved_booking, field_name, field_value)
     if lock_price_snapshot:
         moved_booking.pricing_snapshot_locked = True
 
@@ -4819,6 +4839,7 @@ def create_session(
                 is_private=is_private,
                 allow_online_booking=allow_online_booking,
                 external_booking_price_ttc=payload.external_booking_price_ttc,
+                external_booking_price_unit=payload.external_booking_price_unit,
                 show_external_remaining_seats=payload.show_external_remaining_seats,
                 timezone=session_timezone,
                 recurrence_group_id=recurrence_group_id,
@@ -5641,7 +5662,7 @@ def add_admin_session_booking(
                 add_detail("Cours d essai non autorise pour ce public sur ce creneau")
                 continue
 
-            price, vat_rate, vat_amount, total, currency = _resolve_booking_snapshot(
+            pricing = _resolve_booking_pricing(
                 db,
                 session_obj=target,
                 user=client,
@@ -5649,6 +5670,8 @@ def add_admin_session_booking(
                 subscription=subscription,
                 plan=plan,
             )
+            price, vat_rate, vat_amount, total, currency = pricing.legacy_tuple()
+            pricing_fields = booking_snapshot_fields(pricing)
             next_status = _next_booking_status(
                 db,
                 session_obj=target,
@@ -5686,11 +5709,7 @@ def add_admin_session_booking(
                     booked_at=now,
                     cancelled_at=None,
                     cancellation_reason=None,
-                    price_excl_vat_snapshot=price,
-                    vat_rate_snapshot=vat_rate,
-                    vat_amount_snapshot=vat_amount,
-                    total_incl_vat_snapshot=total,
-                    currency_snapshot=currency,
+                    **pricing_fields,
                     student_start_at_utc=student_start_at_utc,
                     student_end_at_utc=student_end_at_utc,
                     is_trial_course=is_trial_booking,
@@ -5709,6 +5728,8 @@ def add_admin_session_booking(
                 existing.vat_amount_snapshot = vat_amount
                 existing.total_incl_vat_snapshot = total
                 existing.currency_snapshot = currency
+                for field_name, field_value in pricing_fields.items():
+                    setattr(existing, field_name, field_value)
                 existing.student_start_at_utc = student_start_at_utc
                 existing.student_end_at_utc = student_end_at_utc
                 existing.is_trial_course = is_trial_booking
@@ -6353,6 +6374,8 @@ def update_session(
         target.allow_online_booking = next_allow_online_booking
         if "external_booking_price_ttc" in updates:
             target.external_booking_price_ttc = updates["external_booking_price_ttc"]
+        if "external_booking_price_unit" in updates:
+            target.external_booking_price_unit = updates["external_booking_price_unit"]
         if "show_external_remaining_seats" in updates:
             target.show_external_remaining_seats = bool(updates["show_external_remaining_seats"])
 
@@ -6611,6 +6634,7 @@ def update_session(
                     is_private=session_obj.is_private,
                     allow_online_booking=session_obj.allow_online_booking,
                     external_booking_price_ttc=session_obj.external_booking_price_ttc,
+                    external_booking_price_unit=session_obj.external_booking_price_unit,
                     show_external_remaining_seats=session_obj.show_external_remaining_seats,
                     timezone=session_obj.timezone,
                     recurrence_group_id=recurrence_group_id,
@@ -6689,6 +6713,7 @@ def update_session(
                     is_private=session_obj.is_private,
                     allow_online_booking=session_obj.allow_online_booking,
                     external_booking_price_ttc=session_obj.external_booking_price_ttc,
+                    external_booking_price_unit=session_obj.external_booking_price_unit,
                     show_external_remaining_seats=session_obj.show_external_remaining_seats,
                     timezone=session_obj.timezone,
                     recurrence_group_id=recurrence_group_id,
@@ -6879,6 +6904,7 @@ def duplicate_session_operation(
                 is_private=target.is_private,
                 allow_online_booking=target.allow_online_booking,
                 external_booking_price_ttc=target.external_booking_price_ttc,
+                external_booking_price_unit=target.external_booking_price_unit,
                 show_external_remaining_seats=target.show_external_remaining_seats,
                 timezone=target_timezone,
                 recurrence_group_id=recurrence_group_id,
@@ -6929,11 +6955,7 @@ def duplicate_session_operation(
                     booked_at=now,
                     cancelled_at=None,
                     cancellation_reason=None,
-                    price_excl_vat_snapshot=source_booking.price_excl_vat_snapshot,
-                    vat_rate_snapshot=source_booking.vat_rate_snapshot,
-                    vat_amount_snapshot=source_booking.vat_amount_snapshot,
-                    total_incl_vat_snapshot=source_booking.total_incl_vat_snapshot,
-                    currency_snapshot=source_booking.currency_snapshot,
+                    **copy_booking_pricing_snapshot(source_booking),
                     student_note=source_booking.student_note,
                     student_start_at_utc=duplicate_student_start_at_utc,
                     student_end_at_utc=duplicate_student_end_at_utc,

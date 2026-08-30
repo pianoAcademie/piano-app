@@ -20,7 +20,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
-from sqlalchemy.dialects.postgresql import UUID as PGUUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -429,6 +429,11 @@ class CourseSession(Base):
     visibility_scope: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'EXTERNAL'"))
     booking_scope: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'EXTERNAL'"))
     external_booking_price_ttc: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    external_booking_price_unit: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        server_default=text("'PER_HOUR'"),
+    )
     show_external_remaining_seats: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     timezone: Mapped[str] = mapped_column(String(100), nullable=False, server_default=text("'UTC'"))
     recurrence_group_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
@@ -545,6 +550,16 @@ class Booking(Base):
     total_incl_vat_snapshot: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, server_default=text("0"))
     currency_snapshot: Mapped[str] = mapped_column(String(3), nullable=False, server_default=text("'EUR'"))
     pricing_snapshot_locked: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    pricing_channel_snapshot: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    pricing_source_snapshot: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    pricing_unit_snapshot: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    price_book_version_snapshot: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    pricing_breakdown_snapshot: Mapped[dict[str, object]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
+    )
+    pricing_calculated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     student_start_at_utc: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     student_end_at_utc: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     student_note: Mapped[str | None] = mapped_column(Text, nullable=True)

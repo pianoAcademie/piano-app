@@ -562,6 +562,7 @@ type CreateSessionDraftPayload = {
   visibility_scopes: SessionAudienceScope[];
   booking_scopes: SessionAudienceScope[];
   external_booking_price_ttc: string;
+  external_booking_price_unit: "PER_SESSION" | "PER_HOUR";
   show_external_remaining_seats: "1" | "0";
   public_description: string;
   private_description: string;
@@ -3081,6 +3082,9 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
   const professor_reminder_note = optionalField(formData, "professor_reminder_note");
   const externalBookingPriceRaw = String(formData.get("external_booking_price_ttc") ?? "").trim();
   const externalBookingPrice = externalBookingPriceRaw ? parseNonNegativeDecimal(externalBookingPriceRaw.replace(",", ".")) : null;
+  const externalBookingPriceUnit = String(formData.get("external_booking_price_unit") ?? "PER_SESSION").trim().toUpperCase() === "PER_HOUR"
+    ? "PER_HOUR"
+    : "PER_SESSION";
   const zoom_link = optionalField(formData, "zoom_link");
   const sessionAudience = parseSessionAudience(formData);
   const visibility_scopes = sessionAudience.visibilityScopes;
@@ -3154,6 +3158,7 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
     visibility_scopes,
     booking_scopes,
     external_booking_price_ttc: externalBookingPriceRaw,
+    external_booking_price_unit: externalBookingPriceUnit,
     show_external_remaining_seats: show_external_remaining_seats ? "1" : "0",
     public_description: clampDraftValue(public_description ?? "", 1200),
     private_description: clampDraftValue(private_description ?? "", 1200),
@@ -3247,6 +3252,7 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
   }
   if (externalBookingPriceRaw) {
     payload.external_booking_price_ttc = externalBookingPrice;
+    payload.external_booking_price_unit = externalBookingPriceUnit;
   }
   if (end_at_utc !== null) {
     payload.end_at_utc = end_at_utc;
@@ -3296,6 +3302,9 @@ export async function updateAdminSessionAction(formData: FormData): Promise<void
   const professor_reminder_note = optionalField(formData, "professor_reminder_note");
   const externalBookingPriceRaw = String(formData.get("external_booking_price_ttc") ?? "").trim();
   const externalBookingPrice = externalBookingPriceRaw ? parseNonNegativeDecimal(externalBookingPriceRaw.replace(",", ".")) : null;
+  const externalBookingPriceUnit = String(formData.get("external_booking_price_unit") ?? "PER_SESSION").trim().toUpperCase() === "PER_HOUR"
+    ? "PER_HOUR"
+    : "PER_SESSION";
   const course_type_id = String(formData.get("course_type_id") ?? "").trim();
   const location_id = String(formData.get("location_id") ?? "").trim();
   const professor_id = String(formData.get("professor_id") ?? "").trim();
@@ -3431,6 +3440,7 @@ export async function updateAdminSessionAction(formData: FormData): Promise<void
     allow_online_booking,
     show_external_remaining_seats,
     external_booking_price_ttc: externalBookingPriceRaw ? externalBookingPrice : null,
+    external_booking_price_unit: externalBookingPriceUnit,
     timezone: session_timezone,
     auto_cancel_rule_enabled_override:
       autoCancelRuleMode === "CUSTOM" ? true : autoCancelRuleMode === "DISABLED" ? false : null,

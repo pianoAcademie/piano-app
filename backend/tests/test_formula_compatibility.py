@@ -376,6 +376,64 @@ class FormulaCompatibilityTests(unittest.TestCase):
         self.assertEqual(direct_payment_currency, "EUR")
         self.assertEqual([scope.value for scope in session_booking_scopes], ["EXTERNAL"])
 
+    def test_session_purchase_catalog_keeps_explicit_per_session_price_for_short_slot(self) -> None:
+        fake_db = _FakeSession(scalar_values=["EUR"], execute_rows=[])
+        session_obj = SimpleNamespace(
+            visibility_scope="EXTERNAL",
+            booking_scope="EXTERNAL",
+            is_private=False,
+            allow_online_booking=True,
+            external_booking_price_ttc=Decimal("45.00"),
+            external_booking_price_unit="PER_SESSION",
+            start_at_utc=datetime(2026, 9, 14, 19, 0, tzinfo=timezone.utc),
+            end_at_utc=datetime(2026, 9, 14, 19, 30, tzinfo=timezone.utc),
+        )
+        course_type = SimpleNamespace(
+            id=uuid4(),
+            name="Cours externe",
+            service_code="COURSE",
+            mode=DeliveryMode.ONSITE,
+            credit_type_id=None,
+            allows_student_bookings=True,
+        )
+
+        _, direct_payment_amount, _, _ = _session_purchase_catalog(
+            fake_db,
+            session_obj=session_obj,
+            course_type=course_type,
+        )
+
+        self.assertEqual(direct_payment_amount, Decimal("45.00"))
+
+    def test_session_purchase_catalog_applies_duration_to_explicit_hourly_price(self) -> None:
+        fake_db = _FakeSession(scalar_values=["EUR"], execute_rows=[])
+        session_obj = SimpleNamespace(
+            visibility_scope="EXTERNAL",
+            booking_scope="EXTERNAL",
+            is_private=False,
+            allow_online_booking=True,
+            external_booking_price_ttc=Decimal("45.00"),
+            external_booking_price_unit="PER_HOUR",
+            start_at_utc=datetime(2026, 9, 14, 19, 0, tzinfo=timezone.utc),
+            end_at_utc=datetime(2026, 9, 14, 19, 30, tzinfo=timezone.utc),
+        )
+        course_type = SimpleNamespace(
+            id=uuid4(),
+            name="Cours externe",
+            service_code="COURSE",
+            mode=DeliveryMode.ONSITE,
+            credit_type_id=None,
+            allows_student_bookings=True,
+        )
+
+        _, direct_payment_amount, _, _ = _session_purchase_catalog(
+            fake_db,
+            session_obj=session_obj,
+            course_type=course_type,
+        )
+
+        self.assertEqual(direct_payment_amount, Decimal("22.50"))
+
     def test_session_purchase_catalog_uses_activity_trial_price(self) -> None:
         trial_plan = SimpleNamespace(
             id=uuid4(),

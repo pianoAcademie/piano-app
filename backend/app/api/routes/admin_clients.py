@@ -70,6 +70,7 @@ from app.models.referral import ReferralReward
 from app.models.notification_engine import ContactDeliveryStatus, Notification
 from app.models.user import ClientKind, ClientStatus, StudentSite, User, UserRole
 from app.services.pending_plan_purchases import has_unresolved_pending_plan_purchase
+from app.services.client_pricing import compute_annual_forfait_price
 from app.schemas.admin import (
     AdminClientBulkAction,
     AdminClientBulkOut,
@@ -848,20 +849,19 @@ def _forfait_hourly_ttc_with_overrides(
             booking_id=booking_id,
         )
     )
-    if second_course_weekly_applies and second_course_weekly_discount > loyalty_discount:
-        # "2e cours semaine" replaces fidelity discount when it is more favorable.
-        loyalty_discount = second_course_weekly_discount
-
-    if (
-        loyalty_discount <= Decimal("0.00")
-        and family_discount <= Decimal("0.00")
-        and short_commitment_supplement <= Decimal("0.00")
-    ):
-        return base_hourly_ttc
-    adjusted = _quantize_money(base_hourly_ttc - loyalty_discount - family_discount + short_commitment_supplement)
-    if adjusted < Decimal("0.00"):
-        return Decimal("0.00")
-    return adjusted
+    return compute_annual_forfait_price(
+        base_hourly_ttc=base_hourly_ttc,
+        duration_hours=Decimal("1.00"),
+        loyalty_discount_per_hour_ttc=loyalty_discount,
+        family_discount_per_hour_ttc=family_discount,
+        second_course_discount_per_hour_ttc=second_course_weekly_discount,
+        second_course_applies=second_course_weekly_applies,
+        short_commitment_supplement_per_hour_ttc=short_commitment_supplement,
+        vat_rate=Decimal("0.00"),
+        currency="EUR",
+        source=f"course-type:{course_type_id}",
+        version=f"course-type:{course_type_id}:v1",
+    ).total_incl_vat
 
 
 def _forfait_week_utc_bounds(*, session_start_at: datetime, session_timezone: str) -> tuple[datetime, datetime]:
@@ -9504,6 +9504,13 @@ def list_admin_client_bookings(
                 vat_amount_snapshot=booking.vat_amount_snapshot,
                 total_incl_vat_snapshot=booking.total_incl_vat_snapshot,
                 currency_snapshot=booking.currency_snapshot,
+                pricing_snapshot_locked=booking.pricing_snapshot_locked,
+                pricing_channel_snapshot=booking.pricing_channel_snapshot,
+                pricing_source_snapshot=booking.pricing_source_snapshot,
+                pricing_unit_snapshot=booking.pricing_unit_snapshot,
+                price_book_version_snapshot=booking.price_book_version_snapshot,
+                pricing_breakdown_snapshot=booking.pricing_breakdown_snapshot or {},
+                pricing_calculated_at=booking.pricing_calculated_at,
                 scheduled_service_date=(
                     latest_receipt.scheduled_service_date
                     if latest_receipt is not None

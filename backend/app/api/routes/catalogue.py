@@ -38,6 +38,7 @@ from app.services.session_audience import (
     resolve_session_visibility_scopes,
     scopes_allow_external_visibility,
 )
+from app.services.client_pricing import PriceUnit, amount_for_unit
 
 router = APIRouter()
 ACCOUNT_DEFAULT_CURRENCY_KEY = "config_account_default_currency"
@@ -118,12 +119,23 @@ def _serialize_public_session(
         participant_kind=participant_kind,
     )
     external_booking_price_ttc = None
+    external_booking_price_unit = str(
+        getattr(session, "external_booking_price_unit", None) or PriceUnit.PER_HOUR.value
+    )
     if session.external_booking_price_ttc is not None:
         duration_seconds = int(max((session.end_at_utc - session.start_at_utc).total_seconds(), 0))
         if duration_seconds <= 0:
             duration_seconds = int(max(course_type.duration_minutes, 0) * 60)
         duration_hours = Decimal(duration_seconds) / Decimal("3600")
-        external_booking_price_ttc = (Decimal(session.external_booking_price_ttc) * duration_hours).quantize(Decimal("0.01"))
+        external_booking_price_ttc = amount_for_unit(
+            Decimal(session.external_booking_price_ttc),
+            unit=(
+                PriceUnit.PER_SESSION
+                if external_booking_price_unit == PriceUnit.PER_SESSION.value
+                else PriceUnit.PER_HOUR
+            ),
+            duration_hours=duration_hours,
+        )
 
     return SessionOut(
         id=session.id,
@@ -151,6 +163,7 @@ def _serialize_public_session(
         booking_scope=booking_scope,
         online_booking_enabled=SessionAudienceScope.EXTERNAL in booking_scopes,
         external_booking_price_ttc=external_booking_price_ttc,
+        external_booking_price_unit=external_booking_price_unit,
         external_booking_currency=external_booking_currency if session.external_booking_price_ttc is not None else None,
         show_external_remaining_seats=bool(session.show_external_remaining_seats),
         zoom_link=session.zoom_link,

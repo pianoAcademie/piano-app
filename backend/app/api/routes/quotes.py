@@ -41,7 +41,7 @@ from app.api.routes.bookings import (
     _enforce_plan_restrictions,
     _mark_first_course_if_needed,
     _resolve_activity_base_hourly_ttc,
-    _resolve_booking_snapshot,
+    _resolve_booking_pricing,
     _restore_pack_credit,
 )
 from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, DeliveryMode, Location, SessionStatus
@@ -77,6 +77,7 @@ from app.models.referral import ReferralReward
 from app.models.typeform_intake import TypeformIntake
 from app.models.user import ClientKind, ClientStatus, User, UserRole
 from app.services.i18n import normalize_language
+from app.services.client_pricing import PricingChannel, booking_snapshot_fields, build_price_version, compute_contract_price
 from app.schemas.admin import AdminClientPaymentOut
 from app.schemas.quote import (
     PaymentPlanOut,
@@ -9160,6 +9161,7 @@ def _create_missing_live_sessions_from_quote_schedule(
             visibility_scope=template_session.visibility_scope,
             booking_scope=template_session.booking_scope,
             external_booking_price_ttc=template_session.external_booking_price_ttc,
+            external_booking_price_unit=template_session.external_booking_price_unit,
             show_external_remaining_seats=template_session.show_external_remaining_seats,
             timezone=template_session.timezone,
             recurrence_group_id=recurrence_group_id,
@@ -9860,6 +9862,7 @@ def _create_followup_booking(
     student_start_time_local: str | None = None,
     student_end_time_local: str | None = None,
     pricing_snapshot_override: tuple[Decimal, Decimal, Decimal, Decimal, str] | None = None,
+    pricing_source: str | None = None,
 ) -> Booking | None:
     existing = db.scalar(
         select(Booking)
@@ -9903,8 +9906,27 @@ def _create_followup_booking(
 
     if pricing_snapshot_override is not None:
         amount_ht, vat_rate, vat_amount, total_ttc, currency = pricing_snapshot_override
+        pricing = compute_contract_price(
+            channel=PricingChannel.QUOTE,
+            amount_excl_vat=amount_ht,
+            vat_rate=vat_rate,
+            vat_amount=vat_amount,
+            total_incl_vat=total_ttc,
+            currency=currency,
+            source=pricing_source or "accepted-quote",
+            version=build_price_version(
+                "accepted-quote",
+                source=pricing_source or "accepted-quote",
+                amount_excl_vat=amount_ht,
+                vat_rate=vat_rate,
+                vat_amount=vat_amount,
+                total_incl_vat=total_ttc,
+                currency=currency,
+            ),
+            calculated_at=now,
+        )
     else:
-        amount_ht, vat_rate, vat_amount, total_ttc, currency = _resolve_booking_snapshot(
+        pricing = _resolve_booking_pricing(
             db,
             session_obj=session_obj,
             user=student,
@@ -9912,6 +9934,8 @@ def _create_followup_booking(
             subscription=subscription,
             plan=plan,
         )
+        amount_ht, vat_rate, vat_amount, total_ttc, currency = pricing.legacy_tuple()
+    pricing_fields = booking_snapshot_fields(pricing)
     course_type = db.scalar(select(CourseType).where(CourseType.id == session_obj.course_type_id))
     student_start_at_utc: datetime | None = None
     student_end_at_utc: datetime | None = None
@@ -9928,12 +9952,7 @@ def _create_followup_booking(
         client_plan_subscription_id=subscription.id if subscription is not None else None,
         status=BookingStatus.BOOKED,
         booked_at=now,
-        price_excl_vat_snapshot=amount_ht,
-        vat_rate_snapshot=vat_rate,
-        vat_amount_snapshot=vat_amount,
-        total_incl_vat_snapshot=total_ttc,
-        currency_snapshot=currency,
-        pricing_snapshot_locked=pricing_snapshot_override is not None,
+        **pricing_fields,
         student_start_at_utc=student_start_at_utc,
         student_end_at_utc=student_end_at_utc,
     )
@@ -11350,6 +11369,7 @@ def _execute_quote_followup_transformation(
                 student_start_time_local=student_start_time_local,
                 student_end_time_local=student_end_time_local,
                 pricing_snapshot_override=pricing_override,
+                pricing_source=f"quote:{quote.id}:schedule:{schedule_key}",
             )
 
     _create_followup_manual_transactions(
