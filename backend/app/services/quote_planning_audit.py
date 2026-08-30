@@ -35,6 +35,7 @@ ACTIVE_BOOKING_STATUSES = {
 }
 EXECUTION_KEY = "quote_to_enrollment_execution"
 TRANSFORMATION_KEY = "quote_to_enrollment"
+CONFIRMED_VARIANCE_EVENT = "quote_planning_variance_confirmed"
 
 # These recurrence groups were individually audited against their immutable
 # accepted-quote snapshots on 2026-08-28.  Keep the general audit broad, but
@@ -90,6 +91,13 @@ def _money(value: object) -> Decimal:
     return Decimal(str(value or "0")).quantize(Decimal("0.01"))
 
 
+def _int_or_none(value: object) -> int | None:
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
 def _display_name(user: User) -> str:
     name = " ".join(part for part in ((user.first_name or "").strip(), (user.last_name or "").strip()) if part)
     return name or user.email
@@ -101,6 +109,30 @@ def _execution(followup: QuoteAcceptanceFollowup) -> dict[str, Any]:
 
 def _transformation(followup: QuoteAcceptanceFollowup) -> dict[str, Any]:
     return _json_object(_json_object(followup.payload).get(TRANSFORMATION_KEY))
+
+
+def _confirmed_variance_matches(
+    payload: object,
+    *,
+    student_id: UUID,
+    group_id: UUID,
+    expected_sessions: int,
+    booked_sessions: int,
+) -> bool:
+    """Return true only for a confirmation matching the current audit state.
+
+    A confirmation is deliberately tied to the student, recurrence series and
+    both compared counts.  If the planning changes again, the old decision no
+    longer suppresses the audit warning.
+    """
+
+    row = _json_object(payload)
+    return (
+        _parse_uuid(row.get("student_id")) == student_id
+        and _parse_uuid(row.get("series_id")) == group_id
+        and _int_or_none(row.get("expected_sessions")) == expected_sessions
+        and _int_or_none(row.get("booked_sessions")) == booked_sessions
+    )
 
 
 def _session_row_matches_template(row: dict[str, Any], template: CourseSession) -> bool:
@@ -284,6 +316,16 @@ def _audit_candidates(db: Session, *, school_year: str) -> tuple[int, list[Audit
     ).all()
     candidates: list[AuditCandidate] = []
     checked_quotes = 0
+    quote_ids = [quote.id for quote, _ in rows]
+    confirmed_variances_by_quote_id: dict[UUID, list[QuoteEvent]] = defaultdict(list)
+    if quote_ids:
+        for event in db.scalars(
+            select(QuoteEvent).where(
+                QuoteEvent.quote_id.in_(quote_ids),
+                QuoteEvent.event_type == CONFIRMED_VARIANCE_EVENT,
+            )
+        ).all():
+            confirmed_variances_by_quote_id[event.quote_id].append(event)
 
     for quote, followup in rows:
         execution = _execution(followup)
@@ -308,6 +350,7 @@ def _audit_candidates(db: Session, *, school_year: str) -> tuple[int, list[Audit
         student = db.get(User, student_id) if student_id is not None else None
         if student is None:
             continue
+        confirmed_variances = confirmed_variances_by_quote_id.get(quote.id, [])
 
         transformation = _transformation(followup)
         assigned = _json_object(_json_object(transformation.get("scheduleResolution")).get("assignedSessionByActivityId"))
@@ -391,6 +434,17 @@ def _audit_candidates(db: Session, *, school_year: str) -> tuple[int, list[Audit
                     issue_codes.append("INVOICE_AMOUNT_MISMATCH")
 
             if issue_codes:
+                if any(
+                    _confirmed_variance_matches(
+                        event.payload,
+                        student_id=student.id,
+                        group_id=group_id,
+                        expected_sessions=len(expected_dates),
+                        booked_sessions=len(bookings),
+                    )
+                    for event in confirmed_variances
+                ):
+                    continue
                 candidates.append(
                     AuditCandidate(
                         quote=quote,
