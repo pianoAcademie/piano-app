@@ -1,4 +1,5 @@
 from __future__ import annotations
+from app.services.annual_contracts import contract_price_for_session
 
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -1103,6 +1104,10 @@ def _resolve_booking_pricing(
     plan: Plan | None,
     covered_by_manual_credit: bool = False,
 ) -> PricingComputation:
+    if subscription is not None and plan is not None and plan.kind == PlanKind.FORFAIT:
+        contractual = contract_price_for_session(subscription, session_obj, now=now)
+        if contractual is not None:
+            return contractual
     billing_profile = resolve_billing_profile(db, user)
     currency = (billing_profile.preferred_currency or "EUR").upper()
 

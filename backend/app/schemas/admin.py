@@ -2648,6 +2648,7 @@ class AdminPlanningReorganizationMoveRequest(BaseModel):
     target_session_id: UUID
     scope: Literal["single", "series_future"] = "single"
     price_policy: Literal["keep_source", "apply_target"] | None = None
+    expected_version: str | None = None
 
 
 class AdminPlanningReorganizationMovePreviewRequest(BaseModel):
@@ -2657,6 +2658,9 @@ class AdminPlanningReorganizationMovePreviewRequest(BaseModel):
 
 
 class AdminPlanningReorganizationMovePreviewOut(BaseModel):
+    version: str
+    financial_impact_ttc: Decimal = Decimal("0.00")
+    occurrences: list[dict[str, object]] = Field(default_factory=list)
     price_change: bool
     affected_bookings: int
     price_change_count: int

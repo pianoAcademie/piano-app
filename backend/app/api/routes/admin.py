@@ -771,6 +771,8 @@ def _copy_booking_payload(source: Booking, target: Booking) -> None:
         setattr(target, field_name, field_value)
     target.student_note = source.student_note
     target.internal_note = source.internal_note
+    target.manual_credit_type_id = getattr(source, "manual_credit_type_id", None)
+    target.is_trial_course = bool(getattr(source, "is_trial_course", False))
 
 
 def _cancel_booking_for_cancelled_session(
@@ -4185,9 +4187,17 @@ def get_planning_reorganization_day(
     school_year: str | None = None,
     location_id: UUID | None = None,
     day: date | None = None,
+    booking_id: UUID | None = None,
     db: Session = Depends(get_db),
     _: User = Depends(require_admin_or_permissions("can_edit_planning")),
 ) -> AdminPlanningReorganizationOut:
+    focused_session = None
+    if booking_id:
+        focused_session = db.scalar(select(CourseSession).join(Booking, Booking.session_id == CourseSession.id).where(Booking.id == booking_id))
+        if not focused_session:
+            raise HTTPException(404, "Réservation introuvable")
+        location_id = location_id or focused_session.location_id
+        day = day or _local_date_in_timezone(focused_session.start_at_utc, _normalize_session_timezone(focused_session.timezone))
     school_years = _available_school_years(db)
     selected_school_year = (school_year or "").strip() or (
         "2026-2027" if "2026-2027" in school_years else school_years[0]
@@ -4235,9 +4245,12 @@ def get_planning_reorganization_day(
             .outerjoin(Professor, Professor.id == CourseSession.professor_id)
             .outerjoin(substitute_professor, substitute_professor.id == CourseSession.substitute_teacher_id)
             .where(
-                CourseSession.location_id == selected_location.id,
-                CourseSession.start_at_utc >= day_start_utc,
-                CourseSession.start_at_utc < day_end_utc,
+                or_(
+                    (CourseSession.location_id == selected_location.id)
+                    & (CourseSession.start_at_utc >= day_start_utc)
+                    & (CourseSession.start_at_utc < day_end_utc),
+                    CourseSession.id == focused_session.id if focused_session else False,
+                ),
             )
             .order_by(CourseSession.start_at_utc.asc(), CourseSession.title.asc())
         ).all()
@@ -4311,6 +4324,8 @@ def _planning_reorganization_load_move(
     source_booking = db.scalar(select(Booking).where(Booking.id == booking_id).with_for_update())
     if source_booking is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
+    # Lock the student before source/target sessions to serialize concurrent moves.
+    db.scalar(select(User.id).where(User.id == source_booking.user_id).with_for_update())
     source_session = db.scalar(
         select(CourseSession).where(CourseSession.id == source_booking.session_id).with_for_update()
     )
@@ -4330,6 +4345,8 @@ def _planning_reorganization_move_pairs(
     target_session: CourseSession,
     scope: Literal["single", "series_future"],
 ) -> tuple[list[tuple[Booking, CourseSession, CourseSession]], int, list[str]]:
+    if scope == "series_future" and (source_session.recurrence_group_id is None or target_session.recurrence_group_id is None):
+        raise HTTPException(409, "Une série doit être définie des deux côtés. Choisissez une seule séance ou complétez le planning.")
     if (
         scope == "single"
         or source_session.recurrence_group_id is None
@@ -4370,6 +4387,8 @@ def _planning_reorganization_move_pairs(
     skipped_count = 0
     details: list[str] = []
     unused_target_sessions = list(target_sessions)
+    day_offset = (_local_date_in_timezone(target_session.start_at_utc, _normalize_session_timezone(target_session.timezone))
+                  - _local_date_in_timezone(source_session.start_at_utc, _normalize_session_timezone(source_session.timezone))).days
     for booking in recurring_bookings:
         current_source_session = source_session_by_id.get(booking.session_id)
         if current_source_session is None:
@@ -4382,7 +4401,7 @@ def _planning_reorganization_move_pairs(
         target_candidates = [
             session_obj
             for session_obj in unused_target_sessions
-            if abs(
+            if (
                 (
                     _local_date_in_timezone(
                         session_obj.start_at_utc,
@@ -4391,7 +4410,7 @@ def _planning_reorganization_move_pairs(
                     - source_day
                 ).days
             )
-            <= 6
+            == day_offset
         ]
         if not target_candidates:
             skipped_count += 1
@@ -4471,7 +4490,16 @@ def _planning_reorganization_price_rows(
         ).all()
     ) if subscription_ids else set()
     rows: list[tuple[Booking, tuple[Decimal, Decimal, Decimal, Decimal, str], bool]] = []
-    for booking, _, target_session in pairs:
+    for booking, source_session, target_session in pairs:
+        # Same annual course preserves the reviewed price. Do not first resolve
+        # an unbound target, which could assign another course's discount.
+        same_forfait = booking.client_plan_subscription_id in forfait_subscription_ids
+        if same_forfait:
+            rows.append((booking, (
+                Decimal(booking.price_excl_vat_snapshot), Decimal(booking.vat_rate_snapshot),
+                Decimal(booking.vat_amount_snapshot), Decimal(booking.total_incl_vat_snapshot), str(booking.currency_snapshot),
+            ), False))
+            continue
         target_snapshot = _planning_reorganization_target_price_snapshot(
             db,
             booking=booking,
@@ -4498,6 +4526,53 @@ def _planning_reorganization_price_rows(
     return rows
 
 
+def _checked_move_version(db, pairs, skipped_count, details, now):
+    if skipped_count or not pairs:
+        raise HTTPException(409, "Déplacement bloqué : toute la série doit avoir une destination. " + " ; ".join(details))
+    ids = sorted({s.id for _, a, b in pairs for s in (a, b)}, key=str)
+    db.scalars(select(CourseSession).where(CourseSession.id.in_(ids)).order_by(CourseSession.id).with_for_update().execution_options(populate_existing=True)).all()
+    snapshots = []
+    for booking, source, target in pairs:
+        if booking.student_start_at_utc is not None or booking.student_end_at_utc is not None:
+            raise HTTPException(409, "Cette inscription utilise un horaire individuel. Faites vérifier son déplacement pour conserver sa durée exacte.")
+        if source.start_at_utc <= now or target.start_at_utc <= now:
+            raise HTTPException(409, "Seules les séances futures peuvent être déplacées par ce parcours.")
+        if source.course_type_id != target.course_type_id or source.location_id != target.location_id or source.end_at_utc - source.start_at_utc != target.end_at_utc - target.start_at_utc:
+            raise HTTPException(409, "Activité, lieu ou durée différents : passez par un avenant dans la fiche client. Aucun tarif ni facture n'a été modifié.")
+        snapshots.append({"booking": str(booking.id), "source": str(source.id), "target": str(target.id),
+            "source_at": source.start_at_utc.isoformat(), "target_at": target.start_at_utc.isoformat(),
+            "status": str(booking.status), "target_status": str(target.status), "capacity": target.capacity_max,
+            "price": str(booking.total_incl_vat_snapshot), "price_version": getattr(booking, "price_book_version_snapshot", None)})
+    return build_price_version("neutral-move", rows=snapshots), snapshots
+
+
+def _bind_moved_contract(db, booking, target, scope):
+    if not booking.client_plan_subscription_id:
+        return
+    subscription = db.scalar(select(ClientPlanSubscription).where(ClientPlanSubscription.id == booking.client_plan_subscription_id).with_for_update())
+    if not subscription:
+        return
+    if target.start_at_utc < subscription.started_at or (subscription.ends_at and target.start_at_utc >= subscription.ends_at):
+        raise HTTPException(409, "La nouvelle séance est hors de la période du contrat.")
+    terms = list(getattr(subscription, "annual_pricing_terms", None) or [])
+    if not terms:
+        return
+    terms = [dict(t) for t in terms]
+    matching = [t for t in terms if t["version"] == booking.price_book_version_snapshot]
+    if not matching:
+        return
+    if len(matching) != 1:
+        raise HTTPException(409, "Le cours contractuel du déplacement est ambigu.")
+    decision = matching[0]
+    group = str(target.recurrence_group_id) if target.recurrence_group_id else None
+    if any(t is not decision and ((group and group in t.get("series_ids", [])) or str(target.id) in t.get("session_ids", [])) for t in terms):
+        raise HTTPException(409, "Le créneau cible appartient déjà à un autre cours annuel de cet élève.")
+    decision["session_ids"] = sorted((set(decision.get("session_ids", [])) - {str(booking.session_id)}) | {str(target.id)})
+    if scope == "series_future" and group:
+        decision["series_ids"] = sorted(set(decision.get("series_ids", []) + [group]))
+    subscription.annual_pricing_terms = terms
+
+
 @router.post(
     "/planning-reorganization/move-booking/preview",
     response_model=AdminPlanningReorganizationMovePreviewOut,
@@ -4513,18 +4588,21 @@ def preview_planning_reorganization_booking_move(
         booking_id=payload.booking_id,
         target_session_id=payload.target_session_id,
     )
-    pairs, _, _ = _planning_reorganization_move_pairs(
+    pairs, skipped, details = _planning_reorganization_move_pairs(
         db,
         source_booking=source_booking,
         source_session=source_session,
         target_session=target_session,
         scope=payload.scope,
     )
+    version, occurrences = _checked_move_version(db, pairs, skipped, details, now)
     price_rows = _planning_reorganization_price_rows(db, pairs=pairs, now=now)
     source_prices = [Decimal(booking.total_incl_vat_snapshot) for booking, _, _ in price_rows]
     target_prices = [snapshot[3] for _, snapshot, _ in price_rows]
     currency = price_rows[0][1][4] if price_rows else str(source_booking.currency_snapshot or "EUR")
     return AdminPlanningReorganizationMovePreviewOut(
+        version=version,
+        occurrences=occurrences,
         price_change=any(changed for _, _, changed in price_rows),
         affected_bookings=len(pairs),
         price_change_count=sum(1 for _, _, changed in price_rows if changed),
@@ -4540,7 +4618,7 @@ def preview_planning_reorganization_booking_move(
 def move_planning_reorganization_booking(
     payload: AdminPlanningReorganizationMoveRequest,
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin_or_permissions("can_edit_planning")),
+    actor: User = Depends(require_admin_or_permissions("can_edit_planning")),
 ) -> AdminPlanningReorganizationMoveOut:
     # This workspace is intentionally silent: moving a booking must not emit a
     # change notification or auto-promote (and notify) somebody on the waitlist.
@@ -4557,6 +4635,11 @@ def move_planning_reorganization_booking(
         target_session=target_session,
         scope=payload.scope,
     )
+    version, occurrences = _checked_move_version(db, pairs, skipped_count, details, now)
+    if payload.expected_version != version:
+        raise HTTPException(409, "Le planning a changé ou l'aperçu manque. Relancez l'aperçu avant de confirmer.")
+    if payload.price_policy == "apply_target":
+        raise HTTPException(409, "Ce parcours conserve le tarif du contrat. Pour le modifier, préparez un avenant.")
     price_rows = _planning_reorganization_price_rows(db, pairs=pairs, now=now)
     if any(changed for _, _, changed in price_rows) and payload.price_policy is None:
         raise HTTPException(
@@ -4570,6 +4653,7 @@ def move_planning_reorganization_booking(
 
     moved_count = 0
     for booking, current_source_session, current_target_session in pairs:
+        _bind_moved_contract(db, booking, current_target_session, payload.scope)
         moved, detail = _move_planning_reorganization_booking_occurrence(
             db,
             booking=booking,
@@ -4584,9 +4668,19 @@ def move_planning_reorganization_booking(
             lock_price_snapshot=payload.price_policy is not None,
         )
         moved_count += 1 if moved else 0
+        if not moved:
+            db.rollback()
+            raise HTTPException(409, f"Aucun déplacement effectué : {detail or 'créneau indisponible'}. Toute la série a été conservée.")
+        db.flush()
         skipped_count += 0 if moved else 1
         if detail and len(details) < 8:
             details.append(detail)
+    db.add(StudentQuoteChange(user_id=source_booking.user_id, student_user_id=source_booking.user_id,
+        actor_user_id=actor.id, change_type="SLOT_CHANGE", status="VALIDATED",
+        effective_date=source_session.start_at_utc.date(), title=f"Déplacement de {moved_count} séance(s) — tarif conservé",
+        description="Déplacement sans notification. Réservations et couverture de facturation conservées.",
+        before_snapshot={"occurrences": occurrences}, after_snapshot={"target_sessions": [str(s.id) for _, _, s in pairs]},
+        financial_impact_ttc=Decimal("0.00"), currency=str(source_booking.currency_snapshot), billing_action="NONE"))
     db.commit()
     return AdminPlanningReorganizationMoveOut(
         moved_count=moved_count,

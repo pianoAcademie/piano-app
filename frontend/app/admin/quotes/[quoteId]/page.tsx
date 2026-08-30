@@ -20,6 +20,7 @@ import QuoteWorkspaceShell from "../../../../components/quotes/quote-workspace-s
 import QuoteWorkspaceSidebar, { type SidebarItem } from "../../../../components/quotes/quote-workspace-sidebar";
 import QuoteFollowupSlotForm from "../../../../components/quote-followup-slot-form";
 import QuoteLinesEditor from "../../../../components/quote-lines-editor";
+import AnnualPricingReview from "../../../../components/annual-pricing-review";
 import QuotePlanningEditor from "../../../../components/quote-planning-editor";
 import RichMessageEditor from "../../../../components/rich-message-editor";
 import {
@@ -4461,6 +4462,9 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
 	          <h3>{t("admin.quote_detail.billed_lines_title")}</h3>
 	          <p className="muted">{t("admin.quote_detail.billed_lines_subtitle", { count: detail.lines.length })}</p>
 	        </div>
+        {detail.quote.quote_type === "forfait" && detail.quote.school_year_label === "2026-2027" ? (
+          <AnnualPricingReview key={detail.quote.updated_at} quoteId={detail.quote.id} editable={canEditQuote && !detail.quote.sent_at} />
+        ) : null}
         <QuoteLinesEditor
           quoteId={detail.quote.id}
           returnTo={selfPath}

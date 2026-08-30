@@ -43,6 +43,7 @@ type DraggedBooking = {
 };
 
 type PlanningReorganizationBoardProps = {
+  initialBookingId?: string;
   sessions: PlanningReorganizationSession[];
   returnTo: string;
   initialScope?: MoveScope;
@@ -101,9 +102,14 @@ export function PlanningReorganizationBoard({
   returnTo,
   initialScope = "series_future",
   language = "fr",
+  initialBookingId,
 }: PlanningReorganizationBoardProps): JSX.Element {
   const [dragged, setDragged] = useState<DraggedBooking | null>(null);
-  const [selected, setSelected] = useState<DraggedBooking | null>(null);
+  const [selected, setSelected] = useState<DraggedBooking | null>(() => {
+    const source = sessions.find(s => s.bookings.some(b => b.id === initialBookingId));
+    const booking = source?.bookings.find(b => b.id === initialBookingId);
+    return source && booking ? { bookingId: booking.id, sourceSessionId: source.id, label: booking.client_display_name } : null;
+  });
   const [dragOverSessionId, setDragOverSessionId] = useState<string | null>(null);
   const [scope, setScope] = useState<MoveScope>(initialScope);
   const [priceConfirmation, setPriceConfirmation] = useState<PendingPriceConfirmation | null>(null);
@@ -116,12 +122,14 @@ export function PlanningReorganizationBoard({
     targetSessionId: string,
     pricePolicy: "keep_source" | "apply_target",
     requestedScope: MoveScope,
+    version: string,
   ): void {
     const formData = new FormData();
     formData.set("booking_id", bookingToMove.bookingId);
     formData.set("target_session_id", targetSessionId);
     formData.set("scope", requestedScope);
     formData.set("price_policy", pricePolicy);
+    formData.set("expected_version", version);
     formData.set("return_to", returnPathWithScope(returnTo, requestedScope));
     setSelected(null);
     setPriceConfirmation(null);
@@ -157,7 +165,7 @@ export function PlanningReorganizationBoard({
         });
         return;
       }
-      if (requestedScope === "series_future") {
+      if (previewResult.data.affected_bookings > 0) {
         const targetSession = sessions.find((session) => session.id === targetSessionId);
         setSeriesConfirmation({
           booking: bookingToMove,
@@ -168,7 +176,6 @@ export function PlanningReorganizationBoard({
         });
         return;
       }
-      submitMove(bookingToMove, targetSessionId, "keep_source", requestedScope);
     });
   }
 
@@ -315,7 +322,7 @@ export function PlanningReorganizationBoard({
             <p>
               {language === "en"
                 ? `${priceConfirmation.booking.label} will be moved to ${priceConfirmation.targetLabel}. Which price should apply?`
-                : `${priceConfirmation.booking.label} sera deplace vers ${priceConfirmation.targetLabel}. Quel tarif souhaitez-vous appliquer ?`}
+                : `${priceConfirmation.booking.label} sera déplacé vers ${priceConfirmation.targetLabel}. Le prix du créneau est différent ; le tarif contractuel actuel est conservé. Un changement de prix nécessite un avenant.`}
             </p>
             <div className="reorg-price-comparison">
               <div>
@@ -346,28 +353,12 @@ export function PlanningReorganizationBoard({
                       priceConfirmation.targetSessionId,
                       "keep_source",
                       priceConfirmation.scope,
+                      priceConfirmation.preview.version,
                     ),
                   )
                 }
               >
                 {language === "en" ? "Keep current price" : "Conserver le tarif actuel"}
-              </button>
-              <button
-                type="button"
-                className="button primary"
-                disabled={isPending}
-                onClick={() =>
-                  startTransition(() =>
-                    submitMove(
-                      priceConfirmation.booking,
-                      priceConfirmation.targetSessionId,
-                      "apply_target",
-                      priceConfirmation.scope,
-                    ),
-                  )
-                }
-              >
-                {language === "en" ? "Apply new price" : "Appliquer le nouveau tarif"}
               </button>
             </div>
           </article>
@@ -390,13 +381,19 @@ export function PlanningReorganizationBoard({
               ×
             </button>
             <h3 className="modal-title">
-              {language === "en" ? "Confirm the remaining series" : "Confirmer toute la suite de la serie"}
+              {seriesConfirmation.scope === "single" ? "Confirmer le déplacement de cette séance" : "Confirmer le déplacement des séances futures"}
             </h3>
             <p>
               {language === "en"
                 ? `${seriesConfirmation.booking.label} will be moved to ${seriesConfirmation.targetLabel} for ${seriesConfirmation.preview.affected_bookings} session(s). Prices will not change.`
                 : `${seriesConfirmation.booking.label} sera deplace vers ${seriesConfirmation.targetLabel} pour ${seriesConfirmation.preview.affected_bookings} seance(s). Les tarifs ne seront pas modifies.`}
             </p>
+            <p>Tarif et remises conservés. Écart financier : 0 €. Aucune nouvelle facture.</p>
+            <details><summary>Vérifier les dates et montants ({seriesConfirmation.preview.affected_bookings} séances)</summary>
+              <ul>{seriesConfirmation.preview.occurrences.map((o, index) => <li key={index}>
+                {new Date(o.source_at).toLocaleString("fr-FR", { timeZone: "Europe/Paris" })} → {new Date(o.target_at).toLocaleString("fr-FR", { timeZone: "Europe/Paris" })} · {o.price} €
+              </li>)}</ul>
+            </details>
             <div className="row gap-sm reorg-price-actions">
               <button
                 type="button"
@@ -417,11 +414,12 @@ export function PlanningReorganizationBoard({
                       seriesConfirmation.targetSessionId,
                       "keep_source",
                       seriesConfirmation.scope,
+                      seriesConfirmation.preview.version,
                     ),
                   )
                 }
               >
-                {language === "en" ? "Move all sessions" : "Deplacer toute la serie"}
+                {isPending ? "Enregistrement…" : seriesConfirmation.scope === "single" ? "Déplacer cette séance" : "Déplacer toutes ces séances"}
               </button>
             </div>
           </article>

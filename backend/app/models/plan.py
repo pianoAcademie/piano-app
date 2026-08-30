@@ -212,6 +212,10 @@ class SubscriptionStatus(str, enum.Enum):
 class ClientPlanSubscription(Base):
     __tablename__ = "client_plan_subscriptions"
 
+    annual_pricing_terms: Mapped[list[dict[str, object]]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb"),
+    )
+
     id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
         primary_key=True,

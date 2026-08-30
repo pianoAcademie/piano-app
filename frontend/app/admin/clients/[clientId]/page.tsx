@@ -8020,6 +8020,9 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                           </td>
                           <td>
                             <div className="row payment-row-actions">
+                              {row.status === "BOOKED" && new Date(row.session_start_at_utc).getTime() > Date.now() ? (
+                                <Link className="button secondary" href={`/admin/planning-reorganization?booking_id=${encodeURIComponent(row.id)}&scope=single`}>Déplacer</Link>
+                              ) : null}
                               {row.payment_receipt_id &&
                               (row.payment_receipt_status === "COMPLETED" || row.payment_receipt_status === "REFUNDED") ? (
                                 <>

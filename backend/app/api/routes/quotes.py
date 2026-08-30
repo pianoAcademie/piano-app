@@ -20,6 +20,8 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_admin_or_permissions, require_roles
 from app.core.config import settings
+from app.services.annual_pricing_review import KEY as ANNUAL_REVIEW_KEY, check_review_current
+from app.services.annual_contracts import bind_contract_course, decorate_contract_price
 from app.api.routes.admin_clients import (
     _allocate_invoice_number_for_seller_entity,
     _build_admin_client_payments,
@@ -868,6 +870,11 @@ def _quote_discount_target_service_line(
         return None
 
     meta = _json_object(discount.meta)
+    if meta.get("target_course_key"):
+        targets = [line for line in positive_services if (line.meta or {}).get("annual_course_key") == meta["target_course_key"]]
+        if len(targets) != 1:
+            raise HTTPException(409, "La remise n'a plus de cours cible unique. Revérifiez le devis.")
+        return targets[0]
     normalized_label = _normalize_discount_label(discount.title)
     normalized_code = _normalize_discount_label(meta.get("discount_rule_code"))
     targets_second_course = _is_second_course_discount_token(
@@ -6329,6 +6336,9 @@ def update_quote(
         row.price_snapshot = payload.price_snapshot
     if payload.meta is not None:
         next_meta = _normalize_quote_meta(payload.meta)
+        # Only the audited pricing endpoint may replace/remove its decision.
+        if (row.meta or {}).get(ANNUAL_REVIEW_KEY):
+            next_meta[ANNUAL_REVIEW_KEY] = row.meta[ANNUAL_REVIEW_KEY]
         next_meta[QUOTE_FINANCIAL_ADJUSTMENT_META_KEY] = _normalize_quote_adjustment(next_meta)
         next_meta[QUOTE_PRE_REGISTRATION_DEPOSIT_META_KEY] = _normalize_quote_deposit(next_meta)
         adjustment_changed = _quote_adjustment_signature(next_meta) != previous_adjustment_signature
@@ -7350,6 +7360,7 @@ def send_quote(
     current_user: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> QuoteDetailOut:
     quote = _load_quote(db, quote_id, lock=True)
+    check_review_current(db, quote, _load_quote_lines(db, quote_id))
     _ensure_quote_editable(quote)
     _ensure_public_token(quote)
     _sync_draft_quote_expiry_days_from_type(db, quote)
@@ -7555,6 +7566,7 @@ def send_quote_manual_email(
     current_user: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> QuoteDetailOut:
     quote = _load_quote(db, quote_id, lock=True)
+    check_review_current(db, quote, _load_quote_lines(db, quote_id))
     recipient = _validate_email_address(payload.recipient_email, detail="Invalid recipient email")
     subject = payload.subject.strip()
     body = payload.body.strip()
@@ -9878,6 +9890,7 @@ def _create_followup_booking(
     student_end_time_local: str | None = None,
     pricing_snapshot_override: tuple[Decimal, Decimal, Decimal, Decimal, str] | None = None,
     pricing_source: str | None = None,
+    annual_decision: dict | None = None,
 ) -> Booking | None:
     existing = db.scalar(
         select(Booking)
@@ -9890,6 +9903,8 @@ def _create_followup_booking(
     )
     if existing is not None:
         if existing.status == BookingStatus.BOOKED:
+            if annual_decision:
+                raise HTTPException(409, "Une séance du devis est déjà réservée. Faites vérifier ce doublon avant intégration ; aucun prix existant n'est écrasé.")
             return None
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -9950,7 +9965,7 @@ def _create_followup_booking(
             plan=plan,
         )
         amount_ht, vat_rate, vat_amount, total_ttc, currency = pricing.legacy_tuple()
-    pricing_fields = booking_snapshot_fields(pricing)
+    pricing_fields = booking_snapshot_fields(decorate_contract_price(pricing, annual_decision))
     course_type = db.scalar(select(CourseType).where(CourseType.id == session_obj.course_type_id))
     student_start_at_utc: datetime | None = None
     student_end_at_utc: datetime | None = None
@@ -11118,6 +11133,7 @@ def _execute_quote_followup_transformation(
     followup: QuoteAcceptanceFollowup,
     current_user: User,
 ) -> dict[str, object]:
+    check_review_current(db, quote, _load_quote_lines(db, quote.id))
     transformation_payload = _quote_transformation_payload(followup)
     if not transformation_payload:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Aucun payload de transformation a executer")
@@ -11153,6 +11169,9 @@ def _execute_quote_followup_transformation(
         transformation_payload=transformation_payload,
         created_subscription_ids=created_subscription_ids,
     )
+    annual_review = (quote.meta or {}).get(ANNUAL_REVIEW_KEY)
+    if annual_review and (str(student.id) != annual_review["student_id"] or not plan or plan.kind != PlanKind.FORFAIT):
+        raise HTTPException(409, "L'élève et le forfait doivent correspondre à la décision tarifaire validée.")
     monthly_card_billing = _quote_followup_uses_monthly_card_payment(quote=quote, followup=followup)
     monthly_card_auto_rule_id: UUID | None = None
     monthly_card_fixed_fee_date = QUOTE_MONTHLY_CARD_BILLING_START_DATE if monthly_card_billing else None
@@ -11372,6 +11391,11 @@ def _execute_quote_followup_transformation(
                 (amount_ht, vat_rate, amount_vat, total_ttc, currency)
                 for amount_ht, amount_vat, total_ttc in zip(amount_ht_parts, amount_vat_parts, total_ttc_parts)
             ]
+        annual_decisions = [(l.meta or {}).get("annual_decision") for l in quote_service_lines if (l.meta or {}).get("annual_decision")]
+        if len(annual_decisions) > 1:
+            raise HTTPException(409, "Plusieurs décisions tarifaires correspondent au même cours : vérifiez les activités planifiées.")
+        annual_decision = annual_decisions[0] if annual_decisions else None
+        bind_contract_course(subscription, annual_decision, live_sessions)
         for session_obj, pricing_override in zip(live_sessions, pricing_overrides):
             _create_followup_booking(
                 db,
@@ -11385,6 +11409,7 @@ def _execute_quote_followup_transformation(
                 student_end_time_local=student_end_time_local,
                 pricing_snapshot_override=pricing_override,
                 pricing_source=f"quote:{quote.id}:schedule:{schedule_key}",
+                annual_decision=annual_decision,
             )
 
     _create_followup_manual_transactions(
@@ -11540,6 +11565,14 @@ def _rollback_quote_followup_transformation(
     ]
 
     subscription_map: dict[UUID, tuple[ClientPlanSubscription, Plan | None]] = {}
+    reviewed_course_keys = {d["course_key"] for d in (quote.meta or {}).get(ANNUAL_REVIEW_KEY, {}).get("decisions", [])}
+    if reviewed_course_keys:
+        # Also remove only this quote's bindings from a pre-existing annual contract.
+        subscriptions = db.scalars(select(ClientPlanSubscription).where(
+            ClientPlanSubscription.user_id == _parse_uuid_value((quote.meta or {}).get(ANNUAL_REVIEW_KEY, {}).get("student_id"))
+        ).with_for_update()).all()
+        for subscription in subscriptions:
+            subscription.annual_pricing_terms = [t for t in (subscription.annual_pricing_terms or []) if t["course_key"] not in reviewed_course_keys]
     for subscription_id in created_subscription_ids:
         if subscription_id is None:
             continue

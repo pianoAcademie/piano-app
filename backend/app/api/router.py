@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter
+from app.api.routes import annual_pricing
 
 from app.api.routes import (
     admin,
@@ -40,6 +41,7 @@ from app.api.routes import (
 )
 
 api_router = APIRouter()
+api_router.include_router(annual_pricing.router, tags=["annual-pricing"])
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(clients.router, tags=["clients"])
 api_router.include_router(events.router, tags=["events"])

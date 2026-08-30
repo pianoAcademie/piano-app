@@ -61,6 +61,8 @@ function currentReturnTo(params: SearchParams): string {
   const locationId = readParam(params, "location_id").trim();
   const day = readParam(params, "day").trim();
   const scope = readParam(params, "scope").trim();
+  const bookingId = readParam(params, "booking_id").trim();
+  if (bookingId) query.set("booking_id", bookingId);
   if (schoolYear) query.set("school_year", schoolYear);
   if (locationId) query.set("location_id", locationId);
   if (day) query.set("day", day);
@@ -88,8 +90,10 @@ export default async function AdminPlanningReorganizationPage({
   const requestedSchoolYear = readParam(params, "school_year").trim();
   const requestedLocationId = readParam(params, "location_id").trim();
   const requestedDay = readParam(params, "day").trim();
+  const requestedBookingId = readParam(params, "booking_id").trim();
   const initialScope = readParam(params, "scope").trim() === "single" ? "single" : "series_future";
   const query = new URLSearchParams();
+  if (requestedBookingId) query.set("booking_id", requestedBookingId);
   if (requestedSchoolYear) query.set("school_year", requestedSchoolYear);
   if (requestedLocationId) query.set("location_id", requestedLocationId);
   if (requestedDay) query.set("day", requestedDay);
@@ -106,6 +110,7 @@ export default async function AdminPlanningReorganizationPage({
     location_id: snapshot?.selected_location_id ?? requestedLocationId,
     day: selectedDay,
     scope: initialScope,
+    booking_id: requestedBookingId,
   });
   const okMessage = messageParam(params, "ok");
   const errorMessage = messageParam(params, "error") || (result.ok ? "" : result.message);
@@ -135,7 +140,19 @@ export default async function AdminPlanningReorganizationPage({
       {okMessage ? <p className="form-feedback success">{okMessage}</p> : null}
       {errorMessage ? <p className="form-feedback error">{errorMessage}</p> : null}
 
+      <details className="card">
+        <summary><strong>Comment déplacer un élève sans modifier sa facturation ?</strong></summary>
+        <ol>
+          <li>Depuis Clients → fiche de l'élève → Réservations, cliquez sur Déplacer à côté de la première séance concernée.</li>
+          <li>Choisissez le jour de destination, puis une séance seule ou toutes les séances futures de la série.</li>
+          <li>Sélectionnez le groupe de destination. Vérifiez les dates et les montants dans l'aperçu, puis confirmez.</li>
+        </ol>
+        <p>Le tarif, les remises et la couverture de facture sont conservés. L'opération est tracée dans Changements, sans ajout de lignes de régularisation dans Compte. Aucun email client n'est envoyé par ce déplacement.</p>
+        <p>Une place indisponible bloque toute l'opération. Un changement d'activité, de lieu, de durée ou du nombre de séances doit être traité séparément par un avenant ; ce parcours ne recalcule pas le contrat.</p>
+      </details>
+
       <form className="card reorg-filters" method="get">
+        {requestedBookingId ? <input type="hidden" name="booking_id" value={requestedBookingId} /> : null}
         <label>
           Saison
           <select name="school_year" defaultValue={snapshot?.selected_school_year ?? requestedSchoolYear}>
@@ -195,6 +212,7 @@ export default async function AdminPlanningReorganizationPage({
           sessions={snapshot.sessions}
           returnTo={returnTo}
           initialScope={initialScope}
+          initialBookingId={requestedBookingId}
           language={language}
         />
       ) : null}

@@ -1,5 +1,6 @@
 from app.models.admin_task import AdminTask, AdminTaskComment
 from app.models.supply_order import ProductSupplyOrder, ProductSupplyOrderLine
+from app.models.annual_pricing import AnnualFamilyReference
 from app.models.family import ClientFamilyBillingAllocation, ClientFamilyLink
 from app.models.gift_card import GiftCard, GiftCardEvent
 from app.models.makeup import MakeupPassPurchase, MakeupRequest, MakeupRequestStatus

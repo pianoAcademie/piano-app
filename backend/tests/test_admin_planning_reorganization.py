@@ -30,8 +30,16 @@ class _FakeSession:
         self._scalars_values = list(scalars_values or [])
         self.commit_count = 0
         self.added_rows: list[object] = []
+        for value in scalar_values:
+            if hasattr(value, "session_id"):
+                value.user_id = getattr(value, "user_id", uuid4())
+                value.currency_snapshot = "EUR"
+            elif hasattr(value, "recurrence_group_id"):
+                value.start_at_utc = getattr(value, "start_at_utc", datetime.now(timezone.utc) + timedelta(days=30))
 
     def scalar(self, _query: object) -> object | None:
+        if str(_query).startswith("SELECT users.id \n"):
+            return None
         return self._scalar_values.pop(0) if self._scalar_values else None
 
     def scalars(self, _query: object) -> SimpleNamespace:
@@ -44,8 +52,17 @@ class _FakeSession:
     def add(self, row: object) -> None:
         self.added_rows.append(row)
 
+    def flush(self):
+        pass
+
 
 class AdminPlanningReorganizationTests(unittest.TestCase):
+    def setUp(self):
+        # Route orchestration fixtures; real validation is covered separately.
+        for target, result in [("_checked_move_version", ("preview", [])), ("_bind_moved_contract", None)]:
+            patcher = patch(f"app.api.routes.admin.{target}", return_value=result)
+            patcher.start()
+            self.addCleanup(patcher.stop)
     def test_series_move_matches_different_weekdays_in_the_same_week(self) -> None:
         wednesday = datetime(2026, 9, 2, 15, 0, tzinfo=timezone.utc)
         saturday = datetime(2026, 9, 5, 10, 0, tzinfo=timezone.utc)
@@ -219,6 +236,7 @@ class AdminPlanningReorganizationTests(unittest.TestCase):
             booking_id=source_booking.id,
             target_session_id=target_session.id,
             scope="single",
+            expected_version="preview",
         )
 
         with patch(
@@ -235,7 +253,7 @@ class AdminPlanningReorganizationTests(unittest.TestCase):
             result = move_planning_reorganization_booking(
                 payload,
                 db=db,  # type: ignore[arg-type]
-                _=SimpleNamespace(),  # type: ignore[arg-type]
+                actor=SimpleNamespace(id=uuid4()),  # type: ignore[arg-type]
             )
 
         self.assertEqual(result.moved_count, 1)
@@ -276,6 +294,7 @@ class AdminPlanningReorganizationTests(unittest.TestCase):
             booking_id=source_booking.id,
             target_session_id=target_session.id,
             scope="series_future",
+            expected_version="preview",
         )
 
         with patch(
@@ -295,7 +314,7 @@ class AdminPlanningReorganizationTests(unittest.TestCase):
             result = move_planning_reorganization_booking(
                 payload,
                 db=db,  # type: ignore[arg-type]
-                _=SimpleNamespace(),  # type: ignore[arg-type]
+                actor=SimpleNamespace(id=uuid4()),  # type: ignore[arg-type]
             )
 
         self.assertEqual(result.moved_count, 1)
@@ -337,14 +356,14 @@ class AdminPlanningReorganizationTests(unittest.TestCase):
                 move_planning_reorganization_booking(
                     payload,
                     db=db,  # type: ignore[arg-type]
-                    _=SimpleNamespace(),  # type: ignore[arg-type]
+                    actor=SimpleNamespace(id=uuid4()),  # type: ignore[arg-type]
                 )
 
         self.assertEqual(raised.exception.status_code, 409)
         self.assertEqual(db.commit_count, 0)
         move_occurrence.assert_not_called()
 
-    def test_apply_target_price_passes_the_new_snapshot_to_the_move(self) -> None:
+    def test_apply_target_price_requires_an_amendment(self) -> None:
         source_booking = SimpleNamespace(id=uuid4(), session_id=uuid4())
         source_session = SimpleNamespace(id=source_booking.session_id, recurrence_group_id=None)
         target_session = SimpleNamespace(id=uuid4(), recurrence_group_id=None)
@@ -355,6 +374,7 @@ class AdminPlanningReorganizationTests(unittest.TestCase):
             target_session_id=target_session.id,
             scope="single",
             price_policy="apply_target",
+            expected_version="preview",
         )
 
         with patch(
@@ -364,23 +384,11 @@ class AdminPlanningReorganizationTests(unittest.TestCase):
             "app.api.routes.admin._move_planning_reorganization_booking_occurrence",
             return_value=(True, None),
         ) as move_occurrence:
-            result = move_planning_reorganization_booking(
-                payload,
-                db=db,  # type: ignore[arg-type]
-                _=SimpleNamespace(),  # type: ignore[arg-type]
-            )
-
-        self.assertEqual(result.moved_count, 1)
-        self.assertEqual(db.commit_count, 1)
-        move_occurrence.assert_called_once_with(
-            db,
-            booking=source_booking,
-            source_session=source_session,
-            target_session=target_session,
-            now=ANY,
-            target_price_snapshot=target_snapshot,
-            lock_price_snapshot=True,
-        )
+            with self.assertRaises(HTTPException) as raised:
+                move_planning_reorganization_booking(payload, db=db, actor=SimpleNamespace(id=uuid4()))
+        self.assertIn("avenant", raised.exception.detail)
+        self.assertEqual(db.commit_count, 0)
+        move_occurrence.assert_not_called()
 
     def test_keep_source_price_locks_the_existing_snapshot(self) -> None:
         source_booking = SimpleNamespace(id=uuid4(), session_id=uuid4())
@@ -393,6 +401,7 @@ class AdminPlanningReorganizationTests(unittest.TestCase):
             target_session_id=target_session.id,
             scope="single",
             price_policy="keep_source",
+            expected_version="preview",
         )
 
         with patch(
@@ -405,7 +414,7 @@ class AdminPlanningReorganizationTests(unittest.TestCase):
             result = move_planning_reorganization_booking(
                 payload,
                 db=db,  # type: ignore[arg-type]
-                _=SimpleNamespace(),  # type: ignore[arg-type]
+                actor=SimpleNamespace(id=uuid4()),  # type: ignore[arg-type]
             )
 
         self.assertEqual(result.moved_count, 1)

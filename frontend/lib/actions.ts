@@ -3977,6 +3977,7 @@ export async function movePlanningReorganizationBookingAction(formData: FormData
         target_session_id: targetSessionId,
         scope,
         price_policy: pricePolicy,
+        expected_version: String(formData.get("expected_version") ?? ""),
       }),
     },
     token,
@@ -3994,6 +3995,9 @@ export async function movePlanningReorganizationBookingAction(formData: FormData
 }
 
 export type PlanningReorganizationMovePreview = {
+  version: string;
+  financial_impact_ttc: string;
+  occurrences: { source_at: string; target_at: string; price: string }[];
   price_change: boolean;
   affected_bookings: number;
   price_change_count: number;
@@ -13293,6 +13297,17 @@ export async function createQuoteDraftAction(formData: FormData): Promise<void> 
   revalidatePath("/admin/quotes");
   const detailPath = withUiLanguage(`/admin/quotes/${encodeURIComponent(result.data.quote.id)}?back=${encodeURIComponent(successReturnTo)}`, adminLanguage);
   redirect(withUiMessageCode(detailPath, "ok", "quote_detail_created", { lang: adminLanguage }));
+}
+
+export async function annualPricingAction(quoteId: string, operation: "context" | "preview" | "apply", payload?: Record<string, unknown>): Promise<{ ok: true; data: unknown } | { ok: false; message: string }> {
+  const token = currentToken();
+  if (!token) return { ok: false, message: "Session expirée. Reconnectez-vous." };
+  await ensureAdminAndGetLanguage(token);
+  const path = `/api/v1/quotes/${encodeURIComponent(quoteId)}/annual-pricing${operation === "context" ? "" : `/${operation}`}`;
+  const result = await backendRequest<unknown>(path, operation === "context" ? {} : { method: "POST", body: JSON.stringify(payload) }, token);
+  if (!result.ok) return { ok: false, message: result.message };
+  if (operation === "apply") revalidatePath(`/admin/quotes/${quoteId}`);
+  return { ok: true, data: result.data };
 }
 
 export async function sendQuoteAction(formData: FormData): Promise<void> {
