@@ -35,6 +35,7 @@ LOCATION_NAME = "Rue Scheffer"
 TARGET_WEEKDAY = 4
 TARGET_TIME = time(19, 0)
 TARGET_DATE = date(2027, 5, 14)
+SCHOOL_CLOSURE_DATE = date(2027, 5, 7)
 EXPECTED_COUNT = 32
 CURRENT_BAD_COUNT = 31
 EXPECTED_UNIT_TTC = Decimal("22.00")
@@ -162,7 +163,7 @@ def _series_sessions(
     recurrence_group_id: UUID,
     course_type_id: UUID,
     location_id: UUID,
-) -> list[CourseSession]:
+) -> tuple[list[CourseSession], CourseSession | None]:
     candidates = list(
         db.scalars(
             select(CourseSession)
@@ -184,12 +185,15 @@ def _series_sessions(
         if _local_start(row).weekday() == TARGET_WEEKDAY
         and _local_start(row).timetz().replace(tzinfo=None, second=0, microsecond=0) == TARGET_TIME
     ]
-    dates = [_local_start(row).date() for row in rows]
-    if len(rows) != EXPECTED_COUNT or len(set(dates)) != EXPECTED_COUNT:
-        _abort(f"target_series_expected_32_found_{len(rows)}")
-    if TARGET_DATE not in dates:
+    by_date = {_local_start(row).date(): row for row in rows}
+    if len(by_date) != len(rows):
+        _abort("duplicate_dates_in_target_series")
+    closure_session = by_date.pop(SCHOOL_CLOSURE_DATE, None)
+    if len(by_date) != EXPECTED_COUNT:
+        _abort(f"target_series_expected_32_teaching_dates_found_{len(by_date)}")
+    if TARGET_DATE not in by_date:
         _abort("target_date_missing_from_live_series")
-    return rows
+    return [by_date[value] for value in sorted(by_date)], closure_session
 
 
 def _invoice_context(
@@ -285,7 +289,7 @@ def main(argv: list[str] | None = None) -> int:
         recurrence_group_id = next(iter(recurrence_groups))
         if recurrence_group_id is None:
             _abort("recurrence_group_missing")
-        series_sessions = _series_sessions(
+        series_sessions, closure_session = _series_sessions(
             db,
             recurrence_group_id=recurrence_group_id,
             course_type_id=course_type.id,
@@ -298,6 +302,19 @@ def main(argv: list[str] | None = None) -> int:
             _abort(f"expected_only_2027_05_14_missing_found_{','.join(map(str, missing_dates))}")
         if len(rows) == EXPECTED_COUNT and missing_dates:
             _abort(f"complete_series_has_missing_dates_{len(missing_dates)}")
+
+        if closure_session is not None:
+            closure_booking_count = int(
+                db.scalar(
+                    select(func.count(Booking.id)).where(
+                        Booking.session_id == closure_session.id,
+                        Booking.status.in_(BOOKING_STATUSES_ACTIVE),
+                    )
+                )
+                or 0
+            )
+            if closure_booking_count:
+                _abort(f"school_closure_has_{closure_booking_count}_active_bookings")
 
         booking_ids = {booking.id for booking, _ in rows}
         note, invoice_metadata, course_invoice_lines, _ = _invoice_context(db, booking_ids=booking_ids)
@@ -332,6 +349,11 @@ def main(argv: list[str] | None = None) -> int:
             db.rollback()
             print(f"{SCRIPT_PREFIX}|summary|result=audit_only|applied=False")
             return 0
+
+        if closure_session is not None:
+            closure_session.status = SessionStatus.CANCELLED
+            closure_session.cancel_reason = "Fermeture exceptionnelle des établissements scolaires le 07/05/2027"
+            db.add(closure_session)
 
         for booking, _ in rows:
             booking.price_excl_vat_snapshot = unit[0]
@@ -435,6 +457,7 @@ def main(argv: list[str] | None = None) -> int:
                     "student_id": str(STUDENT_ID),
                     "invoice_number": INVOICE_NUMBER,
                     "added_date": TARGET_DATE.isoformat(),
+                    "cancelled_empty_closure_date": SCHOOL_CLOSURE_DATE.isoformat() if closure_session else None,
                     "before": {"booking_count": 31, "course_total": "704.00"},
                     "after": {"booking_count": 32, "unit_ttc": "22.00", "course_total": "704.00"},
                     "document_total": "879.00",
@@ -457,6 +480,7 @@ def main(argv: list[str] | None = None) -> int:
                     "created_booking_id": str(booking.id),
                     "created_invoice_line_id": str(invoice_line.id),
                     "added_date": TARGET_DATE.isoformat(),
+                    "cancelled_empty_closure_date": SCHOOL_CLOSURE_DATE.isoformat() if closure_session else None,
                     "unit_ttc": "22.00",
                     "course_total": "704.00",
                     "document_total": "879.00",
