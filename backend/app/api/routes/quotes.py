@@ -9933,6 +9933,7 @@ def _create_followup_booking(
         vat_amount_snapshot=vat_amount,
         total_incl_vat_snapshot=total_ttc,
         currency_snapshot=currency,
+        pricing_snapshot_locked=pricing_snapshot_override is not None,
         student_start_at_utc=student_start_at_utc,
         student_end_at_utc=student_end_at_utc,
     )

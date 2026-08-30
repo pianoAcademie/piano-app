@@ -21,6 +21,7 @@ from app.api.routes.admin_clients import (
 from app.api.routes.quotes import (
     QUOTE_ANNUAL_INVOICE_PERIOD_END,
     QUOTE_ANNUAL_INVOICE_PERIOD_START,
+    _create_followup_booking,
     _create_followup_annual_invoices,
     _quote_annual_invoice_amounts,
     _quote_annual_invoice_referral_credits_for_invoice,
@@ -59,6 +60,58 @@ def _discount(*, title: str, quantity: str, amount: str, code: str):
 
 
 class QuoteIntegrationPricingTests(unittest.TestCase):
+    def test_followup_booking_locks_price_accepted_in_quote(self) -> None:
+        class _FakeSession:
+            def __init__(self):
+                self.scalar_results = iter([None, None])
+                self.added = []
+
+            def scalar(self, _statement):
+                return next(self.scalar_results)
+
+            def add(self, row):
+                self.added.append(row)
+
+            def flush(self):
+                return None
+
+        fake_db = _FakeSession()
+        session_id = uuid4()
+        student_id = uuid4()
+        created_booking_ids = []
+        quote_price = (
+            Decimal("18.33"),
+            Decimal("20.000"),
+            Decimal("3.67"),
+            Decimal("22.00"),
+            "EUR",
+        )
+
+        with patch("app.api.routes.quotes._count_booked", return_value=0), patch(
+            "app.api.routes.quotes._mark_first_course_if_needed"
+        ), patch("app.api.routes.quotes.ensure_booking_reminder"), patch(
+            "app.api.routes.quotes.schedule_booking_created_notifications"
+        ):
+            booking = _create_followup_booking(
+                fake_db,
+                session_obj=SimpleNamespace(
+                    id=session_id,
+                    course_type_id=uuid4(),
+                    capacity_max=6,
+                ),
+                student=SimpleNamespace(id=student_id),
+                subscription=None,
+                plan=None,
+                now=datetime(2026, 8, 30, tzinfo=timezone.utc),
+                created_booking_ids=created_booking_ids,
+                pricing_snapshot_override=quote_price,
+            )
+
+        self.assertIsNotNone(booking)
+        self.assertTrue(booking.pricing_snapshot_locked)
+        self.assertEqual(booking.total_incl_vat_snapshot, Decimal("22.00"))
+        self.assertEqual(fake_db.added, [booking])
+
     def test_annual_invoice_metadata_freezes_quote_lines_period_and_deposit(self) -> None:
         class _FakeScalars:
             def all(self):
