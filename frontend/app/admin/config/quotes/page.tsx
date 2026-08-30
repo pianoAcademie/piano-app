@@ -1486,6 +1486,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                       {t("admin.quote_config.default_badge")}
                     </label>
                     <label className="checkline">
+                      <input type="hidden" name="is_active" value="false" />
                       <input type="checkbox" name="is_active" defaultChecked={selectedCatalog.is_active} />
                       {t("common.active")}
                     </label>
