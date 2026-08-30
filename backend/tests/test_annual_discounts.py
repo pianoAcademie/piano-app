@@ -84,3 +84,23 @@ def test_explicit_discount_target_beats_equal_quantities():
     assert _quote_discount_target_service_line(discount, [first, second]) is second
     with pytest.raises(HTTPException):
         _quote_discount_target_service_line(discount, [first])
+
+
+def test_verification_notes_never_exposed_in_public_metadata():
+    from app.api.routes.quotes import _quote_meta_without_admin_hold_note
+    meta = {"annual_pricing_review": {"review_note": "Private household evidence"}, "language": "fr"}
+    assert _quote_meta_without_admin_hold_note(meta) == {"language": "fr"}
+    assert "annual_pricing_review" in meta
+
+
+def test_contract_preserves_session_tax_rounding():
+    p = annual_discount_price(base=Decimal(38), vat_rate=Decimal(20), eligibility=AnnualEligibility("PARIS", "CHILD", "COLLECTIVE_ONSITE", True))
+    now = datetime.now(timezone.utc)
+    s = SimpleNamespace(id=uuid4(), course_type_id=uuid4(), location_id=uuid4(), recurrence_group_id=uuid4(), start_at_utc=now, end_at_utc=now+timedelta(hours=1))
+    decision = {"course_key": "rounding", "activity_id": str(s.course_type_id), "location_id": str(s.location_id), "duration_minutes": 60,
+                "quantity": "1", "version": p.version, "pricing": p.snapshot_breakdown(), "base": "38"}
+    subscription = SimpleNamespace(annual_pricing_terms=[])
+    bind_contract_course(subscription, decision, [s], [(Decimal("28.34"), Decimal(20), Decimal("5.66"), Decimal(34), "EUR")])
+    resolved = contract_price_for_session(subscription, s, now=now)
+    assert resolved.amount_excl_vat == Decimal("28.34")
+    assert resolved.vat_amount == Decimal("5.66")

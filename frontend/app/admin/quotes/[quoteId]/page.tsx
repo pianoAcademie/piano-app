@@ -128,6 +128,7 @@ type QuoteLineOut = {
 };
 
 type QuoteOut = {
+  updated_at: string;
   id: string;
   quote_number: string;
   status: string;

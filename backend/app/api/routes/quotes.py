@@ -291,6 +291,7 @@ def _set_quote_admin_hold_note(quote: Quote, value: object | None) -> bool:
 def _quote_meta_without_admin_hold_note(meta: object | None) -> dict[str, object]:
     next_meta = _normalize_quote_meta(meta)
     next_meta.pop(QUOTE_ADMIN_HOLD_NOTE_META_KEY, None)
+    next_meta.pop(ANNUAL_REVIEW_KEY, None)
     return next_meta
 
 
@@ -11395,7 +11396,7 @@ def _execute_quote_followup_transformation(
         if len(annual_decisions) > 1:
             raise HTTPException(409, "Plusieurs décisions tarifaires correspondent au même cours : vérifiez les activités planifiées.")
         annual_decision = annual_decisions[0] if annual_decisions else None
-        bind_contract_course(subscription, annual_decision, live_sessions)
+        bind_contract_course(subscription, annual_decision, live_sessions, pricing_overrides)
         for session_obj, pricing_override in zip(live_sessions, pricing_overrides):
             _create_followup_booking(
                 db,

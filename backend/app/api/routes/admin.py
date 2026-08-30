@@ -4568,6 +4568,14 @@ def _bind_moved_contract(db, booking, target, scope):
     if any(t is not decision and ((group and group in t.get("series_ids", [])) or str(target.id) in t.get("session_ids", [])) for t in terms):
         raise HTTPException(409, "Le créneau cible appartient déjà à un autre cours annuel de cet élève.")
     decision["session_ids"] = sorted((set(decision.get("session_ids", [])) - {str(booking.session_id)}) | {str(target.id)})
+    session_prices = dict(decision.get("session_prices", {}))
+    session_prices.pop(str(booking.session_id), None)
+    session_prices[str(target.id)] = {
+        "amount_excl_vat": str(booking.price_excl_vat_snapshot), "vat_rate": str(booking.vat_rate_snapshot),
+        "vat_amount": str(booking.vat_amount_snapshot), "total_incl_vat": str(booking.total_incl_vat_snapshot),
+        "currency": booking.currency_snapshot,
+    }
+    decision["session_prices"] = session_prices
     if scope == "series_future" and group:
         decision["series_ids"] = sorted(set(decision.get("series_ids", []) + [group]))
     subscription.annual_pricing_terms = terms

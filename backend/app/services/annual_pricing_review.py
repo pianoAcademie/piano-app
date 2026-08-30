@@ -120,6 +120,23 @@ def check_review_current(db, quote, lines):
         reference = db.get(AnnualFamilyReference, (UUID(guardian_id), quote.school_year_label))
         if not reference or str(reference.child_id) != review.get("family_reference_child_id"):
             fail("L'enfant de référence de la famille a changé : vérifiez de nouveau les remises.")
+    reference_id = review.get("family_reference_child_id")
+    if reference_id and reference_id != review.get("student_id"):
+        if not reference_has_engagement(db, quote, UUID(reference_id)):
+            fail("L'engagement annuel de l'enfant de référence n'est plus disponible : revérifiez la remise famille avant envoi.")
+
+
+def reference_has_engagement(db, quote, reference_id):
+    subscription = db.scalar(select(ClientPlanSubscription.id).join(Plan).where(
+        ClientPlanSubscription.user_id == reference_id, Plan.kind == PlanKind.FORFAIT,
+        ClientPlanSubscription.started_at < datetime(2027, 8, 1, tzinfo=timezone.utc),
+        ClientPlanSubscription.ends_at >= datetime(2026, 9, 1, tzinfo=timezone.utc),
+        ClientPlanSubscription.status == SubscriptionStatus.ACTIVE,
+    ).limit(1))
+    quotes = db.scalars(select(Quote).where(Quote.school_year_label == quote.school_year_label,
+        Quote.quote_type == "forfait", Quote.total_ttc > 0,
+        Quote.status.in_(["created", "sent", "approved", "accepted"]), Quote.id != quote.id)).all()
+    return bool(subscription or any(q.client_id == reference_id or (q.meta or {}).get(KEY, {}).get("student_id") == str(reference_id) for q in quotes))
 
 
 def prepare_review(db: Session, quote: Quote, lines: list[QuoteLine], request: AnnualReviewRequest):
@@ -158,16 +175,7 @@ def prepare_review(db: Session, quote: Quote, lines: list[QuoteLine], request: A
             fail("L'enfant de référence doit être une fiche enfant.")
     family = bool(reference_id and reference_id != student.id)
     if family:
-        ref_subscription = db.scalar(select(ClientPlanSubscription.id).join(Plan).where(
-            ClientPlanSubscription.user_id == reference_id, Plan.kind == PlanKind.FORFAIT,
-            ClientPlanSubscription.started_at < datetime(2027, 8, 1, tzinfo=timezone.utc),
-            ClientPlanSubscription.ends_at >= datetime(2026, 9, 1, tzinfo=timezone.utc),
-            ClientPlanSubscription.status == SubscriptionStatus.ACTIVE,
-        ).limit(1))
-        ref_quotes = db.scalars(select(Quote).where(Quote.school_year_label == quote.school_year_label,
-            Quote.quote_type == "forfait", Quote.status.in_(["created", "sent", "approved", "accepted"]), Quote.id != quote.id)).all()
-        has_ref_quote = any(q.client_id == reference_id or (q.meta or {}).get(KEY, {}).get("student_id") == str(reference_id) for q in ref_quotes)
-        if not ref_subscription and not has_ref_quote:
+        if not reference_has_engagement(db, quote, reference_id):
             fail("Préparez d'abord le devis annuel de l'enfant de référence (son acceptation n'est pas nécessaire), ou rattachez son contrat annuel. Aucun engagement de cet enfant n'a été retrouvé.")
     previous_subscription = db.scalar(select(ClientPlanSubscription.id).join(Plan).where(
         ClientPlanSubscription.user_id == student.id, Plan.kind == PlanKind.FORFAIT,

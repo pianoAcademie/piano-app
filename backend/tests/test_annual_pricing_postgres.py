@@ -116,6 +116,51 @@ def test_cannot_stack_legacy_discounts(case):
         prepare_review(db, q, lines, request)
 
 
+def test_review_invalidates_after_exceptional_financial_adjustment(case):
+    db, q, lines, request, actor, _ = case
+    request.expected_version = prepare_review(db, q, lines, request)["version"]
+    apply_review(db, q, lines, request, actor)
+    db.flush()
+    fresh = db.scalars(select(QuoteLine).where(QuoteLine.quote_id == q.id)).all()
+    q.meta = {**q.meta, "financial_adjustment": {"amount_ttc": "5.00"}}
+    with pytest.raises(HTTPException, match="changé"):
+        check_review_current(db, q, fresh)
+
+
+def test_family_evidence_checked_again_before_sending(case):
+    db, q, lines, request, actor, reference = case
+    request.expected_version = prepare_review(db, q, lines, request)["version"]
+    apply_review(db, q, lines, request, actor)
+    reference.status = "cancelled"
+    db.flush()
+    fresh = db.scalars(select(QuoteLine).where(QuoteLine.quote_id == q.id)).all()
+    with pytest.raises(HTTPException, match="engagement annuel"):
+        check_review_current(db, q, fresh)
+
+
+def test_migration_up_down_is_additive(case):
+    import importlib.util
+    from pathlib import Path
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+    from sqlalchemy import inspect
+    db, q, _, _, _, _ = case
+    path = Path(__file__).parents[1] / "alembic/versions/20260830_0230_annual_pricing_decisions.py"
+    spec = importlib.util.spec_from_file_location("annual_migration", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    connection = db.connection()
+    original_total = q.total_ttc
+    with Operations.context(MigrationContext.configure(connection)):
+        module.downgrade()
+        assert "annual_pricing_terms" not in {c["name"] for c in inspect(connection).get_columns("client_plan_subscriptions")}
+        module.upgrade()
+    assert "annual_pricing_terms" in {c["name"] for c in inspect(connection).get_columns("client_plan_subscriptions")}
+    assert "annual_family_references" in inspect(connection).get_table_names()
+    db.expire(q)
+    assert q.total_ttc == original_total
+
+
 def setup_move(case):
     from app.models.catalog import CourseSession, Booking, BookingStatus
     from app.models.plan import Plan, PlanKind, ClientPlanSubscription

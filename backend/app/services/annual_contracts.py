@@ -26,14 +26,14 @@ def contract_price_for_session(subscription, session, *, now):
     if len(matches) != 1:
         raise HTTPException(409, "Ce créneau ne correspond pas à un cours contractuel unique. Utilisez Déplacer ou faites valider un avenant ; aucune remise n'est attribuée par ordre de réservation.")
     decision = matches[0]
-    p = decision["pricing"]
+    p = {**decision["pricing"], **decision.get("session_prices", {}).get(str(session.id), {})}
     return decorate_contract_price(compute_contract_price(channel=PricingChannel.QUOTE,
         amount_excl_vat=p["amount_excl_vat"], vat_rate=p["vat_rate"], vat_amount=p["vat_amount"],
         total_incl_vat=p["total_incl_vat"], currency=p["currency"], source=p["source"],
         version=decision["version"], calculated_at=now), decision)
 
 
-def bind_contract_course(subscription, decision, sessions):
+def bind_contract_course(subscription, decision, sessions, pricing_overrides=None):
     if not decision or not subscription:
         return
     if any(str(s.course_type_id) != decision["activity_id"] or str(s.location_id) != decision["location_id"]
@@ -44,6 +44,11 @@ def bind_contract_course(subscription, decision, sessions):
     terms = list(getattr(subscription, "annual_pricing_terms", None) or [])
     if any(t["course_key"] == decision["course_key"] for t in terms):
         raise HTTPException(409, "Ce cours contractuel a déjà été intégré.")
+    session_prices = {}
+    for session, price in zip(sessions, pricing_overrides or []):
+        if price:
+            session_prices[str(session.id)] = dict(zip(
+                ("amount_excl_vat", "vat_rate", "vat_amount", "total_incl_vat", "currency"), map(str, price)))
     terms.append({**decision, "series_ids": sorted({str(s.recurrence_group_id) for s in sessions if s.recurrence_group_id}),
-                  "session_ids": [str(s.id) for s in sessions]})
+                  "session_ids": [str(s.id) for s in sessions], "session_prices": session_prices})
     subscription.annual_pricing_terms = terms
