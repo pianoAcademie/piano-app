@@ -4532,6 +4532,7 @@ def _checked_move_version(db, pairs, skipped_count, details, now):
     ids = sorted({s.id for _, a, b in pairs for s in (a, b)}, key=str)
     db.scalars(select(CourseSession).where(CourseSession.id.in_(ids)).order_by(CourseSession.id).with_for_update().execution_options(populate_existing=True)).all()
     snapshots = []
+    moved_ids = [booking.id for booking, _, _ in pairs]
     for booking, source, target in pairs:
         if booking.student_start_at_utc is not None or booking.student_end_at_utc is not None:
             raise HTTPException(409, "Cette inscription utilise un horaire individuel. Faites vérifier son déplacement pour conserver sa durée exacte.")
@@ -4539,6 +4540,14 @@ def _checked_move_version(db, pairs, skipped_count, details, now):
             raise HTTPException(409, "Seules les séances futures peuvent être déplacées par ce parcours.")
         if source.course_type_id != target.course_type_id or source.location_id != target.location_id or source.end_at_utc - source.start_at_utc != target.end_at_utc - target.start_at_utc:
             raise HTTPException(409, "Activité, lieu ou durée différents : passez par un avenant dans la fiche client. Aucun tarif ni facture n'a été modifié.")
+        conflict = db.scalar(select(Booking.id).join(CourseSession, CourseSession.id == Booking.session_id).where(
+            Booking.user_id == booking.user_id, Booking.id.not_in(moved_ids),
+            Booking.status.in_(BOOKING_STATUSES_ACTIVE), CourseSession.status != SessionStatus.CANCELLED,
+            func.coalesce(Booking.student_start_at_utc, CourseSession.start_at_utc) < target.end_at_utc,
+            func.coalesce(Booking.student_end_at_utc, CourseSession.end_at_utc) > target.start_at_utc,
+        ).limit(1))
+        if conflict:
+            raise HTTPException(409, "L'élève a déjà un cours qui chevauche la destination. Aucun déplacement effectué.")
         snapshots.append({"booking": str(booking.id), "source": str(source.id), "target": str(target.id),
             "source_at": source.start_at_utc.isoformat(), "target_at": target.start_at_utc.isoformat(),
             "status": str(booking.status), "target_status": str(target.status), "capacity": target.capacity_max,

@@ -15,7 +15,7 @@ type Preview = { version: string; previous_total: string; total: string; returni
   decisions: { line_id: string; title: string; quantity: string; base: string; net: string;
     pricing: { components: { code: string; label: string; amount_ttc: string }[] } }[] };
 
-export default function AnnualPricingReview({ quoteId, editable }: { quoteId: string; editable: boolean }): JSX.Element {
+export default function AnnualPricingReview({ quoteId, editable, revision }: { quoteId: string; editable: boolean; revision: string }): JSX.Element {
   const router = useRouter();
   const [context, setContext] = useState<Context | null>(null);
   const [student, setStudent] = useState("");
@@ -41,7 +41,7 @@ export default function AnnualPricingReview({ quoteId, editable }: { quoteId: st
       setNote(data.review?.review_note || "");
     });
     return () => { active = false; };
-  }, [quoteId]);
+  }, [quoteId, revision]);
 
   async function run(apply: boolean): Promise<void> {
     setBusy(true); setMessage("");
@@ -61,7 +61,7 @@ export default function AnnualPricingReview({ quoteId, editable }: { quoteId: st
     } finally { setBusy(false); }
   }
   return <details className="card top-gap-sm">
-    <summary><strong>Vérifier et calculer les remises annuelles</strong></summary>
+    <summary><strong>Vérifier et calculer les remises annuelles</strong>{context?.review ? " · Décision enregistrée" : ""}</summary>
     <p>Prix issus de la grille, remises détaillées par séance et conservées à l'inscription. Les remises manuelles ne sont jamais cumulées automatiquement.</p>
     {!editable ? <p>Devis verrouillé : décision tarifaire conservée, aucune modification.</p> : <>
       {context && !context.students.length ? <p role="alert">Rattachez d'abord une fiche enfant au client du devis pour vérifier les liens familiaux. Aucun rapprochement automatique par nom.</p> : null}

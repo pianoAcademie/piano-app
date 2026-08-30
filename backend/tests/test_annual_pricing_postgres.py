@@ -209,6 +209,15 @@ def test_neutral_move_preserves_ids_money_and_writes_change_history(case):
     from app.models.client_record import StudentQuoteChange
     from app.schemas.admin import AdminPlanningReorganizationMovePreviewRequest, AdminPlanningReorganizationMoveRequest, AdminStudentQuoteChangeOut
     db, actor, sources, targets, bookings = setup_move(case)
+    from app.models.plan import ClientPlanSubscription
+    from app.services.annual_contracts import bind_contract_course, contract_price_for_session
+    from app.services.annual_discounts import AnnualEligibility, annual_discount_price
+    subscription = db.get(ClientPlanSubscription, bookings[0].client_plan_subscription_id)
+    price = annual_discount_price(base=Decimal(38), vat_rate=Decimal(20), eligibility=AnnualEligibility("PARIS", "CHILD", "COLLECTIVE_ONSITE", True))
+    decision = {"course_key": "move-term", "activity_id": str(sources[0].course_type_id), "location_id": str(sources[0].location_id),
+        "duration_minutes": 60, "quantity": "2", "version": "test-price", "pricing": price.snapshot_breakdown(), "base": "38"}
+    bind_contract_course(subscription, decision, sources)
+    db.commit()
     ids = [b.id for b in bookings]
     preview = preview_planning_reorganization_booking_move(AdminPlanningReorganizationMovePreviewRequest(
         booking_id=bookings[0].id, target_session_id=targets[0].id, scope="series_future"), db=db, _=actor)
@@ -219,5 +228,9 @@ def test_neutral_move_preserves_ids_money_and_writes_change_history(case):
     assert [b.id for b in bookings] == ids
     assert [b.session_id for b in bookings] == [s.id for s in targets]
     assert all(b.total_incl_vat_snapshot == 34 and b.price_book_version_snapshot == "test-price" for b in bookings)
+    for target in targets:
+        assert contract_price_for_session(subscription, target, now=datetime.now(timezone.utc)).total_incl_vat == 34
+    with pytest.raises(HTTPException):
+        contract_price_for_session(subscription, sources[0], now=datetime.now(timezone.utc))
     change = db.scalar(select(StudentQuoteChange).where(StudentQuoteChange.student_user_id == bookings[0].user_id))
     assert change.change_type == "SLOT_CHANGE" and change.financial_impact_ttc == 0 and change.billing_action == "NONE"
