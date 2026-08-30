@@ -21275,7 +21275,7 @@ button.danger:focus-visible {
   height: 21px;
   margin-left: -5px;
   place-items: center;
-  border: 2px solid #e6f3e9;
+  border: 2px solid #93c5fd;
   border-radius: 999px;
   background: #d8e5ff;
   color: #31578c;
@@ -21290,8 +21290,7 @@ button.danger:focus-visible {
 }
 
 .simulation-teacher-cell-avatars i.confirmed {
-  background: #2f7553;
-  color: #fff;
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 85%);
 }
 
 .simulation-teacher-cell-avatars i.empty {

@@ -19,6 +19,29 @@ function teacherInitials(label: string): string {
   return parts.slice(0, 2).map((part) => part[0]?.toUpperCase() || "").join("");
 }
 
+const TEACHER_BADGE_PALETTE = [
+  { background: "#dbeafe", borderColor: "#93c5fd", color: "#1e3a8a" },
+  { background: "#dcfce7", borderColor: "#86efac", color: "#166534" },
+  { background: "#fce7f3", borderColor: "#f9a8d4", color: "#9d174d" },
+  { background: "#fef3c7", borderColor: "#fcd34d", color: "#92400e" },
+  { background: "#ede9fe", borderColor: "#c4b5fd", color: "#5b21b6" },
+  { background: "#cffafe", borderColor: "#67e8f9", color: "#155e75" },
+  { background: "#ffedd5", borderColor: "#fdba74", color: "#9a3412" },
+  { background: "#f3e8ff", borderColor: "#d8b4fe", color: "#6b21a8" },
+  { background: "#ccfbf1", borderColor: "#5eead4", color: "#115e59" },
+  { background: "#fee2e2", borderColor: "#fca5a5", color: "#991b1b" },
+  { background: "#e0e7ff", borderColor: "#a5b4fc", color: "#3730a3" },
+  { background: "#ecfccb", borderColor: "#bef264", color: "#3f6212" },
+] as const;
+
+function teacherBadgeStyle(label: string): CSSProperties {
+  let hash = 0;
+  for (const character of label.trim().toLocaleLowerCase("fr-FR")) {
+    hash = (hash * 31 + (character.codePointAt(0) || 0)) >>> 0;
+  }
+  return TEACHER_BADGE_PALETTE[hash % TEACHER_BADGE_PALETTE.length];
+}
+
 function warningLabel(code: string, language: UiLanguage): string {
   if (code === "TIME_OVERLAP") {
     return text(language, "Chevauchement horaire", "Schedule overlap");
@@ -149,6 +172,7 @@ export function TeacherAssignmentGridCell({
             <i
               className={slot.teacher_assignment_status === "CONFIRMED" ? "confirmed" : "previsional"}
               key={slot.slot_key}
+              style={teacherBadgeStyle(slot.teacher_assignment_label || "")}
               title={slot.teacher_assignment_label || undefined}
             >
               {teacherInitials(slot.teacher_assignment_label || "")}
