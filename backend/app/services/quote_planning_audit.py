@@ -45,8 +45,8 @@ PARIS_2026_2027_ANNUAL_COUNTS = {
     4: 32,
     5: 31,
 }
-PARIS_2026_2027_START_UTC = datetime(2026, 9, 1, tzinfo=timezone.utc)
-PARIS_2026_2027_END_UTC = datetime(2027, 7, 1, tzinfo=timezone.utc)
+ANNUAL_2026_2027_START_UTC = datetime(2026, 9, 1, tzinfo=timezone.utc)
+ANNUAL_2026_2027_END_UTC = datetime(2027, 7, 1, tzinfo=timezone.utc)
 
 # These recurrence groups were individually audited against their immutable
 # accepted-quote snapshots on 2026-08-28.  Keep the general audit broad, but
@@ -154,7 +154,7 @@ def _paris_annual_target_count(
     return PARIS_2026_2027_ANNUAL_COUNTS.get(local_start.weekday())
 
 
-def _canonical_paris_annual_dates(
+def _canonical_annual_dates(
     db: Session,
     *,
     school_year: str,
@@ -164,7 +164,7 @@ def _canonical_paris_annual_dates(
     location: Location,
     accepted_dates: set[date],
 ) -> set[date]:
-    """Prefer the reviewed live annual series when the quote is near its target.
+    """Prefer a reviewed live annual series when the quote is near its target.
 
     Historical accepted snapshots can contain one school-closure date while
     omitting the replacement teaching date. The live recurrence series is the
@@ -179,7 +179,17 @@ def _canonical_paris_annual_dates(
         location=location,
         template=template,
     )
-    if target is None or abs(len(accepted_dates) - target) > 1:
+    activity_name = _normalized_label(course_type.name)
+    location_name = _normalized_label(location.name)
+    is_bar_le_duc_annual = (
+        school_year == "2026-2027"
+        and "bar-le-duc" in location_name
+        and "cours collectif" in activity_name
+        and not any(token in activity_name for token in ("solfege", "eveil", "masterclass"))
+    )
+    if target is None and not is_bar_le_duc_annual:
+        return accepted_dates
+    if target is not None and abs(len(accepted_dates) - target) > 1:
         return accepted_dates
     local_template = template.start_at_utc.astimezone(_zone(template.timezone))
     live_rows = db.scalars(
@@ -188,8 +198,8 @@ def _canonical_paris_annual_dates(
             CourseSession.course_type_id == template.course_type_id,
             CourseSession.location_id == template.location_id,
             CourseSession.status == SessionStatus.SCHEDULED,
-            CourseSession.start_at_utc >= PARIS_2026_2027_START_UTC,
-            CourseSession.start_at_utc < PARIS_2026_2027_END_UTC,
+            CourseSession.start_at_utc >= ANNUAL_2026_2027_START_UTC,
+            CourseSession.start_at_utc < ANNUAL_2026_2027_END_UTC,
         )
     ).all()
     live_dates = {
@@ -199,7 +209,14 @@ def _canonical_paris_annual_dates(
         if local.weekday() == local_template.weekday()
         and local.strftime("%H:%M") == local_template.strftime("%H:%M")
     }
-    return live_dates if len(live_dates) == target else accepted_dates
+    if target is not None:
+        return live_dates if len(live_dates) == target else accepted_dates
+    # Bar-le-Duc follows its own Zone B calendar and season bounds.  The live
+    # annual series already carries those reviewed dates; only adopt it for a
+    # full-year quote whose accepted volume differs by at most one session.
+    if len(live_dates) >= 30 and abs(len(accepted_dates) - len(live_dates)) <= 1:
+        return live_dates
+    return accepted_dates
 
 
 def _execution(followup: QuoteAcceptanceFollowup) -> dict[str, Any]:
@@ -498,7 +515,7 @@ def _audit_candidates(db: Session, *, school_year: str) -> tuple[int, list[Audit
             )
             if not expected_dates:
                 continue
-            expected_dates = _canonical_paris_annual_dates(
+            expected_dates = _canonical_annual_dates(
                 db,
                 school_year=school_year,
                 group_id=group_id,
