@@ -6,7 +6,6 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-
 AdminToProcessStatus = Literal["a_traiter", "en_cours", "termine"]
 
 
@@ -34,3 +33,14 @@ class AdminToProcessStatusUpdateOut(BaseModel):
     id: UUID
     status: AdminToProcessStatus
     updated_at: datetime
+
+
+class AdminToProcessMissingServiceResolveOut(BaseModel):
+    id: UUID
+    status: AdminToProcessStatus
+    updated_at: datetime
+    statement_ids: list[UUID]
+    matched_session_ids: list[UUID]
+    statement_total_ht: str
+    currency: str
+    teacher_notified: bool

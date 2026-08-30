@@ -185,6 +185,56 @@ async function updateMessageStatusAction(formData: FormData): Promise<void> {
   redirect(appendQueryMessage(returnTo, "ok", uiText(language, "admin.todo.status_updated")));
 }
 
+async function resolveMissingServiceAction(formData: FormData): Promise<void> {
+  "use server";
+
+  const token = cookies().get("admin_access_token")?.value ?? cookies().get("access_token")?.value;
+  const language = readLanguageFromFormData(formData);
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+
+  const messageId = String(formData.get("message_id") ?? "").trim();
+  const returnTo = safeAdminPath(String(formData.get("return_to") ?? ""), "/admin/a-traiter");
+  if (!messageId) {
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.todo.invalid_status_update")));
+  }
+
+  const response = await fetch(
+    `${backendUrl()}/api/v1/admin/to-process/messages/${encodeURIComponent(messageId)}/resolve-missing-service`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    },
+  );
+  const payload = (await response.json().catch(() => null)) as {
+    detail?: string | { message?: string };
+    statement_total_ht?: string;
+    currency?: string;
+  } | null;
+  revalidatePath("/admin/a-traiter");
+
+  if (!response.ok) {
+    const rawDetail = payload?.detail;
+    const detail =
+      typeof rawDetail === "string"
+        ? rawDetail
+        : rawDetail?.message || uiText(language, "admin.todo.backend_error");
+    redirect(appendQueryMessage(returnTo, "error", detail));
+  }
+
+  const total = payload?.statement_total_ht || "-";
+  const currency = payload?.currency || "EUR";
+  redirect(
+    appendQueryMessage(
+      returnTo,
+      "ok",
+      uiText(language, "admin.todo.missing_service_resolved", { total, currency }),
+    ),
+  );
+}
+
 export default async function AdminToProcessPage({ searchParams }: { searchParams: SearchParams }): Promise<JSX.Element> {
   const token = cookies().get("admin_access_token")?.value ?? cookies().get("access_token")?.value;
   if (!token) {
@@ -412,6 +462,19 @@ export default async function AdminToProcessPage({ searchParams }: { searchParam
                 ) : null}
               </section>
             </div>
+
+            {selected.message_type === "prestation_manquante" && selected.status !== "termine" ? (
+              <form action={resolveMissingServiceAction} className="message-detail-resolution-form">
+                <input type="hidden" name="message_id" value={selected.id} />
+                <input type="hidden" name="return_to" value={baseHref} />
+                <input type="hidden" name="ui_language" value={language} />
+                <div>
+                  <strong>{t("admin.todo.resolve_missing_service_title")}</strong>
+                  <p className="muted">{t("admin.todo.resolve_missing_service_help")}</p>
+                </div>
+                <button type="submit">{t("admin.todo.resolve_missing_service_action")}</button>
+              </form>
+            ) : null}
 
             <form action={updateMessageStatusAction} className="message-detail-status-form">
               <input type="hidden" name="message_id" value={selected.id} />

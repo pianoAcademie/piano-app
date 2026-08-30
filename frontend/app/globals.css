@@ -3690,6 +3690,23 @@ button.danger:focus-visible {
   gap: 10px;
 }
 
+.message-detail-resolution-form {
+  border-top: 1px solid #d7e8dc;
+  background: #f0faf3;
+  padding: 12px 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.message-detail-resolution-form p {
+  margin: 4px 0 0;
+}
+
+.message-detail-resolution-form button {
+  width: 100%;
+  min-height: 44px;
+}
+
 .message-detail-status-label {
   display: grid;
   gap: 6px;

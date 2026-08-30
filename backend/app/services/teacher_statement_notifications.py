@@ -3,12 +3,12 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from html import escape
 from io import BytesIO
-from typing import Iterable
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -23,7 +23,11 @@ from sqlalchemy.orm import Session
 
 from app.models.catalog import CourseSession, Professor, SessionStatus
 from app.models.ops import AppSetting
-from app.models.teacher_invoicing import TeacherInvoice, TeacherInvoiceAuditEvent, TeacherMonthlyStatement
+from app.models.teacher_invoicing import (
+    TeacherInvoice,
+    TeacherInvoiceAuditEvent,
+    TeacherMonthlyStatement,
+)
 from app.models.user import User
 from app.services.email_delivery import send_email
 from app.services.messaging_templates import resolve_frontend_base_url
@@ -473,6 +477,68 @@ def build_available_email(
     return subject, _email_shell(title=title, greeting=greeting, content=content, footer=footer)
 
 
+def build_missing_service_resolved_email(
+    db: Session,
+    *,
+    professor: Professor,
+    statements: list[ComputedStatement],
+    matched_session: dict[str, object],
+    year: int,
+    month: int,
+    attendee_count: int,
+    language: str,
+) -> tuple[str, str]:
+    period = invoice_period_label(year=year, month=month, language=language)
+    portal_url = f"{resolve_frontend_base_url(db).rstrip('/')}/prof/statements?year={year}&month={month}"
+    first_name = escape((professor.first_name or "").strip())
+    service_date_raw = str(matched_session.get("date") or "")
+    try:
+        service_date = date.fromisoformat(service_date_raw)
+        service_date_label = _format_date(service_date, language=language)
+    except ValueError:
+        service_date_label = service_date_raw or "-"
+    title_text = escape(str(matched_session.get("title") or "Cours"))
+    location_text = escape(str(matched_session.get("location_name") or "-"))
+    rate_text = escape(str(matched_session.get("unit_rate_ht") or "0.00"))
+    currency = escape(statements[0].currency if statements else "EUR")
+    total_ht = sum((statement.totals_ht for statement in statements), Decimal("0.00"))
+    total_text = escape(_quantized_text(total_ht))
+    attendee_text = str(max(0, attendee_count))
+
+    if language == "en":
+        subject = f"Your missing service has been added – {period}"
+        title = "Your statement has been corrected"
+        greeting = f"Hello {first_name}," if first_name else "Hello,"
+        content = (
+            "<p>Your report has been reviewed and the service below now appears in your statement:</p>"
+            f"<div style=\"background:#f5f7fa;border-radius:10px;padding:16px 18px;margin:18px 0;\">"
+            f"<strong>{title_text}</strong><br>{escape(service_date_label)} · {location_text}<br>"
+            f"{attendee_text} student(s) present · <strong>{rate_text} {currency} net</strong></div>"
+            f"<p>Your {escape(period)} statement now totals <strong>{total_text} {currency} net</strong>.</p>"
+            f"<p><a href=\"{escape(portal_url)}\" style=\"display:inline-block;padding:11px 18px;"
+            "background:#c98224;color:#fff;text-decoration:none;border-radius:8px;font-weight:700;\">"
+            "Review my statement</a></p>"
+        )
+        footer = "You can report another discrepancy directly from your professor portal."
+    else:
+        subject = f"Votre prestation manquante a été ajoutée – {period}"
+        title = "Votre relevé a été corrigé"
+        greeting = f"Bonjour {first_name}," if first_name else "Bonjour,"
+        content = (
+            "<p>Votre signalement a été vérifié et la prestation suivante figure désormais dans votre relevé :</p>"
+            f"<div style=\"background:#f5f7fa;border-radius:10px;padding:16px 18px;margin:18px 0;\">"
+            f"<strong>{title_text}</strong><br>{escape(service_date_label)} · {location_text}<br>"
+            f"{attendee_text} élève(s) présent(s) · <strong>{rate_text} {currency} HT</strong></div>"
+            f"<p>Votre relevé de {escape(period)} présente désormais un total de "
+            f"<strong>{total_text} {currency} HT</strong>.</p>"
+            f"<p><a href=\"{escape(portal_url)}\" style=\"display:inline-block;padding:11px 18px;"
+            "background:#c98224;color:#fff;text-decoration:none;border-radius:8px;font-weight:700;\">"
+            "Consulter mon relevé</a></p>"
+        )
+        footer = "Vous pouvez signaler toute autre anomalie directement depuis votre espace professeur."
+    return subject, _email_shell(title=title, greeting=greeting, content=content, footer=footer)
+
+
 def _invoice_status(db: Session, statement_id: UUID) -> str:
     invoice = db.scalar(
         select(TeacherInvoice)
@@ -805,12 +871,13 @@ __all__ = [
     "add_french_business_days",
     "build_available_email",
     "build_blocked_email",
+    "build_missing_service_resolved_email",
     "expected_payment_date",
     "invoice_deadline",
     "is_french_business_day",
     "render_accounting_digest_pdf",
     "run_teacher_statement_notification_job",
     "set_teacher_statement_notifications_enabled",
-    "teacher_statement_professor_is_eligible",
     "teacher_statement_notifications_enabled",
+    "teacher_statement_professor_is_eligible",
 ]
