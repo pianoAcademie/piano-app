@@ -31,6 +31,7 @@ from app.models.product_catalog import (
     ProductTransferStatus,
 )
 from app.models.user import User, UserRole
+from app.models.supply_order import ProductSupplyOrder, ProductSupplyOrderLine
 from app.schemas.catalog_admin import (
     AdminCatalogCategoryCreateRequest,
     AdminCatalogCategoryOut,
@@ -1353,7 +1354,7 @@ def list_admin_catalog_reorder_products(
             primary_location_name=location_name_by_id.get(row.primary_location_id) if row.primary_location_id else None,
         )
         for row in filtered
-        if int(row.stock_global_quantity or 0) < int(row.reserve_stock or 0) or status_filter is not None
+        if int(row.stock_global_quantity or 0) < int(row.reserve_stock or 0) or status_filter is not None or row.reorder_status == ProductReorderStatus.ORDERED
     ]
 
 
@@ -1364,7 +1365,14 @@ def update_admin_catalog_reorder_status(
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> AdminCatalogReorderProductOut:
-    row = _require_product(db, product_id)
+    row = db.scalar(select(CatalogProduct).where(CatalogProduct.id == product_id).with_for_update())
+    if row is None:
+        raise HTTPException(404, "Product not found")
+    pending_order = db.scalar(select(ProductSupplyOrderLine.id).join(
+        ProductSupplyOrder, ProductSupplyOrder.id == ProductSupplyOrderLine.order_id,
+    ).where(ProductSupplyOrderLine.product_id == product_id, ProductSupplyOrder.status == "ORDERED").limit(1))
+    if pending_order and payload.reorder_status != ProductReorderStatus.ORDERED:
+        raise HTTPException(409, "Une livraison est attendue. Utilisez Réceptionner ou Annuler dans les commandes fournisseurs.")
     if row.is_virtual:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Virtual products have no reorder workflow")
     row.reorder_status = payload.reorder_status

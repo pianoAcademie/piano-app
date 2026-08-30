@@ -5,6 +5,7 @@ from fastapi import APIRouter
 from app.api.routes import (
     admin,
     admin_catalog,
+    admin_supply_orders,
     admin_clients,
     admin_collaborators,
     admin_config,
@@ -45,6 +46,7 @@ api_router.include_router(events.router, tags=["events"])
 api_router.include_router(gift_cards.router, tags=["gift-cards"])
 api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
 api_router.include_router(admin_catalog.router, tags=["admin-catalog"])
+api_router.include_router(admin_supply_orders.router, tags=["admin-catalog"])
 api_router.include_router(admin_config.router, tags=["admin-config"])
 api_router.include_router(admin_clients.router, tags=["admin-clients"])
 api_router.include_router(admin_collaborators.router, tags=["admin-collaborators"])

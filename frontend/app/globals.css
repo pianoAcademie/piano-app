@@ -25376,3 +25376,29 @@ button.client-danger-button:hover {
   color: var(--muted);
   white-space: pre-wrap;
 }
+.supply-order-fields {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.supply-order-fields:disabled { opacity: 0.65; }
+.supply-order-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 170px auto;
+  gap: 12px;
+  align-items: end;
+}
+.supply-order-lines, .supply-order-list { display: grid; gap: 14px; }
+.supply-order-list { margin-top: 18px; }
+.supply-order-card { border: 1px solid #ddd5c5; border-radius: 14px; padding: 18px; }
+.supply-order-card h4 { margin: 0; }
+.supply-order-card input[type="checkbox"] { width: auto; flex-shrink: 0; }
+.supply-orders label { display: grid; gap: 6px; }
+.supply-orders label.row { display: flex; }
+.supply-orders input, .supply-orders select, .supply-orders textarea { max-width: 100%; }
+@media (max-width: 640px) {
+  .supply-order-line { grid-template-columns: minmax(0, 1fr) auto; }
+  .supply-order-line > label:first-child { grid-column: 1 / -1; }
+  .supply-orders .grid.cols-2 { grid-template-columns: 1fr; }
+}

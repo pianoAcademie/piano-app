@@ -3406,3 +3406,18 @@ export type SchoolEventAdminParticipantOptionOut = {
   email: string;
   client_kind: "ADULT" | "CHILD" | string;
 };
+export type AdminSupplyOrderOut = {
+  id: string;
+  reference: string | null;
+  supplier: string | null;
+  location_id: string;
+  location_name: string;
+  ordered_date: string;
+  expected_delivery_date: string;
+  status: "ORDERED" | "RECEIVED" | "CANCELLED";
+  note: string | null;
+  received_date: string | null;
+  created_at: string;
+  completed_at: string | null;
+  items: { id: string; product_id: string | null; product_title: string; quantity: number; stock_movement_id: string | null }[];
+};

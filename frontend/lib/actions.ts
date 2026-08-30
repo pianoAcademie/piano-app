@@ -11290,6 +11290,54 @@ export async function updateAdminCatalogReorderStatusAction(formData: FormData):
   redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", t("admin.catalog_action.reorder_status_updated")));
 }
 
+export async function createAdminSupplyOrderAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) redirect("/login?error_code=session_expired");
+  await ensureAdminAndGetLanguage(token);
+  const returnTo = "/admin/products?view=reorder";
+  let items: unknown;
+  try { items = JSON.parse(String(formData.get("items") ?? "[]")); }
+  catch { redirect(appendQueryMessage(returnTo, "error", "Lignes de commande invalides.")); }
+  const result = await backendRequest("/api/v1/admin/config/catalog/supply-orders", {
+    method: "POST",
+    body: JSON.stringify({
+      submission_id: formData.get("submission_id"), location_id: formData.get("location_id"),
+      reference: optionalField(formData, "reference"), supplier: optionalField(formData, "supplier"),
+      note: optionalField(formData, "note"), ordered_date: formData.get("ordered_date"),
+      expected_delivery_date: formData.get("expected_delivery_date"), items,
+    }),
+  }, token);
+  if (!result.ok) redirect(appendQueryMessage(returnTo, "error", result.message));
+  revalidatePath("/admin/products");
+  redirect(appendQueryMessage(returnTo, "ok", "Commande enregistrée en attente de réception. Aucun stock ajouté."));
+}
+
+export async function completeAdminSupplyOrderAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) redirect("/login?error_code=session_expired");
+  await ensureAdminAndGetLanguage(token);
+  const returnTo = "/admin/products?view=reorder";
+  const orderId = parseUuid(String(formData.get("order_id") ?? ""));
+  const operation = String(formData.get("operation"));
+  if (!orderId || !["receive", "cancel"].includes(operation)) {
+    redirect(appendQueryMessage(returnTo, "error", "Action de commande invalide."));
+  }
+  if (operation === "receive" && formData.get("confirm_received") !== "yes") {
+    redirect(appendQueryMessage(returnTo, "error", "Confirmez la réception physique de tous les articles."));
+  }
+  const result = await backendRequest(`/api/v1/admin/config/catalog/supply-orders/${orderId}/${operation}`, {
+    method: "POST",
+    ...(operation === "receive" ? { body: JSON.stringify({ received_date: formData.get("received_date"),
+      product_links: Object.fromEntries(Array.from(formData.entries()).filter(([key]) => key.startsWith("link_product_")).map(([key, value]) => [key.slice("link_product_".length), value])),
+    }) } : {}),
+  }, token);
+  if (!result.ok) redirect(appendQueryMessage(returnTo, "error", result.message));
+  revalidatePath("/admin/products");
+  redirect(appendQueryMessage(returnTo, "ok", operation === "receive"
+    ? "Réception enregistrée. Les quantités ont été ajoutées au stock du lieu de livraison."
+    : "Commande annulée dans l’application, sans modification de stock ni envoi au fournisseur."));
+}
+
 export async function createAdminCatalogTransferAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {

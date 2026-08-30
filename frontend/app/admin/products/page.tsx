@@ -1,8 +1,10 @@
 import Link from "next/link";
+import { randomUUID } from "node:crypto";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import AdminProductActionsMenu from "../../../components/admin-product-actions-menu";
+import AdminSupplyOrders from "../../../components/admin-supply-orders";
 import AdminProductCreateModal from "../../../components/admin-product-create-modal";
 import AdminProductEditModal from "../../../components/admin-product-edit-modal";
 import SearchMultiSelect from "../../../components/search-multi-select";
@@ -24,6 +26,7 @@ import {
 import { backendRequest } from "../../../lib/backend";
 import type {
   AdminCatalogCategoryOut,
+  AdminSupplyOrderOut,
   AdminCatalogProductOut,
   AdminCatalogReorderProductOut,
   AdminCatalogRequestOut,
@@ -461,7 +464,7 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
   }
   const entriesPath = `/api/v1/admin/stock/entries?${entryQueryParams.toString()}`;
 
-  const [categoriesResult, productsResult, stocksResult, requestsResult, locationsResult, clientsResult, reorderResult, transfersResult, entriesResult] = await Promise.all([
+  const [categoriesResult, productsResult, stocksResult, requestsResult, locationsResult, clientsResult, reorderResult, transfersResult, entriesResult, supplyOrdersResult] = await Promise.all([
     backendRequest<AdminCatalogCategoryOut[]>("/api/v1/admin/config/catalog/categories?include_inactive=true", {}, token),
     backendRequest<AdminCatalogProductOut[]>("/api/v1/admin/config/catalog/products?include_inactive=true", {}, token),
     stocksPath ? backendRequest<AdminCatalogStockOut[]>(stocksPath, {}, token) : Promise.resolve({ ok: true as const, data: [] as AdminCatalogStockOut[] }),
@@ -471,9 +474,14 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
     backendRequest<AdminCatalogReorderProductOut[]>(reorderPath, {}, token),
     backendRequest<AdminCatalogStockTransferOut[]>(transfersPath, {}, token),
     backendRequest<AdminStockMovementListOut>(entriesPath, {}, token),
+    currentView === "reorder" ? backendRequest<AdminSupplyOrderOut[]>("/api/v1/admin/config/catalog/supply-orders", {}, token) : Promise.resolve({ ok: true as const, data: [] as AdminSupplyOrderOut[] }),
   ]);
 
   const loadErrors: string[] = [];
+  const supplyOrders = supplyOrdersResult.ok ? supplyOrdersResult.data : (() => {
+    loadErrors.push(`Commandes fournisseurs : ${supplyOrdersResult.message}`);
+    return [] as AdminSupplyOrderOut[];
+  })();
   const categories = categoriesResult.ok
     ? categoriesResult.data
     : (() => {
@@ -1162,6 +1170,11 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
       ) : null}
 
       {currentView === "reorder" ? (
+        <>
+        <AdminSupplyOrders orders={supplyOrders} products={stockableProducts.filter(p => p.active && p.nature === "material")}
+          locations={activeLocations.filter(location => !location.is_online)} submissionId={randomUUID()}
+          today={new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Paris", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date())}
+          language={language} />
         <section className="card">
           <div className="row spread">
             <h3>{t("admin.products.tab_reorder")}</h3>
@@ -1253,6 +1266,7 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
             ))}
           </div>
         </section>
+        </>
       ) : null}
 
       {currentView === "entries" ? (
