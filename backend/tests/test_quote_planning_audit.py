@@ -4,7 +4,50 @@ from datetime import date, datetime, timezone
 from types import SimpleNamespace
 from uuid import uuid4
 
-from app.services.quote_planning_audit import _confirmed_variance_matches, _expected_dates
+from app.services.quote_planning_audit import (
+    _confirmed_variance_matches,
+    _expected_dates,
+    _paris_annual_target_count,
+)
+
+
+def _calendar_subject(*, activity: str, location: str, weekday: int):
+    return {
+        "course_type": SimpleNamespace(name=activity),
+        "location": SimpleNamespace(name=location, is_online=False),
+        "template": SimpleNamespace(
+            timezone="Europe/Paris",
+            start_at_utc=datetime(2026, 9, 7 + weekday, 15, 0, tzinfo=timezone.utc),
+        ),
+    }
+
+
+def test_paris_ado_adult_uses_the_same_annual_counts_as_paris_children() -> None:
+    expected_by_weekday = {0: 31, 1: 33, 2: 32, 3: 32, 4: 32, 5: 31}
+    for weekday, expected in expected_by_weekday.items():
+        subject = _calendar_subject(
+            activity="Cours collectifs ado/adultes",
+            location="Rue Scheffer",
+            weekday=weekday,
+        )
+        assert _paris_annual_target_count(
+            school_year="2026-2027",
+            **subject,
+        ) == expected
+
+
+def test_paris_annual_rule_excludes_distinct_course_volumes_and_bar_le_duc() -> None:
+    for activity, location in (
+        ("Solfège en ligne", "Online"),
+        ("Masterclass", "Rue de la Pompe"),
+        ("Cours collectif - enfants - Bar-le-Duc", "Bar-le-Duc"),
+    ):
+        subject = _calendar_subject(activity=activity, location=location, weekday=2)
+        subject["location"].is_online = location == "Online"
+        assert _paris_annual_target_count(
+            school_year="2026-2027",
+            **subject,
+        ) is None
 
 
 def test_confirmed_variance_only_matches_the_recorded_audit_state() -> None:
