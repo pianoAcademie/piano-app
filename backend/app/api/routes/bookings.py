@@ -57,6 +57,7 @@ from app.services.notifications.application.orchestrator import (
     schedule_waitlist_promoted_notification,
 )
 from app.services.pricing import resolve_vat_rate
+from app.services.pricing_catalog import resolve_catalog_activity_price, resolve_catalog_discount_amounts
 from app.services.client_pricing import (
     PriceUnit,
     PricingChannel,
@@ -589,6 +590,8 @@ def _forfait_adjustment_values(
     session_timezone: str,
     booking_id: UUID | None,
     db: Session,
+    location_id: UUID | None = None,
+    student_category: str | None = None,
 ) -> tuple[Decimal, Decimal, Decimal, Decimal, bool]:
     if not _forfait_subscription_pricing_applies(subscription, session_start_at=session_start_at):
         return Decimal("0.00"), Decimal("0.00"), Decimal("0.00"), Decimal("0.00"), False
@@ -614,6 +617,25 @@ def _forfait_adjustment_values(
             family_discount = _non_negative_money(row[1])
             short_commitment_supplement = _non_negative_money(row[2])
             second_course_weekly_discount = _non_negative_money(row[3])
+    catalog_amounts = resolve_catalog_discount_amounts(
+        db,
+        activity_id=course_type_id,
+        location_id=location_id,
+        student_category=student_category,
+        channel=PricingChannel.ANNUAL_FORFAIT.value,
+        at=session_start_at,
+    )
+    # Existing per-client values remain the eligibility signal. Once a
+    # catalog is explicitly published, its central amount replaces the old
+    # duplicated amount for eligible clients only.
+    if loyalty_discount > Decimal("0.00") and "LOYALTY" in catalog_amounts:
+        loyalty_discount = catalog_amounts["LOYALTY"]
+    if family_discount > Decimal("0.00") and "FAMILY" in catalog_amounts:
+        family_discount = catalog_amounts["FAMILY"]
+    if short_commitment_supplement > Decimal("0.00") and "SHORT_COMMITMENT" in catalog_amounts:
+        short_commitment_supplement = catalog_amounts["SHORT_COMMITMENT"]
+    if second_course_weekly_discount > Decimal("0.00") and "SECOND_COURSE" in catalog_amounts:
+        second_course_weekly_discount = catalog_amounts["SECOND_COURSE"]
     second_course_weekly_applies = (
         second_course_weekly_discount > Decimal("0.00")
         and subscription is not None
@@ -1152,6 +1174,29 @@ def _resolve_booking_pricing(
         duration_seconds = int(max(course_type.duration_minutes, 0) * 60)
     duration_hours = Decimal(duration_seconds) / Decimal("3600")
 
+    catalog_external_price = None
+    if subscription is None and plan is None:
+        catalog_external_price = resolve_catalog_activity_price(
+            db,
+            activity_id=course_type.id,
+            location_id=session_obj.location_id,
+            student_category=getattr(getattr(user, "client_kind", None), "value", None),
+            channel=PricingChannel.EXTERNAL_UNIT.value,
+            at=session_obj.start_at_utc,
+        )
+    if catalog_external_price is not None:
+        return compute_fixed_price(
+            channel=PricingChannel.EXTERNAL_UNIT,
+            amount_ttc=catalog_external_price.amount_for_duration(duration_hours),
+            unit=PriceUnit.PER_SESSION,
+            duration_hours=duration_hours,
+            vat_rate=vat_rate,
+            currency=catalog_external_price.currency,
+            source=catalog_external_price.source,
+            version=catalog_external_price.version,
+            calculated_at=now,
+        )
+
     if subscription is None and plan is None and session_obj.external_booking_price_ttc is not None:
         currency = _account_default_currency(db, fallback=currency)
         raw_unit = str(getattr(session_obj, "external_booking_price_unit", None) or PriceUnit.PER_HOUR.value)
@@ -1178,6 +1223,18 @@ def _resolve_booking_pricing(
 
     hourly_ttc_decimal = _resolve_activity_base_hourly_ttc(course_type)
     if plan is not None and plan.kind == PlanKind.FORFAIT:
+        catalog_price = resolve_catalog_activity_price(
+            db,
+            activity_id=course_type.id,
+            location_id=session_obj.location_id,
+            student_category=getattr(getattr(user, "client_kind", None), "value", None),
+            channel=PricingChannel.ANNUAL_FORFAIT.value,
+            at=session_obj.start_at_utc,
+        )
+        if catalog_price is not None:
+            hourly_ttc_decimal = catalog_price.hourly_amount(duration_hours)
+            source = catalog_price.source
+            version = catalog_price.version
         loyalty, family, supplement, second_course, second_course_applies = _forfait_adjustment_values(
             subscription=subscription,
             session_start_at=session_obj.start_at_utc,
@@ -1185,6 +1242,8 @@ def _resolve_booking_pricing(
             session_timezone=session_obj.timezone,
             booking_id=None,
             db=db,
+            location_id=session_obj.location_id,
+            student_category=getattr(getattr(user, "client_kind", None), "value", None),
         )
         version = build_price_version(
             "annual-forfait",
@@ -1207,8 +1266,35 @@ def _resolve_booking_pricing(
             short_commitment_supplement_per_hour_ttc=supplement,
             vat_rate=vat_rate,
             currency=currency,
-            source=f"subscription:{subscription.id}:course-type:{course_type.id}" if subscription is not None else source,
+            source=(
+                f"{source}:subscription:{subscription.id}"
+                if subscription is not None and catalog_price is not None
+                else f"subscription:{subscription.id}:course-type:{course_type.id}"
+                if subscription is not None
+                else source
+            ),
             version=version,
+            calculated_at=now,
+        )
+
+    catalog_standard_price = resolve_catalog_activity_price(
+        db,
+        activity_id=course_type.id,
+        location_id=session_obj.location_id,
+        student_category=getattr(getattr(user, "client_kind", None), "value", None),
+        channel=PricingChannel.STANDARD.value,
+        at=session_obj.start_at_utc,
+    )
+    if catalog_standard_price is not None:
+        return compute_fixed_price(
+            channel=PricingChannel.STANDARD,
+            amount_ttc=catalog_standard_price.amount_for_duration(duration_hours),
+            unit=PriceUnit.PER_SESSION,
+            duration_hours=duration_hours,
+            vat_rate=vat_rate,
+            currency=catalog_standard_price.currency,
+            source=catalog_standard_price.source,
+            version=catalog_standard_price.version,
             calculated_at=now,
         )
 

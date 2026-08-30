@@ -417,6 +417,8 @@ class PricingCatalogOut(BaseModel):
     effective_to: datetime | None = None
     is_default: bool
     is_active: bool
+    lifecycle_status: Literal["DRAFT", "PUBLISHED", "ARCHIVED"] = "DRAFT"
+    published_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -430,6 +432,17 @@ class PricingCatalogUpsertRequest(BaseModel):
     is_active: bool = True
 
 
+class PricingCatalogSimulationOut(BaseModel):
+    catalog_id: UUID
+    lifecycle_status: Literal["DRAFT", "PUBLISHED", "ARCHIVED"]
+    active_price_count: int
+    price_counts_by_channel: dict[str, int] = Field(default_factory=dict)
+    active_discount_count: int
+    discount_counts_by_kind: dict[str, int] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+    ready_to_publish: bool
+
+
 class PricingActivityPriceOut(BaseModel):
     id: UUID
     catalog_id: UUID
@@ -437,6 +450,7 @@ class PricingActivityPriceOut(BaseModel):
     location_id: UUID | None = None
     student_category: str | None = None
     pricing_unit: str
+    price_channel: Literal["STANDARD", "ANNUAL_FORFAIT", "TRIAL", "EXTERNAL_UNIT"] = "ANNUAL_FORFAIT"
     unit_price_ttc: Decimal
     currency: str
     is_active: bool
@@ -450,6 +464,7 @@ class PricingActivityPriceUpsertRequest(BaseModel):
     location_id: UUID | None = None
     student_category: str | None = Field(default=None, max_length=80)
     pricing_unit: Literal["hourly", "per_session", "fixed"] = "per_session"
+    price_channel: Literal["STANDARD", "ANNUAL_FORFAIT", "TRIAL", "EXTERNAL_UNIT"] = "ANNUAL_FORFAIT"
     unit_price_ttc: Decimal = Field(ge=Decimal("0"))
     currency: str = Field(default="EUR", min_length=3, max_length=3)
     is_active: bool = True
@@ -497,6 +512,18 @@ class QuoteDiscountRuleOut(BaseModel):
     id: UUID
     code: str
     label: str
+    catalog_id: UUID | None = None
+    rule_kind: Literal["LOYALTY", "FAMILY", "SECOND_COURSE", "SHORT_COMMITMENT", "CUSTOM"] = "CUSTOM"
+    calculation_mode: Literal["PER_HOUR_TTC", "PER_SESSION_TTC", "PERCENT"] = "PER_HOUR_TTC"
+    priority: int = 100
+    stacking_group: str | None = None
+    is_stackable: bool = True
+    applies_to_channels: list[Literal["STANDARD", "ANNUAL_FORFAIT", "TRIAL", "EXTERNAL_UNIT"]] = Field(
+        default_factory=lambda: ["ANNUAL_FORFAIT"]
+    )
+    activity_id: UUID | None = None
+    location_id: UUID | None = None
+    student_category: str | None = None
     unit_price_ttc: Decimal
     vat_rate: Decimal
     currency: str
@@ -509,6 +536,18 @@ class QuoteDiscountRuleOut(BaseModel):
 class QuoteDiscountRuleUpsertRequest(BaseModel):
     code: str | None = Field(default=None, max_length=80)
     label: str = Field(min_length=1, max_length=255)
+    catalog_id: UUID | None = None
+    rule_kind: Literal["LOYALTY", "FAMILY", "SECOND_COURSE", "SHORT_COMMITMENT", "CUSTOM"] = "CUSTOM"
+    calculation_mode: Literal["PER_HOUR_TTC", "PER_SESSION_TTC", "PERCENT"] = "PER_HOUR_TTC"
+    priority: int = Field(default=100, ge=0, le=10000)
+    stacking_group: str | None = Field(default=None, max_length=60)
+    is_stackable: bool = True
+    applies_to_channels: list[Literal["STANDARD", "ANNUAL_FORFAIT", "TRIAL", "EXTERNAL_UNIT"]] = Field(
+        default_factory=lambda: ["ANNUAL_FORFAIT"]
+    )
+    activity_id: UUID | None = None
+    location_id: UUID | None = None
+    student_category: str | None = Field(default=None, max_length=80)
     unit_price_ttc: Decimal = Field(ge=Decimal("0"))
     vat_rate: Decimal = Field(default=Decimal("0"), ge=Decimal("0"), le=Decimal("100"))
     currency: str = Field(default="EUR", min_length=3, max_length=3)

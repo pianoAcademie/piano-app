@@ -20,6 +20,7 @@ import {
   deleteAdminPricingCatalogConfigAction,
   deleteAdminQuoteTypeConfigAction,
   deleteAdminSolfegeLevelRuleConfigAction,
+  publishAdminPricingCatalogConfigAction,
   updateAdminQuoteTemplateV2ConfigAction,
   updateAdminTermsTemplateConfigAction,
   updateAdminQuoteDiscountRuleConfigAction,
@@ -115,7 +116,20 @@ type PricingCatalogOut = {
   effective_to: string | null;
   is_default: boolean;
   is_active: boolean;
+  lifecycle_status: "DRAFT" | "PUBLISHED" | "ARCHIVED";
+  published_at: string | null;
   updated_at: string;
+};
+
+type PricingCatalogSimulationOut = {
+  catalog_id: string;
+  lifecycle_status: "DRAFT" | "PUBLISHED" | "ARCHIVED";
+  active_price_count: number;
+  price_counts_by_channel: Record<string, number>;
+  active_discount_count: number;
+  discount_counts_by_kind: Record<string, number>;
+  warnings: string[];
+  ready_to_publish: boolean;
 };
 
 type TypeformFormConfigOut = {
@@ -138,6 +152,7 @@ type PricingActivityPriceOut = {
   location_id: string | null;
   student_category: string | null;
   pricing_unit: string;
+  price_channel: "STANDARD" | "ANNUAL_FORFAIT" | "TRIAL" | "EXTERNAL_UNIT";
   unit_price_ttc: string;
   currency: string;
   is_active: boolean;
@@ -148,6 +163,13 @@ type QuoteDiscountRuleOut = {
   id: string;
   code: string;
   label: string;
+  catalog_id: string | null;
+  rule_kind: "LOYALTY" | "FAMILY" | "SECOND_COURSE" | "SHORT_COMMITMENT" | "CUSTOM";
+  calculation_mode: "PER_HOUR_TTC" | "PER_SESSION_TTC" | "PERCENT";
+  priority: number;
+  stacking_group: string | null;
+  is_stackable: boolean;
+  applies_to_channels: Array<"STANDARD" | "ANNUAL_FORFAIT" | "TRIAL" | "EXTERNAL_UNIT">;
   unit_price_ttc: string;
   vat_rate: string;
   currency: string;
@@ -372,6 +394,15 @@ function pricingUnitLabel(value: string | null, language: UiLanguage): string {
   if (normalized === "fixed") {
     return uiText(language, "admin.quote_config.pricing_unit_fixed");
   }
+  return value || "-";
+}
+
+function pricingChannelLabel(value: string | null, language: UiLanguage): string {
+  const normalized = String(value || "").trim().toUpperCase();
+  if (normalized === "STANDARD") return localText(language, "Tarif standard", "Standard price");
+  if (normalized === "ANNUAL_FORFAIT") return localText(language, "Forfait annuel", "Annual package");
+  if (normalized === "TRIAL") return localText(language, "Cours d'essai", "Trial lesson");
+  if (normalized === "EXTERNAL_UNIT") return localText(language, "Achat externe a l'unite", "External unit purchase");
   return value || "-";
 }
 
@@ -966,11 +997,22 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
         if (byActivity !== 0) {
           return byActivity;
         }
+        const byChannel = pricingChannelLabel(left.price_channel, language).localeCompare(
+          pricingChannelLabel(right.price_channel, language),
+          sortLocale,
+        );
+        if (byChannel !== 0) {
+          return byChannel;
+        }
         const leftLocation = left.location_id ? (locationById.get(left.location_id) ?? "") : "";
         const rightLocation = right.location_id ? (locationById.get(right.location_id) ?? "") : "";
         return leftLocation.localeCompare(rightLocation, sortLocale);
       });
-    const explicitActivityIds = new Set(explicitActivityPrices.map((price) => price.activity_id));
+    const explicitActivityIds = new Set(
+      explicitActivityPrices
+        .filter((price) => price.price_channel === "ANNUAL_FORFAIT")
+        .map((price) => price.activity_id),
+    );
     const fallbackActivities = activeActivities
       .filter((activity) => !explicitActivityIds.has(activity.id))
       .map((activity) => ({
@@ -1006,6 +1048,14 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
     null;
   const selectedCatalog = selectedCatalogSummary?.row ?? null;
   const catalogReturnPath = selectedCatalog ? buildQuotesConfigHref("catalogs", { catalog_id: selectedCatalog.id }) : buildQuotesConfigHref("catalogs");
+  const selectedCatalogSimulationResult = selectedCatalog
+    ? await backendRequest<PricingCatalogSimulationOut>(
+        `/api/v1/pricing-catalogs/${encodeURIComponent(selectedCatalog.id)}/simulation`,
+        {},
+        token,
+      )
+    : null;
+  const selectedCatalogSimulation = selectedCatalogSimulationResult?.ok ? selectedCatalogSimulationResult.data : null;
   const selectedTypeformConfigs = selectedCatalog
     ? typeformFormConfigs.filter((config) => config.default_pricing_catalog_id === selectedCatalog.id)
     : [];
@@ -1292,6 +1342,13 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                   </div>
                   <div className="row wrap gap-sm">
                     <span className={`status-pill ${selectedCatalog.is_active ? "status-ok" : "status-off"}`}>{catalogStatusLabel(selectedCatalog.is_active, language)}</span>
+                    <span className={`status-pill ${selectedCatalog.lifecycle_status === "PUBLISHED" ? "status-ok" : selectedCatalog.lifecycle_status === "DRAFT" ? "status-warn" : "status-off"}`}>
+                      {selectedCatalog.lifecycle_status === "PUBLISHED"
+                        ? localText(language, "Publie", "Published")
+                        : selectedCatalog.lifecycle_status === "DRAFT"
+                          ? localText(language, "Brouillon", "Draft")
+                          : localText(language, "Archive", "Archived")}
+                    </span>
                     {selectedCatalog.is_default ? <span className="badge">{t("admin.quote_config.default_badge")}</span> : null}
                     <span className="muted">{t("admin.quote_config.updated_short")}: {dateTimeLabel(selectedCatalog.updated_at, language)}</span>
                   </div>
@@ -1315,6 +1372,43 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                     <span>{localText(language, "prix issus des Typeform", "Typeform prices")}</span>
                   </article>
                 </section>
+
+                {selectedCatalogSimulation ? (
+                  <section className="quote-config-panel">
+                    <div className="quote-config-section-head">
+                      <div>
+                        <h4>{localText(language, "Simulation avant publication", "Pre-publication simulation")}</h4>
+                        <p className="muted">
+                          {Object.entries(selectedCatalogSimulation.price_counts_by_channel)
+                            .map(([channel, count]) => `${pricingChannelLabel(channel, language)} : ${count}`)
+                            .join(" · ") || localText(language, "Aucun tarif", "No price")}
+                          {` · ${selectedCatalogSimulation.active_discount_count} ${localText(language, "regle(s) de remise", "discount rule(s)")}`}
+                        </p>
+                      </div>
+                      <span className={`status-pill ${selectedCatalogSimulation.ready_to_publish ? "status-ok" : "status-warn"}`}>
+                        {selectedCatalogSimulation.ready_to_publish
+                          ? localText(language, "Pret a publier", "Ready to publish")
+                          : localText(language, "A completer", "Needs attention")}
+                      </span>
+                    </div>
+                    {selectedCatalogSimulation.warnings.length ? (
+                      <ul className="config-error-list top-gap-sm">
+                        {selectedCatalogSimulation.warnings.map((warning) => <li key={warning} className="flash-warn">{warning}</li>)}
+                      </ul>
+                    ) : null}
+                    {selectedCatalog.lifecycle_status !== "ARCHIVED" ? (
+                      <form action={publishAdminPricingCatalogConfigAction} className="row top-gap-sm">
+                        <input type="hidden" name="catalog_id" value={selectedCatalog.id} />
+                        <input type="hidden" name="return_to" value={catalogReturnPath} />
+                        <button type="submit" disabled={!selectedCatalogSimulation.ready_to_publish}>
+                          {selectedCatalog.lifecycle_status === "PUBLISHED"
+                            ? localText(language, "Republier cette version", "Republish this version")
+                            : localText(language, "Publier le catalogue", "Publish catalog")}
+                        </button>
+                      </form>
+                    ) : null}
+                  </section>
+                ) : null}
 
                 {selectedCatalogSummary.fallbackActivities.length > 0 ? (
                   <section className="quote-config-panel quote-config-quick-fixes">
@@ -1403,6 +1497,16 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
 
                 <details className="quote-config-panel" open>
                   <summary>{t("admin.quote_config.activity_price_title")}</summary>
+                  <div className="flash-info top-gap-sm">
+                    <strong>{localText(language, "Une ligne = une regle tarifaire", "One row = one pricing rule")}</strong>
+                    <p className="muted">
+                      {localText(
+                        language,
+                        "Choisissez d'abord l'activite, puis le lieu et l'usage du prix. Tous les lieux sert de valeur generale ; une ligne propre a un lieu est prioritaire.",
+                        "Choose the activity first, then the location and intended price use. All locations is the general value; a location-specific row takes priority.",
+                      )}
+                    </p>
+                  </div>
                   <form action={upsertAdminPricingActivityPriceConfigAction} className="grid cols-4 config-form-grid top-gap-sm">
                     <input type="hidden" name="catalog_id" value={selectedCatalog.id} />
                     <input type="hidden" name="return_to" value={catalogReturnPath} />
@@ -1437,6 +1541,15 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                       </select>
                     </label>
                     <label>
+                      {localText(language, "Canal tarifaire", "Pricing channel")}
+                      <select name="price_channel" defaultValue="ANNUAL_FORFAIT" required>
+                        <option value="ANNUAL_FORFAIT">{localText(language, "Forfait annuel", "Annual package")}</option>
+                        <option value="STANDARD">{localText(language, "Tarif standard", "Standard price")}</option>
+                        <option value="TRIAL">{localText(language, "Cours d'essai", "Trial lesson")}</option>
+                        <option value="EXTERNAL_UNIT">{localText(language, "Achat externe a l'unite", "External unit purchase")}</option>
+                      </select>
+                    </label>
+                    <label>
                       {t("admin.quote_config.amount_ttc")}
                       <input type="number" name="unit_price_ttc" min="0" step="0.01" placeholder="38.00" required />
                     </label>
@@ -1467,6 +1580,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                             <th>{t("admin.quote_config.activity")}</th>
                             <th>{t("common.location")}</th>
                             <th>{t("admin.quote_config.unit")}</th>
+                            <th>{localText(language, "Canal", "Channel")}</th>
                             <th>{t("common.source")}</th>
                             <th>{t("admin.quote_config.amount_ttc")}</th>
                           </tr>
@@ -1474,7 +1588,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                         <tbody>
                           {selectedCatalogSummary.explicitActivityPrices.length === 0 ? (
                             <tr>
-                              <td colSpan={5}>
+                              <td colSpan={6}>
                                 <p className="muted">{t("admin.quote_config.no_explicit_prices")}</p>
                               </td>
                             </tr>
@@ -1491,6 +1605,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                                   </td>
                                   <td>{locationName}</td>
                                   <td>{pricingUnitLabel(price.pricing_unit, language)}</td>
+                                  <td><strong>{pricingChannelLabel(price.price_channel, language)}</strong></td>
                                   <td>{sourceLabel}</td>
                                   <td>{moneyLabel(price.unit_price_ttc, price.currency, language)}</td>
                                 </tr>
@@ -1748,10 +1863,60 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
               <input type="number" name="vat_rate" min="0" max="100" step="0.01" required defaultValue="20.00" />
             </label>
             <label>
+              {localText(language, "Catalogue", "Catalog")}
+              <select name="catalog_id" defaultValue={selectedCatalog?.id || ""}>
+                <option value="">{localText(language, "Regle globale", "Global rule")}</option>
+                {catalogs.map((catalog) => <option key={`discount-catalog-${catalog.id}`} value={catalog.id}>{catalog.name}</option>)}
+              </select>
+            </label>
+            <label>
+              {localText(language, "Type de regle", "Rule type")}
+              <select name="rule_kind" defaultValue="LOYALTY">
+                <option value="LOYALTY">{localText(language, "Fidelite", "Loyalty")}</option>
+                <option value="FAMILY">{localText(language, "Famille", "Family")}</option>
+                <option value="SECOND_COURSE">{localText(language, "Deuxieme cours", "Second course")}</option>
+                <option value="SHORT_COMMITMENT">{localText(language, "Engagement court", "Short commitment")}</option>
+                <option value="CUSTOM">{localText(language, "Personnalisee", "Custom")}</option>
+              </select>
+            </label>
+            <label>
+              {localText(language, "Calcul", "Calculation")}
+              <select name="calculation_mode" defaultValue="PER_HOUR_TTC">
+                <option value="PER_HOUR_TTC">{localText(language, "Montant par heure", "Amount per hour")}</option>
+                <option value="PER_SESSION_TTC">{localText(language, "Montant par seance", "Amount per session")}</option>
+                <option value="PERCENT">{localText(language, "Pourcentage", "Percentage")}</option>
+              </select>
+            </label>
+            <label>
+              {localText(language, "Priorite", "Priority")}
+              <input type="number" name="priority" min="0" step="1" defaultValue="100" />
+            </label>
+            <label>
+              {localText(language, "Groupe de cumul", "Stacking group")}
+              <input type="text" name="stacking_group" maxLength={60} placeholder="PRIMARY" />
+            </label>
+            <label className="checkline">
+              <input type="hidden" name="is_stackable" value="false" />
+              <input type="checkbox" name="is_stackable" defaultChecked />
+              {localText(language, "Cumulable", "Stackable")}
+            </label>
+            <fieldset className="span-5">
+              <legend>{localText(language, "Canaux concernes", "Applicable channels")}</legend>
+              <div className="row wrap gap-sm">
+                {(["ANNUAL_FORFAIT", "STANDARD", "TRIAL", "EXTERNAL_UNIT"] as const).map((channel) => (
+                  <label key={`new-discount-channel-${channel}`} className="checkline">
+                    <input type="checkbox" name="applies_to_channels" value={channel} defaultChecked={channel === "ANNUAL_FORFAIT"} />
+                    {channel}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+            <label>
               {localText(language, "Ordre", "Order")}
               <input type="number" name="sort_order" min="0" step="1" defaultValue={discountRules.length ? Math.max(...discountRules.map((row) => row.sort_order || 0)) + 10 : 10} />
             </label>
             <label className="checkline">
+              <input type="hidden" name="is_active" value="false" />
               <input type="checkbox" name="is_active" defaultChecked />
               {t("common.active")}
             </label>
@@ -1767,6 +1932,8 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                   <th>{localText(language, "Remise", "Discount")}</th>
                   <th>{localText(language, "Code", "Code")}</th>
                   <th>{localText(language, "Prix TTC", "Price incl. VAT")}</th>
+                  <th>{localText(language, "Regle", "Rule")}</th>
+                  <th>{localText(language, "Cumul", "Stacking")}</th>
                   <th>{localText(language, "TVA", "VAT")}</th>
                   <th>{localText(language, "Statut", "Status")}</th>
                   <th>{t("common.actions")}</th>
@@ -1775,7 +1942,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
               <tbody>
                 {discountRules.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="muted">{localText(language, "Aucune remise configuree.", "No discount configured.")}</td>
+                    <td colSpan={8} className="muted">{localText(language, "Aucune remise configuree.", "No discount configured.")}</td>
                   </tr>
                 ) : (
                   discountRules.map((row) => (
@@ -1786,6 +1953,8 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                       </td>
                       <td><code>{row.code}</code></td>
                       <td>{moneyLabel(row.unit_price_ttc, row.currency, language)}</td>
+                      <td><code>{row.rule_kind}</code><div className="muted">{row.calculation_mode} · P{row.priority}</div></td>
+                      <td>{row.is_stackable ? localText(language, "Cumulable", "Stackable") : localText(language, "Exclusive", "Exclusive")}<div className="muted">{row.stacking_group || "-"}</div></td>
                       <td>{Number(row.vat_rate).toLocaleString(localeForUiLanguage(language), { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%</td>
                       <td>
                         <span className={`status-pill ${row.is_active ? "status-ok" : "status-off"}`}>
@@ -1815,10 +1984,60 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                               <input type="number" name="vat_rate" min="0" max="100" step="0.01" defaultValue={row.vat_rate} required />
                             </label>
                             <label>
+                              {localText(language, "Catalogue", "Catalog")}
+                              <select name="catalog_id" defaultValue={row.catalog_id || ""}>
+                                <option value="">{localText(language, "Regle globale", "Global rule")}</option>
+                                {catalogs.map((catalog) => <option key={`${row.id}-catalog-${catalog.id}`} value={catalog.id}>{catalog.name}</option>)}
+                              </select>
+                            </label>
+                            <label>
+                              {localText(language, "Type de regle", "Rule type")}
+                              <select name="rule_kind" defaultValue={row.rule_kind}>
+                                <option value="LOYALTY">{localText(language, "Fidelite", "Loyalty")}</option>
+                                <option value="FAMILY">{localText(language, "Famille", "Family")}</option>
+                                <option value="SECOND_COURSE">{localText(language, "Deuxieme cours", "Second course")}</option>
+                                <option value="SHORT_COMMITMENT">{localText(language, "Engagement court", "Short commitment")}</option>
+                                <option value="CUSTOM">{localText(language, "Personnalisee", "Custom")}</option>
+                              </select>
+                            </label>
+                            <label>
+                              {localText(language, "Calcul", "Calculation")}
+                              <select name="calculation_mode" defaultValue={row.calculation_mode}>
+                                <option value="PER_HOUR_TTC">{localText(language, "Montant par heure", "Amount per hour")}</option>
+                                <option value="PER_SESSION_TTC">{localText(language, "Montant par seance", "Amount per session")}</option>
+                                <option value="PERCENT">{localText(language, "Pourcentage", "Percentage")}</option>
+                              </select>
+                            </label>
+                            <label>
+                              {localText(language, "Priorite", "Priority")}
+                              <input type="number" name="priority" min="0" step="1" defaultValue={row.priority} />
+                            </label>
+                            <label>
+                              {localText(language, "Groupe de cumul", "Stacking group")}
+                              <input type="text" name="stacking_group" maxLength={60} defaultValue={row.stacking_group || ""} />
+                            </label>
+                            <label className="checkline">
+                              <input type="hidden" name="is_stackable" value="false" />
+                              <input type="checkbox" name="is_stackable" defaultChecked={row.is_stackable} />
+                              {localText(language, "Cumulable", "Stackable")}
+                            </label>
+                            <fieldset className="span-5">
+                              <legend>{localText(language, "Canaux concernes", "Applicable channels")}</legend>
+                              <div className="row wrap gap-sm">
+                                {(["ANNUAL_FORFAIT", "STANDARD", "TRIAL", "EXTERNAL_UNIT"] as const).map((channel) => (
+                                  <label key={`${row.id}-channel-${channel}`} className="checkline">
+                                    <input type="checkbox" name="applies_to_channels" value={channel} defaultChecked={row.applies_to_channels.includes(channel)} />
+                                    {channel}
+                                  </label>
+                                ))}
+                              </div>
+                            </fieldset>
+                            <label>
                               {localText(language, "Ordre", "Order")}
                               <input type="number" name="sort_order" min="0" step="1" defaultValue={row.sort_order} />
                             </label>
                             <label className="checkline">
+                              <input type="hidden" name="is_active" value="false" />
                               <input type="checkbox" name="is_active" defaultChecked={row.is_active} />
                               {t("common.active")}
                             </label>

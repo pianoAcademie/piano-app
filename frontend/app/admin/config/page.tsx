@@ -3773,25 +3773,12 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                           <small className="muted">{activity.description || t("admin.activities.no_description")}</small>
                         </div>
                         <div className="activity-row-meta">
-                          <span className="status-pill status-warn">
-                            {activity.default_course_rate_ttc
-                              ? t("admin.activities.course_rate_badge", {
-                                  amount: activity.default_course_rate_ttc,
-                                  currency: accountDefaultCurrency,
-                                })
-                              : activity.default_hourly_rate
-                                ? t("admin.activities.hourly_rate_badge", {
-                                    amount: activity.default_hourly_rate,
-                                    currency: accountDefaultCurrency,
-                                  })
-                                : t("admin.activities.rate_not_defined")}
+                          <span className="status-pill status-info">
+                            {language === "en" ? "Prices: central grid" : "Tarifs : grille centrale"}
                           </span>
                           <span className={`status-pill ${activity.trial_course_enabled ? "status-info" : "status-warn"}`}>
-                            {activity.trial_course_enabled && activity.trial_course_price_ttc
-                              ? t("admin.activities.trial_rate_badge", {
-                                  amount: activity.trial_course_price_ttc,
-                                  currency: accountDefaultCurrency,
-                                })
+                            {activity.trial_course_enabled
+                              ? (language === "en" ? "Trial allowed" : "Essai autorise")
                               : t("admin.activities.trial_disabled_badge")}
                           </span>
                           <span className={`status-pill ${activity.active ? "status-ok" : "status-warn"}`}>
@@ -4134,37 +4121,15 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                     />
                                   </div>
                                   <div className="grid cols-2 config-form-grid">
-                                    <label>
-                                      {t("admin.activity_modal.hourly_rate_ttc")}
-                                      <input
-                                        type="number"
-                                        name="default_hourly_rate"
-                                        min={0}
-                                        step="0.01"
-                                        placeholder="ex: 35.00"
-                                      />
-                                    </label>
-                                    <label>
-                                      {t("admin.activity_modal.course_rate_ttc")}
-                                      <input
-                                        type="number"
-                                        name="default_course_rate_ttc"
-                                        min={0}
-                                        step="0.01"
-                                        placeholder="ex: 200.00"
-                                      />
-                                    </label>
-                                    <label>
-                                      {t("admin.activity_modal.trial_course_price_ttc")}
-                                      <input
-                                        type="number"
-                                        name="trial_course_price_ttc"
-                                        min={0}
-                                        step="0.01"
-                                        placeholder="ex: 20.00"
-                                      />
-                                      <small className="muted">{t("admin.activity_modal.trial_course_price_help")}</small>
-                                    </label>
+                                    <div className="flash-info span-2">
+                                      <strong>{language === "en" ? "Prices managed in one place" : "Tarifs geres a un seul endroit"}</strong>
+                                      <p className="muted">
+                                        {language === "en"
+                                          ? "Standard, annual package, trial and external unit prices are entered in the pricing grid."
+                                          : "Les tarifs standard, forfait annuel, essai et achat externe sont saisis dans la grille tarifaire."}
+                                      </p>
+                                      <Link href="/admin/config/quotes?tab=catalogs">{language === "en" ? "Open pricing grid" : "Ouvrir la grille tarifaire"}</Link>
+                                    </div>
                                     <label className="span-2">
                                       {t("admin.activity_modal.color")}
                                       <ColorHexInput name="color_hex" defaultValue="#94C973" />
@@ -4549,40 +4514,18 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                     />
                                   </div>
                                   <div className="grid cols-2 config-form-grid">
-                                    <label>
-                                      {t("admin.activity_modal.hourly_rate_ttc")}
-                                      <input
-                                        type="number"
-                                        name="default_hourly_rate"
-                                        min={0}
-                                        step="0.01"
-                                        defaultValue={selectedActivity.default_hourly_rate ?? ""}
-                                        placeholder="ex: 35.00"
-                                      />
-                                    </label>
-                                    <label>
-                                      {t("admin.activity_modal.course_rate_ttc")}
-                                      <input
-                                        type="number"
-                                        name="default_course_rate_ttc"
-                                        min={0}
-                                        step="0.01"
-                                        defaultValue={selectedActivity.default_course_rate_ttc ?? ""}
-                                        placeholder="ex: 200.00"
-                                      />
-                                    </label>
-                                    <label>
-                                      {t("admin.activity_modal.trial_course_price_ttc")}
-                                      <input
-                                        type="number"
-                                        name="trial_course_price_ttc"
-                                        min={0}
-                                        step="0.01"
-                                        defaultValue={selectedActivity.trial_course_price_ttc ?? ""}
-                                        placeholder="ex: 20.00"
-                                      />
-                                      <small className="muted">{t("admin.activity_modal.trial_course_price_help")}</small>
-                                    </label>
+                                    <input type="hidden" name="default_hourly_rate" value={selectedActivity.default_hourly_rate ?? ""} />
+                                    <input type="hidden" name="default_course_rate_ttc" value={selectedActivity.default_course_rate_ttc ?? ""} />
+                                    <input type="hidden" name="trial_course_price_ttc" value={selectedActivity.trial_course_price_ttc ?? ""} />
+                                    <div className="flash-info span-2">
+                                      <strong>{language === "en" ? "Prices managed in one place" : "Tarifs geres a un seul endroit"}</strong>
+                                      <p className="muted">
+                                        {language === "en"
+                                          ? "Prices are read from the pricing grid. Legacy activity amounts remain stored only as a fallback."
+                                          : "Les montants sont lus dans la grille tarifaire. Les anciens tarifs de l'activite restent conserves uniquement comme secours."}
+                                      </p>
+                                      <Link href="/admin/config/quotes?tab=catalogs">{language === "en" ? "Open pricing grid" : "Ouvrir la grille tarifaire"}</Link>
+                                    </div>
                                     <label className="span-2">
                                       {t("admin.activity_modal.color")}
                                       <ColorHexInput name="color_hex" defaultValue={selectedActivity.color_hex} />

@@ -39,6 +39,7 @@ from app.services.session_audience import (
     scopes_allow_external_visibility,
 )
 from app.services.client_pricing import PriceUnit, amount_for_unit
+from app.services.pricing_catalog import resolve_catalog_activity_price
 
 router = APIRouter()
 ACCOUNT_DEFAULT_CURRENCY_KEY = "config_account_default_currency"
@@ -78,6 +79,7 @@ def _participant_seats_remaining(
 
 def _serialize_public_session(
     *,
+    db: Session,
     session: CourseSession,
     course_type: CourseType,
     location: Location,
@@ -122,11 +124,23 @@ def _serialize_public_session(
     external_booking_price_unit = str(
         getattr(session, "external_booking_price_unit", None) or PriceUnit.PER_HOUR.value
     )
-    if session.external_booking_price_ttc is not None:
-        duration_seconds = int(max((session.end_at_utc - session.start_at_utc).total_seconds(), 0))
-        if duration_seconds <= 0:
-            duration_seconds = int(max(course_type.duration_minutes, 0) * 60)
-        duration_hours = Decimal(duration_seconds) / Decimal("3600")
+    duration_seconds = int(max((session.end_at_utc - session.start_at_utc).total_seconds(), 0))
+    if duration_seconds <= 0:
+        duration_seconds = int(max(course_type.duration_minutes, 0) * 60)
+    duration_hours = Decimal(duration_seconds) / Decimal("3600")
+    catalog_price = resolve_catalog_activity_price(
+        db,
+        activity_id=course_type.id,
+        location_id=session.location_id,
+        student_category=participant_kind.value if participant_kind is not None else None,
+        channel="EXTERNAL_UNIT",
+        at=session.start_at_utc,
+    )
+    if catalog_price is not None:
+        external_booking_price_ttc = catalog_price.amount_for_duration(duration_hours)
+        external_booking_price_unit = PriceUnit.PER_SESSION.value
+        external_booking_currency = catalog_price.currency
+    elif session.external_booking_price_ttc is not None:
         external_booking_price_ttc = amount_for_unit(
             Decimal(session.external_booking_price_ttc),
             unit=(
@@ -164,7 +178,7 @@ def _serialize_public_session(
         online_booking_enabled=SessionAudienceScope.EXTERNAL in booking_scopes,
         external_booking_price_ttc=external_booking_price_ttc,
         external_booking_price_unit=external_booking_price_unit,
-        external_booking_currency=external_booking_currency if session.external_booking_price_ttc is not None else None,
+        external_booking_currency=external_booking_currency if external_booking_price_ttc is not None else None,
         show_external_remaining_seats=bool(session.show_external_remaining_seats),
         zoom_link=session.zoom_link,
         substitute_teacher_id=session.substitute_teacher_id,
@@ -378,6 +392,7 @@ def list_sessions(
     result: list[SessionOut] = []
     for session, course_type, location, professor, substitute, booked_count, adult_booked_count in rows:
         serialized = _serialize_public_session(
+            db=db,
             session=session,
             course_type=course_type,
             location=location,
@@ -461,6 +476,7 @@ def get_session(
 
     session, course_type, location, professor, substitute, booked_count, adult_booked_count = row
     serialized = _serialize_public_session(
+        db=db,
         session=session,
         course_type=course_type,
         location=location,

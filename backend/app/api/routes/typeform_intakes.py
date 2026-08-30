@@ -3212,6 +3212,7 @@ def _append_activity_quote_line(
                 PricingActivityPrice.catalog_id == pricing_catalog_id,
                 PricingActivityPrice.activity_id == activity.id,
                 PricingActivityPrice.location_id == resolved_location_id,
+                PricingActivityPrice.price_channel == "ANNUAL_FORFAIT",
                 PricingActivityPrice.is_active.is_(True),
             )
             .limit(1)
@@ -3504,6 +3505,7 @@ def _build_preview_lines(
                     PricingActivityPrice.catalog_id == pricing_catalog_id,
                     PricingActivityPrice.activity_id == activity_id,
                     PricingActivityPrice.location_id == resolved_location_id,
+                    PricingActivityPrice.price_channel == "ANNUAL_FORFAIT",
                     PricingActivityPrice.is_active.is_(True),
                 )
                 .limit(1)
@@ -5772,6 +5774,7 @@ def _ensure_demo_pricing(
             PricingActivityPrice.catalog_id == catalog.id,
             PricingActivityPrice.activity_id == activity.id,
             PricingActivityPrice.location_id == location.id,
+            PricingActivityPrice.price_channel == "ANNUAL_FORFAIT",
         )
         .limit(1)
     )
@@ -5783,6 +5786,7 @@ def _ensure_demo_pricing(
                 location_id=location.id,
                 student_category=None,
                 pricing_unit="per_session",
+                price_channel="ANNUAL_FORFAIT",
                 unit_price_ttc=_q2(unit_price_ttc),
                 currency="EUR",
                 is_active=True,

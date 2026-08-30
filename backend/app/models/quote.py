@@ -90,6 +90,8 @@ class PricingCatalog(Base):
     effective_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    lifecycle_status: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'DRAFT'"))
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
 
@@ -103,6 +105,7 @@ class PricingActivityPrice(Base):
             "location_id",
             "student_category",
             "pricing_unit",
+            "price_channel",
             name="uq_pricing_activity_prices_scope",
         ),
     )
@@ -130,6 +133,7 @@ class PricingActivityPrice(Base):
     )
     student_category: Mapped[str | None] = mapped_column(String(80), nullable=True)
     pricing_unit: Mapped[str] = mapped_column(String(30), nullable=False, server_default=text("'per_session'"))
+    price_channel: Mapped[str] = mapped_column(String(30), nullable=False, server_default=text("'ANNUAL_FORFAIT'"))
     unit_price_ttc: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False, server_default=text("'EUR'"))
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
@@ -203,6 +207,32 @@ class QuoteDiscountRule(Base):
     )
     code: Mapped[str] = mapped_column(String(80), nullable=False)
     label: Mapped[str] = mapped_column(String(255), nullable=False)
+    catalog_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("pricing_catalogs.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    rule_kind: Mapped[str] = mapped_column(String(30), nullable=False, server_default=text("'CUSTOM'"))
+    calculation_mode: Mapped[str] = mapped_column(String(30), nullable=False, server_default=text("'PER_HOUR_TTC'"))
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("100"))
+    stacking_group: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    is_stackable: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    applies_to_channels: Mapped[list[str]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'[\"ANNUAL_FORFAIT\"]'::jsonb"),
+    )
+    activity_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("course_types.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    location_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("locations.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    student_category: Mapped[str | None] = mapped_column(String(80), nullable=True)
     unit_price_ttc: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     vat_rate: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False, server_default=text("0"))
     currency: Mapped[str] = mapped_column(String(3), nullable=False, server_default=text("'EUR'"))

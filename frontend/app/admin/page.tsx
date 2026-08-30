@@ -1641,7 +1641,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
     : pickText(language, "Fermee", "Closed");
   const selectedSessionPublicationSummary = !selectedSession
     ? ""
-    : `${pickText(language, "Reservation", "Booking")}: ${selectedSessionBookingLabel}${selectedSession.external_booking_price_ttc ? ` · ${pickText(language, "Tarif ext.", "External price")}: ${selectedSession.external_booking_price_ttc} EUR TTC` : ""}`;
+    : `${pickText(language, "Reservation", "Booking")}: ${selectedSessionBookingLabel}`;
   const selectedSessionHasNotesSection = Boolean(
     selectedSession?.internal_note ||
       selectedSession?.group_note ||
@@ -2159,28 +2159,17 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                     </div>
                   </fieldset>
 
-                  <label>
-                    {language === "en" ? "External booking price incl. VAT" : "Tarif reservation externe TTC"}
-                    <input
-                      type="text"
-                      name="external_booking_price_ttc"
-                      inputMode="decimal"
-                      defaultValue={createDraft?.external_booking_price_ttc || ""}
-                      placeholder="ex. 35,00"
-                    />
-                    <select
-                      name="external_booking_price_unit"
-                      defaultValue={createDraft?.external_booking_price_unit || "PER_SESSION"}
-                    >
-                      <option value="PER_SESSION">{pickText(language, "Prix total du cours", "Total price per session")}</option>
-                      <option value="PER_HOUR">{pickText(language, "Prix par heure", "Hourly price")}</option>
-                    </select>
-                    <small className="muted">
-                      {language === "en"
-                        ? "Choose whether this is the full session price or an hourly rate. Leave empty to keep the slot hidden externally."
-                        : "Indiquez s'il s'agit du prix total du cours ou d'un tarif horaire. Laissez vide pour ne pas exposer ce creneau en externe."}
-                    </small>
-                  </label>
+                  <div className="flash-info">
+                    <strong>{pickText(language, "Tarif gere automatiquement", "Price managed automatically")}</strong>
+                    <p>
+                      {pickText(
+                        language,
+                        "Le tarif d'achat externe est lu dans la grille tarifaire selon l'activite et le lieu.",
+                        "The external purchase price is read from the pricing grid for this activity and location.",
+                      )}
+                    </p>
+                    <Link href="/admin/config/quotes?tab=catalogs">{pickText(language, "Ouvrir la grille tarifaire", "Open pricing grid")}</Link>
+                  </div>
 
                   <label>
                     {language === "en" ? "Public description (client view)" : "Description publique (vue client)"}
@@ -3263,25 +3252,19 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                       </div>
                     </fieldset>
 
-                    <label>
-                      {language === "en" ? "External booking price incl. VAT" : "Tarif reservation externe TTC"}
-                      <input
-                        type="text"
-                        name="external_booking_price_ttc"
-                        inputMode="decimal"
-                        defaultValue={selectedSession.external_booking_price_ttc ?? ""}
-                        placeholder="ex. 35,00"
-                      />
-                      <select name="external_booking_price_unit" defaultValue={selectedSession.external_booking_price_unit || "PER_HOUR"}>
-                        <option value="PER_SESSION">{pickText(language, "Prix total du cours", "Total price per session")}</option>
-                        <option value="PER_HOUR">{pickText(language, "Prix par heure", "Hourly price")}</option>
-                      </select>
-                      <small className="muted">
-                        {language === "en"
-                          ? "Choose whether this is the full session price or an hourly rate. Leave empty to remove the slot from the external iframe."
-                          : "Indiquez s'il s'agit du prix total du cours ou d'un tarif horaire. Laissez vide pour retirer ce creneau de l'iframe externe."}
-                      </small>
-                    </label>
+                    <input type="hidden" name="external_booking_price_ttc" value={selectedSession.external_booking_price_ttc ?? ""} />
+                    <input type="hidden" name="external_booking_price_unit" value={selectedSession.external_booking_price_unit || "PER_HOUR"} />
+                    <div className="flash-info">
+                      <strong>{pickText(language, "Tarif gere automatiquement", "Price managed automatically")}</strong>
+                      <p>
+                        {pickText(
+                          language,
+                          "Le tarif d'achat externe vient de la grille tarifaire. L'ancien montant du creneau est conserve uniquement comme secours.",
+                          "The external purchase price comes from the pricing grid. The legacy session amount is kept only as a fallback.",
+                        )}
+                      </p>
+                      <Link href="/admin/config/quotes?tab=catalogs">{pickText(language, "Ouvrir la grille tarifaire", "Open pricing grid")}</Link>
+                    </div>
                   </div>
 
                   <details className="session-edit-collapsible" open={Boolean(selectedSession.public_description)}>

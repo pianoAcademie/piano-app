@@ -82,6 +82,7 @@ from app.models.product_catalog import CatalogKit, CatalogKitItem, CatalogProduc
 from app.models.quote import Quote, QuoteAcceptanceFollowup, QuoteLine
 from app.models.user import ClientKind, ClientStatus, User, UserRole
 from app.services.security import hash_password, verify_password
+from app.services.pricing_catalog import resolve_catalog_activity_price
 from app.services.plan_invoice_access import assert_plan_invoice_download_token
 from app.schemas.catalog import SessionCourseTypeOut, SessionLocationOut, SessionOut, SessionProfessorOut
 from app.schemas.booking import BookingCreateRequest, MakeupStudentSummaryOut
@@ -1703,6 +1704,7 @@ def _session_purchase_catalog(
     *,
     session_obj: CourseSession,
     course_type: CourseType,
+    participant_kind: ClientKind | None = None,
 ) -> tuple[list[ClientSessionFormulaOptionOut], Decimal | None, str | None, list[SessionAudienceScope]]:
     session_booking_scopes = resolve_session_booking_scopes(
         session_obj,
@@ -1721,6 +1723,20 @@ def _session_purchase_catalog(
     )
     trial_course_enabled = bool(getattr(course_type, "trial_course_enabled", False))
     trial_course_price = getattr(course_type, "trial_course_price_ttc", None)
+    duration_seconds = int(max((session_obj.end_at_utc - session_obj.start_at_utc).total_seconds(), 0))
+    if duration_seconds <= 0:
+        duration_seconds = int(max(course_type.duration_minutes, 0) * 60)
+    duration_hours = Decimal(duration_seconds) / Decimal("3600")
+    catalog_trial_price = resolve_catalog_activity_price(
+        db,
+        activity_id=course_type.id,
+        location_id=session_obj.location_id,
+        student_category=participant_kind.value if participant_kind is not None else None,
+        channel="TRIAL",
+        at=session_obj.start_at_utc,
+    )
+    if catalog_trial_price is not None:
+        trial_course_price = catalog_trial_price.amount_for_duration(duration_hours)
     normalized_formula_options: list[ClientSessionFormulaOptionOut] = []
     for option in formula_options:
         if not option.is_trial_offer:
@@ -1733,11 +1749,17 @@ def _session_purchase_catalog(
         )
     formula_options = normalized_formula_options
     direct_payment_amount = None
-    if allows_planless_booking and session_obj.external_booking_price_ttc is not None:
-        duration_seconds = int(max((session_obj.end_at_utc - session_obj.start_at_utc).total_seconds(), 0))
-        if duration_seconds <= 0:
-            duration_seconds = int(max(course_type.duration_minutes, 0) * 60)
-        duration_hours = Decimal(duration_seconds) / Decimal("3600")
+    catalog_external_price = resolve_catalog_activity_price(
+        db,
+        activity_id=course_type.id,
+        location_id=session_obj.location_id,
+        student_category=participant_kind.value if participant_kind is not None else None,
+        channel="EXTERNAL_UNIT",
+        at=session_obj.start_at_utc,
+    )
+    if allows_planless_booking and catalog_external_price is not None:
+        direct_payment_amount = catalog_external_price.amount_for_duration(duration_hours)
+    elif allows_planless_booking and session_obj.external_booking_price_ttc is not None:
         raw_unit = str(getattr(session_obj, "external_booking_price_unit", None) or PriceUnit.PER_HOUR.value)
         direct_payment_amount = amount_for_unit(
             Decimal(session_obj.external_booking_price_ttc),
@@ -1745,7 +1767,11 @@ def _session_purchase_catalog(
             duration_hours=duration_hours,
         )
     direct_payment_currency = (
-        (getattr(session_obj, "external_booking_currency", None) or _account_default_currency(db)).upper()
+        (
+            catalog_external_price.currency
+            if catalog_external_price is not None
+            else getattr(session_obj, "external_booking_currency", None) or _account_default_currency(db)
+        ).upper()
         if direct_payment_amount is not None
         else None
     )
@@ -2658,11 +2684,23 @@ def list_client_visible_sessions(
         external_booking_price_unit = str(
             getattr(session, "external_booking_price_unit", None) or PriceUnit.PER_HOUR.value
         )
-        if session.external_booking_price_ttc is not None:
-            duration_seconds = int(max((session.end_at_utc - session.start_at_utc).total_seconds(), 0))
-            if duration_seconds <= 0:
-                duration_seconds = int(max(course_type.duration_minutes, 0) * 60)
-            duration_hours = Decimal(duration_seconds) / Decimal("3600")
+        duration_seconds = int(max((session.end_at_utc - session.start_at_utc).total_seconds(), 0))
+        if duration_seconds <= 0:
+            duration_seconds = int(max(course_type.duration_minutes, 0) * 60)
+        duration_hours = Decimal(duration_seconds) / Decimal("3600")
+        catalog_external_price = resolve_catalog_activity_price(
+            db,
+            activity_id=course_type.id,
+            location_id=session.location_id,
+            student_category=None,
+            channel="EXTERNAL_UNIT",
+            at=session.start_at_utc,
+        )
+        if catalog_external_price is not None:
+            external_booking_price_ttc = catalog_external_price.amount_for_duration(duration_hours)
+            external_booking_price_unit = PriceUnit.PER_SESSION.value
+            external_booking_currency = catalog_external_price.currency
+        elif session.external_booking_price_ttc is not None:
             external_booking_price_ttc = amount_for_unit(
                 Decimal(session.external_booking_price_ttc),
                 unit=(
@@ -2700,7 +2738,7 @@ def list_client_visible_sessions(
                 online_booking_enabled=booking_scopes != [SessionAudienceScope.PRIVATE],
                 external_booking_price_ttc=external_booking_price_ttc,
                 external_booking_price_unit=external_booking_price_unit,
-                external_booking_currency=external_booking_currency if session.external_booking_price_ttc is not None else None,
+                external_booking_currency=external_booking_currency if external_booking_price_ttc is not None else None,
                 show_external_remaining_seats=bool(session.show_external_remaining_seats),
                 zoom_link=session.zoom_link,
                 substitute_teacher_id=session.substitute_teacher_id,
@@ -4498,6 +4536,7 @@ def get_client_session_reservation_options(
         db,
         session_obj=session_obj,
         course_type=course_type,
+        participant_kind=members[0].client_kind if len(members) == 1 else None,
     )
     online_booking_enabled = session_booking_scopes != [SessionAudienceScope.PRIVATE]
     allowed_plan_kinds = allowed_plan_kinds_for_scopes(session_booking_scopes)
@@ -4951,6 +4990,7 @@ def get_public_session_trial_offers(
         db,
         session_obj=session_obj,
         course_type=course_type,
+        participant_kind=participant_kind,
     )
     if SessionAudienceScope.EXTERNAL not in booking_scopes:
         return []

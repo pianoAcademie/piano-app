@@ -9266,7 +9266,7 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
   if (defaultCourseRateRaw && defaultCourseRate === null) {
     redirect(appendQueryMessage(returnTo, "error", t("admin.activity_action.invalid_default_course_rate")));
   }
-  if ((trialCoursePriceRaw && trialCoursePrice === null) || (trialCourseEnabled && trialCoursePrice === null)) {
+  if (trialCoursePriceRaw && trialCoursePrice === null) {
     redirect(appendQueryMessage(returnTo, "error", t("admin.activity_action.invalid_trial_course_price")));
   }
   if (trialCourseEnabled && !allowsStudentBookings) {
@@ -9465,7 +9465,7 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
   if (defaultCourseRateRaw && defaultCourseRate === null) {
     redirect(appendQueryMessage(returnTo, "error", t("admin.activity_action.invalid_default_course_rate")));
   }
-  if ((trialCoursePriceRaw && trialCoursePrice === null) || (trialCourseEnabled && trialCoursePrice === null)) {
+  if (trialCoursePriceRaw && trialCoursePrice === null) {
     redirect(appendQueryMessage(returnTo, "error", t("admin.activity_action.invalid_trial_course_price")));
   }
   if (trialCourseEnabled && !allowsStudentBookings) {
@@ -15595,6 +15595,31 @@ export async function deleteAdminPricingCatalogConfigAction(formData: FormData):
   redirect(appendQueryMessage(returnTo, "ok", uiText(language, "admin.quote_config_action.catalog_deleted")));
 }
 
+export async function publishAdminPricingCatalogConfigAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+  const language = await ensureAdminAndGetLanguage(token);
+  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=catalogs"));
+  const catalogId = parseUuid(String(formData.get("catalog_id") ?? ""));
+  if (!catalogId) {
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_config_action.invalid_catalog")));
+  }
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/pricing-catalogs/${encodeURIComponent(catalogId)}/publish`,
+    { method: "POST" },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/admin/config/quotes");
+  revalidatePath("/admin/quotes/new");
+  revalidatePath("/admin/intakes");
+  redirect(appendQueryMessage(returnTo, "ok", "Catalogue tarifaire publie"));
+}
+
 export async function updateAdminTypeformQuoteDefaultsConfigAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
@@ -15644,6 +15669,10 @@ export async function upsertAdminPricingActivityPriceConfigAction(formData: Form
   const locationId = parseUuid(String(formData.get("location_id") ?? ""));
   const pricingUnitRaw = String(formData.get("pricing_unit") ?? "").trim();
   const pricingUnit = pricingUnitRaw === "hourly" || pricingUnitRaw === "fixed" ? pricingUnitRaw : "per_session";
+  const priceChannelRaw = String(formData.get("price_channel") ?? "ANNUAL_FORFAIT").trim().toUpperCase();
+  const priceChannel = ["STANDARD", "ANNUAL_FORFAIT", "TRIAL", "EXTERNAL_UNIT"].includes(priceChannelRaw)
+    ? priceChannelRaw
+    : "ANNUAL_FORFAIT";
   const unitPriceTtc = String(formData.get("unit_price_ttc") ?? "").trim().replace(",", ".");
 
   if (!catalogId || !activityId || !unitPriceTtc || !Number.isFinite(Number(unitPriceTtc)) || Number(unitPriceTtc) < 0) {
@@ -15660,6 +15689,7 @@ export async function upsertAdminPricingActivityPriceConfigAction(formData: Form
         location_id: locationId,
         student_category: null,
         pricing_unit: pricingUnit,
+        price_channel: priceChannel,
         unit_price_ttc: unitPriceTtc,
         currency: "EUR",
         is_active: true,
@@ -15691,6 +15721,15 @@ export async function createAdminQuoteDiscountRuleConfigAction(formData: FormDat
   const vatRate = String(formData.get("vat_rate") ?? "0").trim().replace(",", ".");
   const sortOrder = parsePositiveInt(String(formData.get("sort_order") ?? "")) ?? 0;
   const isActive = parseCheckboxFlag(formData, "is_active", true);
+  const catalogId = parseUuid(String(formData.get("catalog_id") ?? ""));
+  const ruleKindRaw = String(formData.get("rule_kind") ?? "CUSTOM").trim().toUpperCase();
+  const ruleKind = ["LOYALTY", "FAMILY", "SECOND_COURSE", "SHORT_COMMITMENT", "CUSTOM"].includes(ruleKindRaw) ? ruleKindRaw : "CUSTOM";
+  const calculationModeRaw = String(formData.get("calculation_mode") ?? "PER_HOUR_TTC").trim().toUpperCase();
+  const calculationMode = ["PER_HOUR_TTC", "PER_SESSION_TTC", "PERCENT"].includes(calculationModeRaw) ? calculationModeRaw : "PER_HOUR_TTC";
+  const priority = parsePositiveInt(String(formData.get("priority") ?? "")) ?? 100;
+  const stackingGroup = optionalField(formData, "stacking_group");
+  const isStackable = parseCheckboxFlag(formData, "is_stackable", true);
+  const appliesToChannels = formData.getAll("applies_to_channels").map((value) => String(value).trim().toUpperCase()).filter((value) => ["STANDARD", "ANNUAL_FORFAIT", "TRIAL", "EXTERNAL_UNIT"].includes(value));
 
   if (!label || !unitPriceTtc || !Number.isFinite(Number(unitPriceTtc)) || Number(unitPriceTtc) < 0 || !Number.isFinite(Number(vatRate)) || Number(vatRate) < 0 || Number(vatRate) > 100) {
     redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_config_action.invalid_discount_rule")));
@@ -15703,6 +15742,13 @@ export async function createAdminQuoteDiscountRuleConfigAction(formData: FormDat
       body: JSON.stringify({
         code,
         label,
+        catalog_id: catalogId,
+        rule_kind: ruleKind,
+        calculation_mode: calculationMode,
+        priority,
+        stacking_group: stackingGroup,
+        is_stackable: isStackable,
+        applies_to_channels: appliesToChannels.length ? appliesToChannels : ["ANNUAL_FORFAIT"],
         unit_price_ttc: Number(unitPriceTtc).toFixed(2),
         vat_rate: Number(vatRate).toFixed(2),
         currency: "EUR",
@@ -15736,6 +15782,15 @@ export async function updateAdminQuoteDiscountRuleConfigAction(formData: FormDat
   const vatRate = String(formData.get("vat_rate") ?? "0").trim().replace(",", ".");
   const sortOrder = parsePositiveInt(String(formData.get("sort_order") ?? "")) ?? 0;
   const isActive = parseCheckboxFlag(formData, "is_active", true);
+  const catalogId = parseUuid(String(formData.get("catalog_id") ?? ""));
+  const ruleKindRaw = String(formData.get("rule_kind") ?? "CUSTOM").trim().toUpperCase();
+  const ruleKind = ["LOYALTY", "FAMILY", "SECOND_COURSE", "SHORT_COMMITMENT", "CUSTOM"].includes(ruleKindRaw) ? ruleKindRaw : "CUSTOM";
+  const calculationModeRaw = String(formData.get("calculation_mode") ?? "PER_HOUR_TTC").trim().toUpperCase();
+  const calculationMode = ["PER_HOUR_TTC", "PER_SESSION_TTC", "PERCENT"].includes(calculationModeRaw) ? calculationModeRaw : "PER_HOUR_TTC";
+  const priority = parsePositiveInt(String(formData.get("priority") ?? "")) ?? 100;
+  const stackingGroup = optionalField(formData, "stacking_group");
+  const isStackable = parseCheckboxFlag(formData, "is_stackable", true);
+  const appliesToChannels = formData.getAll("applies_to_channels").map((value) => String(value).trim().toUpperCase()).filter((value) => ["STANDARD", "ANNUAL_FORFAIT", "TRIAL", "EXTERNAL_UNIT"].includes(value));
 
   if (!ruleId || !label || !unitPriceTtc || !Number.isFinite(Number(unitPriceTtc)) || Number(unitPriceTtc) < 0 || !Number.isFinite(Number(vatRate)) || Number(vatRate) < 0 || Number(vatRate) > 100) {
     redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_config_action.invalid_discount_rule")));
@@ -15748,6 +15803,13 @@ export async function updateAdminQuoteDiscountRuleConfigAction(formData: FormDat
       body: JSON.stringify({
         code,
         label,
+        catalog_id: catalogId,
+        rule_kind: ruleKind,
+        calculation_mode: calculationMode,
+        priority,
+        stacking_group: stackingGroup,
+        is_stackable: isStackable,
+        applies_to_channels: appliesToChannels.length ? appliesToChannels : ["ANNUAL_FORFAIT"],
         unit_price_ttc: Number(unitPriceTtc).toFixed(2),
         vat_rate: Number(vatRate).toFixed(2),
         currency: "EUR",

@@ -85,6 +85,7 @@ from app.schemas.quote import (
     PricingActivityPriceOut,
     PricingActivityPriceUpsertRequest,
     PricingCatalogOut,
+    PricingCatalogSimulationOut,
     PricingCatalogUpsertRequest,
     PricingKitPriceOut,
     PricingKitPriceUpsertRequest,
@@ -2468,6 +2469,8 @@ def _pricing_catalog_out(row: PricingCatalog) -> PricingCatalogOut:
         effective_to=row.effective_to,
         is_default=bool(row.is_default),
         is_active=bool(row.is_active),
+        lifecycle_status=str(getattr(row, "lifecycle_status", None) or "DRAFT"),
+        published_at=getattr(row, "published_at", None),
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -2481,6 +2484,7 @@ def _pricing_activity_price_out(row: PricingActivityPrice) -> PricingActivityPri
         location_id=row.location_id,
         student_category=row.student_category,
         pricing_unit=row.pricing_unit,
+        price_channel=str(getattr(row, "price_channel", None) or "ANNUAL_FORFAIT"),
         unit_price_ttc=_q2(Decimal(row.unit_price_ttc or 0)),
         currency=row.currency,
         is_active=bool(row.is_active),
@@ -2520,6 +2524,16 @@ def _quote_discount_rule_out(row: QuoteDiscountRule) -> QuoteDiscountRuleOut:
         id=row.id,
         code=row.code,
         label=row.label,
+        catalog_id=getattr(row, "catalog_id", None),
+        rule_kind=str(getattr(row, "rule_kind", None) or "CUSTOM"),
+        calculation_mode=str(getattr(row, "calculation_mode", None) or "PER_HOUR_TTC"),
+        priority=int(getattr(row, "priority", None) or 100),
+        stacking_group=getattr(row, "stacking_group", None),
+        is_stackable=bool(getattr(row, "is_stackable", True)),
+        applies_to_channels=list(getattr(row, "applies_to_channels", None) or ["ANNUAL_FORFAIT"]),
+        activity_id=getattr(row, "activity_id", None),
+        location_id=getattr(row, "location_id", None),
+        student_category=getattr(row, "student_category", None),
         unit_price_ttc=_q2(Decimal(row.unit_price_ttc or 0)),
         vat_rate=_q2(Decimal(row.vat_rate or 0)),
         currency=row.currency,
@@ -4445,6 +4459,7 @@ def _effective_item_price(
             activity_price_stmt = select(PricingActivityPrice).where(
                 PricingActivityPrice.catalog_id == pricing_catalog_id,
                 PricingActivityPrice.activity_id == line.activity_id,
+                PricingActivityPrice.price_channel == PricingChannel.ANNUAL_FORFAIT.value,
                 PricingActivityPrice.is_active.is_(True),
             )
             if location_id is not None:
@@ -13279,11 +13294,103 @@ def create_pricing_catalog(
         effective_to=payload.effective_to,
         is_default=payload.is_default,
         is_active=payload.is_active,
+        lifecycle_status="DRAFT",
+        published_at=None,
         created_at=now,
         updated_at=now,
     )
     if payload.effective_to is not None and payload.effective_to < payload.effective_from:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="effective_to must be >= effective_from")
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return _pricing_catalog_out(row)
+
+
+def _pricing_catalog_simulation(db: Session, row: PricingCatalog) -> PricingCatalogSimulationOut:
+    price_rows = db.execute(
+        select(PricingActivityPrice.price_channel, func.count(PricingActivityPrice.id))
+        .where(PricingActivityPrice.catalog_id == row.id, PricingActivityPrice.is_active.is_(True))
+        .group_by(PricingActivityPrice.price_channel)
+    ).all()
+    discount_rows = db.execute(
+        select(QuoteDiscountRule.rule_kind, func.count(QuoteDiscountRule.id))
+        .where(QuoteDiscountRule.catalog_id == row.id, QuoteDiscountRule.is_active.is_(True))
+        .group_by(QuoteDiscountRule.rule_kind)
+    ).all()
+    price_counts = {str(channel or "ANNUAL_FORFAIT"): int(count or 0) for channel, count in price_rows}
+    discount_counts = {str(kind or "CUSTOM"): int(count or 0) for kind, count in discount_rows}
+    active_price_count = sum(price_counts.values())
+    warnings: list[str] = []
+    if active_price_count == 0:
+        warnings.append("Aucun tarif d'activité actif n'est configure.")
+    if price_counts.get("ANNUAL_FORFAIT", 0) == 0:
+        warnings.append("Aucun tarif de forfait annuel n'est configure.")
+    if row.effective_to is not None and row.effective_to < row.effective_from:
+        warnings.append("La date de fin precede la date de debut.")
+    return PricingCatalogSimulationOut(
+        catalog_id=row.id,
+        lifecycle_status=str(row.lifecycle_status or "DRAFT"),
+        active_price_count=active_price_count,
+        price_counts_by_channel=price_counts,
+        active_discount_count=sum(discount_counts.values()),
+        discount_counts_by_kind=discount_counts,
+        warnings=warnings,
+        ready_to_publish=active_price_count > 0 and not any("date de fin" in warning for warning in warnings),
+    )
+
+
+def _mark_pricing_catalog_draft(db: Session, catalog_id: UUID, *, now: datetime | None = None) -> None:
+    """Require an explicit republish after changing a live catalog."""
+    catalog = db.scalar(select(PricingCatalog).where(PricingCatalog.id == catalog_id).with_for_update())
+    if catalog is None or catalog.lifecycle_status == "ARCHIVED":
+        return
+    if catalog.published_at is not None or catalog.lifecycle_status == "PUBLISHED":
+        catalog.lifecycle_status = "DRAFT"
+        catalog.published_at = None
+        catalog.updated_at = now or _utcnow()
+        db.add(catalog)
+
+
+@router.get("/pricing-catalogs/{catalog_id}/simulation", response_model=PricingCatalogSimulationOut)
+def simulate_pricing_catalog(
+    catalog_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> PricingCatalogSimulationOut:
+    row = db.scalar(select(PricingCatalog).where(PricingCatalog.id == catalog_id))
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pricing catalog not found")
+    return _pricing_catalog_simulation(db, row)
+
+
+@router.post("/pricing-catalogs/{catalog_id}/publish", response_model=PricingCatalogOut)
+def publish_pricing_catalog(
+    catalog_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> PricingCatalogOut:
+    row = db.scalar(select(PricingCatalog).where(PricingCatalog.id == catalog_id).with_for_update())
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pricing catalog not found")
+    simulation = _pricing_catalog_simulation(db, row)
+    if not simulation.ready_to_publish:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"message": "Pricing catalog is not ready to publish", "warnings": simulation.warnings},
+        )
+    now = _utcnow()
+    row.lifecycle_status = "PUBLISHED"
+    row.published_at = now
+    row.is_active = True
+    row.updated_at = now
+    if row.is_default:
+        for other in db.scalars(
+            select(PricingCatalog).where(PricingCatalog.id != row.id, PricingCatalog.is_default.is_(True))
+        ).all():
+            other.is_default = False
+            other.updated_at = now
+            db.add(other)
     db.add(row)
     db.commit()
     db.refresh(row)
@@ -13308,6 +13415,12 @@ def update_pricing_catalog(
     row.effective_to = payload.effective_to
     row.is_default = payload.is_default
     row.is_active = payload.is_active
+    if not payload.is_active:
+        row.lifecycle_status = "ARCHIVED"
+        row.published_at = None
+    elif row.lifecycle_status in {"ARCHIVED", "PUBLISHED"}:
+        row.lifecycle_status = "DRAFT"
+        row.published_at = None
     row.updated_at = _utcnow()
     db.add(row)
     db.commit()
@@ -13358,6 +13471,7 @@ def upsert_pricing_activity_price(
             PricingActivityPrice.location_id.is_(payload.location_id) if payload.location_id is None else PricingActivityPrice.location_id == payload.location_id,
             PricingActivityPrice.student_category.is_(payload.student_category) if payload.student_category is None else PricingActivityPrice.student_category == payload.student_category,
             PricingActivityPrice.pricing_unit == payload.pricing_unit,
+            PricingActivityPrice.price_channel == payload.price_channel,
         )
         .limit(1)
     )
@@ -13369,6 +13483,7 @@ def upsert_pricing_activity_price(
             location_id=payload.location_id,
             student_category=payload.student_category,
             pricing_unit=payload.pricing_unit,
+            price_channel=payload.price_channel,
             unit_price_ttc=payload.unit_price_ttc,
             currency=payload.currency.upper(),
             is_active=payload.is_active,
@@ -13377,9 +13492,11 @@ def upsert_pricing_activity_price(
         )
     else:
         row.unit_price_ttc = payload.unit_price_ttc
+        row.price_channel = payload.price_channel
         row.currency = payload.currency.upper()
         row.is_active = payload.is_active
         row.updated_at = now
+    _mark_pricing_catalog_draft(db, payload.catalog_id, now=now)
     db.add(row)
     db.commit()
     db.refresh(row)
@@ -13395,6 +13512,7 @@ def delete_pricing_activity_price(
     row = db.scalar(select(PricingActivityPrice).where(PricingActivityPrice.id == price_id).with_for_update())
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pricing activity price not found")
+    _mark_pricing_catalog_draft(db, row.catalog_id)
     db.delete(row)
     db.commit()
 
@@ -13442,6 +13560,7 @@ def upsert_pricing_product_price(
         row.currency = payload.currency.upper()
         row.is_active = payload.is_active
         row.updated_at = now
+    _mark_pricing_catalog_draft(db, payload.catalog_id, now=now)
     db.add(row)
     db.commit()
     db.refresh(row)
@@ -13457,6 +13576,7 @@ def delete_pricing_product_price(
     row = db.scalar(select(PricingProductPrice).where(PricingProductPrice.id == price_id).with_for_update())
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pricing product price not found")
+    _mark_pricing_catalog_draft(db, row.catalog_id)
     db.delete(row)
     db.commit()
 
@@ -13504,6 +13624,7 @@ def upsert_pricing_kit_price(
         row.currency = payload.currency.upper()
         row.is_active = payload.is_active
         row.updated_at = now
+    _mark_pricing_catalog_draft(db, payload.catalog_id, now=now)
     db.add(row)
     db.commit()
     db.refresh(row)
@@ -13519,6 +13640,7 @@ def delete_pricing_kit_price(
     row = db.scalar(select(PricingKitPrice).where(PricingKitPrice.id == price_id).with_for_update())
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pricing kit price not found")
+    _mark_pricing_catalog_draft(db, row.catalog_id)
     db.delete(row)
     db.commit()
 
@@ -13547,6 +13669,16 @@ def create_quote_discount_rule(
     row = QuoteDiscountRule(
         code=_next_available_discount_rule_code(db, base_code=base_code),
         label=payload.label.strip(),
+        catalog_id=payload.catalog_id,
+        rule_kind=payload.rule_kind,
+        calculation_mode=payload.calculation_mode,
+        priority=payload.priority,
+        stacking_group=(payload.stacking_group or "").strip() or None,
+        is_stackable=payload.is_stackable,
+        applies_to_channels=list(dict.fromkeys(payload.applies_to_channels)),
+        activity_id=payload.activity_id,
+        location_id=payload.location_id,
+        student_category=(payload.student_category or "").strip() or None,
         unit_price_ttc=_q2(payload.unit_price_ttc),
         vat_rate=_q2(payload.vat_rate),
         currency=payload.currency.upper(),
@@ -13555,6 +13687,8 @@ def create_quote_discount_rule(
         created_at=now,
         updated_at=now,
     )
+    if payload.catalog_id is not None:
+        _mark_pricing_catalog_draft(db, payload.catalog_id, now=now)
     db.add(row)
     db.commit()
     db.refresh(row)
@@ -13571,15 +13705,30 @@ def update_quote_discount_rule(
     row = db.scalar(select(QuoteDiscountRule).where(QuoteDiscountRule.id == rule_id).with_for_update())
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote discount rule not found")
+    previous_catalog_id = row.catalog_id
     base_code = payload.code or row.code or _discount_rule_code_from_label(payload.label)
     row.code = _next_available_discount_rule_code(db, base_code=base_code, exclude_id=row.id)
     row.label = payload.label.strip()
+    row.catalog_id = payload.catalog_id
+    row.rule_kind = payload.rule_kind
+    row.calculation_mode = payload.calculation_mode
+    row.priority = payload.priority
+    row.stacking_group = (payload.stacking_group or "").strip() or None
+    row.is_stackable = payload.is_stackable
+    row.applies_to_channels = list(dict.fromkeys(payload.applies_to_channels))
+    row.activity_id = payload.activity_id
+    row.location_id = payload.location_id
+    row.student_category = (payload.student_category or "").strip() or None
     row.unit_price_ttc = _q2(payload.unit_price_ttc)
     row.vat_rate = _q2(payload.vat_rate)
     row.currency = payload.currency.upper()
     row.is_active = payload.is_active
     row.sort_order = payload.sort_order
     row.updated_at = _utcnow()
+    if previous_catalog_id is not None:
+        _mark_pricing_catalog_draft(db, previous_catalog_id, now=row.updated_at)
+    if payload.catalog_id is not None and payload.catalog_id != previous_catalog_id:
+        _mark_pricing_catalog_draft(db, payload.catalog_id, now=row.updated_at)
     db.add(row)
     db.commit()
     db.refresh(row)
