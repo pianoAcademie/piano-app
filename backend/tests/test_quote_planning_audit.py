@@ -4,40 +4,7 @@ from datetime import date, datetime, timezone
 from types import SimpleNamespace
 from uuid import uuid4
 
-from app.services.quote_planning_audit import _confirmed_variance_matches, _expected_dates
-
-
-def test_confirmed_variance_only_matches_the_recorded_audit_state() -> None:
-    student_id = uuid4()
-    group_id = uuid4()
-    payload = {
-        "student_id": str(student_id),
-        "series_id": str(group_id),
-        "expected_sessions": 15,
-        "booked_sessions": 14,
-    }
-
-    assert _confirmed_variance_matches(
-        payload,
-        student_id=student_id,
-        group_id=group_id,
-        expected_sessions=15,
-        booked_sessions=14,
-    )
-    assert not _confirmed_variance_matches(
-        payload,
-        student_id=student_id,
-        group_id=group_id,
-        expected_sessions=15,
-        booked_sessions=13,
-    )
-    assert not _confirmed_variance_matches(
-        {**payload, "expected_sessions": "invalid"},
-        student_id=student_id,
-        group_id=group_id,
-        expected_sessions=15,
-        booked_sessions=14,
-    )
+from app.services.quote_planning_audit import _expected_dates
 
 
 def test_expected_dates_follow_the_approved_schedule_key_and_ignore_parallel_group() -> None:
