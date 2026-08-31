@@ -15,6 +15,14 @@ import {
 import { getAdminToken } from "../../../../lib/auth-cookies";
 import { backendRequest } from "../../../../lib/backend";
 import { hasAdminPermission } from "../../../../lib/admin-access";
+import {
+  buildAgendaRange,
+  formatAgendaDayLabel,
+  formatAgendaTime,
+  isAgendaDateKey,
+  parisDateKey,
+  type AgendaView,
+} from "../../../../lib/collaborator-agenda";
 import CollaboratorClientChunkAnchor from "./_client-chunk-anchor";
 import type {
   AdminConfigAccountOut,
@@ -33,7 +41,6 @@ import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } fro
 
 type SearchParams = Record<string, string | string[] | undefined>;
 type Tab = "profil" | "droits" | "tarifs" | "solde" | "planning";
-type AgendaView = "month" | "week" | "day";
 
 const COLLABORATOR_LANGUAGE_OPTIONS: Array<{ value: string; labelKey: string }> = [
   { value: "Francais", labelKey: "common.french" },
@@ -50,13 +57,6 @@ const COLLABORATOR_LANGUAGE_OPTIONS: Array<{ value: string; labelKey: string }> 
 type PageProps = {
   params: { id: string };
   searchParams: SearchParams;
-};
-
-type AgendaRange = {
-  from: Date;
-  to: Date;
-  dayKeys: string[];
-  title: string;
 };
 
 function readParam(params: SearchParams, key: string): string {
@@ -85,108 +85,8 @@ function isDateKey(value: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(value);
 }
 
-function keyToUtcDate(key: string): Date {
-  return new Date(`${key}T00:00:00.000Z`);
-}
-
-function utcDateToKey(date: Date): string {
-  return date.toISOString().slice(0, 10);
-}
-
-function addUtcDays(date: Date, days: number): Date {
-  const out = new Date(date.getTime());
-  out.setUTCDate(out.getUTCDate() + days);
-  return out;
-}
-
-function startOfMonthUtc(date: Date): Date {
-  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
-}
-
-function startOfWeekUtc(date: Date): Date {
-  const day = date.getUTCDay();
-  const offsetFromMonday = (day + 6) % 7;
-  return addUtcDays(date, -offsetFromMonday);
-}
-
 function todayKeyUtc(): string {
-  return utcDateToKey(new Date());
-}
-
-function buildAgendaRange(view: AgendaView, focusDayKey: string, language: UiLanguage): AgendaRange {
-  const focusDate = keyToUtcDate(focusDayKey);
-  const locale = localeForUiLanguage(language);
-
-  if (view === "day") {
-    const from = focusDate;
-    const toExclusive = addUtcDays(from, 1);
-    const to = new Date(toExclusive.getTime() - 1);
-
-    return {
-      from,
-      to,
-      dayKeys: [focusDayKey],
-      title: new Intl.DateTimeFormat(locale, {
-        weekday: "long",
-        day: "2-digit",
-        month: "long",
-        year: "numeric",
-        timeZone: "UTC",
-      }).format(from),
-    };
-  }
-
-  if (view === "week") {
-    const from = startOfWeekUtc(focusDate);
-    const dayKeys: string[] = [];
-
-    for (let i = 0; i < 7; i += 1) {
-      dayKeys.push(utcDateToKey(addUtcDays(from, i)));
-    }
-
-    const lastDay = addUtcDays(from, 6);
-    const toExclusive = addUtcDays(lastDay, 1);
-    const to = new Date(toExclusive.getTime() - 1);
-
-    return {
-      from,
-      to,
-      dayKeys,
-      title: `${new Intl.DateTimeFormat(locale, {
-        day: "2-digit",
-        month: "short",
-        year: "numeric",
-        timeZone: "UTC",
-      }).format(from)} - ${new Intl.DateTimeFormat(locale, {
-        day: "2-digit",
-        month: "short",
-        year: "numeric",
-        timeZone: "UTC",
-      }).format(lastDay)}`,
-    };
-  }
-
-  const from = startOfMonthUtc(focusDate);
-  const nextMonth = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth() + 1, 1));
-  const to = new Date(nextMonth.getTime() - 1);
-
-  const dayKeys: string[] = [];
-  let cursor = new Date(from.getTime());
-  while (cursor < nextMonth) {
-    dayKeys.push(utcDateToKey(cursor));
-    cursor = addUtcDays(cursor, 1);
-  }
-
-  return {
-    from,
-    to,
-    dayKeys,
-    title: new Intl.DateTimeFormat(locale, {
-      month: "long",
-      year: "numeric",
-      timeZone: "UTC",
-    }).format(from),
-  };
+  return new Date().toISOString().slice(0, 10);
 }
 
 function formatDate(value: string, language: UiLanguage): string {
@@ -199,38 +99,6 @@ function formatDate(value: string, language: UiLanguage): string {
     timeStyle: "short",
     timeZone: "Europe/Paris",
   });
-}
-
-function formatTime(value: string, language: UiLanguage): string {
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return "-";
-  }
-  return parsed.toLocaleTimeString(localeForUiLanguage(language), {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-function dayLabel(dayKey: string, view: AgendaView, language: UiLanguage): string {
-  const date = keyToUtcDate(dayKey);
-  const locale = localeForUiLanguage(language);
-  if (view === "day") {
-    return new Intl.DateTimeFormat(locale, {
-      weekday: "long",
-      day: "2-digit",
-      month: "long",
-      year: "numeric",
-      timeZone: "UTC",
-    }).format(date);
-  }
-
-  return new Intl.DateTimeFormat(locale, {
-    weekday: "short",
-    day: "2-digit",
-    month: "short",
-    timeZone: "UTC",
-  }).format(date);
 }
 
 function tabHref(professorId: string, tab: Tab): string {
@@ -405,10 +273,10 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
   const showLegacyContractGrid = readParam(searchParams, "legacy_contract") === "1";
   const agendaView = parseAgendaView(readParam(searchParams, "agenda_view"));
   const agendaDateInput = readParam(searchParams, "agenda_date");
-  const agendaDate = isDateKey(agendaDateInput) ? agendaDateInput : todayKeyUtc();
+  const agendaDate = isAgendaDateKey(agendaDateInput) ? agendaDateInput : parisDateKey(new Date());
   const payoutAsOfInput = readParam(searchParams, "payout_as_of");
   const payoutAsOf = isDateKey(payoutAsOfInput) ? payoutAsOfInput : todayKeyUtc();
-  const agendaRange = buildAgendaRange(agendaView, agendaDate, language);
+  const agendaRange = buildAgendaRange(agendaView, agendaDate, sortLocale);
 
   const sessionsQuery = new URLSearchParams();
   sessionsQuery.set("professor_id", params.id);
@@ -613,7 +481,7 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
 
   const sessionsByDay = new Map<string, AdminSessionOut[]>();
   for (const session of sessions) {
-    const dayKey = session.start_at_utc.slice(0, 10);
+    const dayKey = parisDateKey(session.start_at_utc);
     const bucket = sessionsByDay.get(dayKey) ?? [];
     bucket.push(session);
     sessionsByDay.set(dayKey, bucket);
@@ -624,7 +492,7 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
 
   const agendaDays = agendaRange.dayKeys.map((dayKey) => ({
     key: dayKey,
-    label: dayLabel(dayKey, agendaView, language),
+    label: formatAgendaDayLabel(dayKey, agendaView, sortLocale),
     sessions: sessionsByDay.get(dayKey) ?? [],
   }));
 
@@ -1488,7 +1356,7 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
                     {day.sessions.map((session) => (
                       <article key={session.id} className="item">
                         <div className="row spread">
-                          <strong>{formatTime(session.start_at_utc, language)} - {formatTime(session.end_at_utc, language)}</strong>
+                          <strong>{formatAgendaTime(session.start_at_utc, sortLocale)} - {formatAgendaTime(session.end_at_utc, sortLocale)}</strong>
                           <span className="badge">
                             {session.booked_count}/{session.capacity_max}
                           </span>
