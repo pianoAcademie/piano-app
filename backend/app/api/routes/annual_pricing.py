@@ -7,10 +7,9 @@ from app.models.plan import ClientPlanSubscription, Plan, PlanKind, Subscription
 from app.api.deps import get_db, require_roles
 from app.models.user import User, UserRole
 from app.models.quote import QuoteEvent
-from app.models.annual_pricing import AnnualFamilyReference
-from app.services.annual_enrollment import enrollment_context
+from app.services.annual_pricing_students import identity, option, canonical_id, student_enrollment, family_reference
 from app.services.annual_pricing_review import (
-    AnnualReviewRequest, KEY, quote_students, family_members, reviewed_lines, prepare_review, apply_review, is_annual_quote, display_line, check_review_current,
+    AnnualReviewRequest, KEY, quote_students, family_members, reviewed_lines, prepare_review, apply_review, is_annual_quote, display_line, check_review_current, activity_audiences,
 )
 
 router = APIRouter()
@@ -29,12 +28,11 @@ def context(quote_id: UUID, db: Session = Depends(get_db), _: User = Depends(req
     applicable = is_annual_quote(db, quote) and quote.school_year_label == "2026-2027"
     for student in students:
         if applicable:
-            enrollments[str(student.id)] = enrollment_context(db, student.id, quote.school_year_label)
+            enrollments[str(student.id)] = student_enrollment(db, student.id, quote.school_year_label)
         children, guardians = family_members(db, student.id)
-        families[str(student.id)] = [{"id": str(u.id), "label": f"{u.first_name or ''} {u.last_name or ''}".strip()}
-                                    for child_id in sorted(children, key=str) if (u := db.get(User, child_id))]
-        refs = [db.get(AnnualFamilyReference, (guardian, quote.school_year_label)) for guardian in guardians]
-        references[str(student.id)] = next((str(r.child_id) for r in refs if r), None)
+        families[str(student.id)] = [option(u) for child_id in sorted(children, key=str) if (u := identity(db, child_id))]
+        refs = [family_reference(db, guardian, quote.school_year_label) for guardian in sorted(guardians, key=str)]
+        references[str(student.id)] = next((str(canonical_id(db, r.child_id)) for r in refs if r), None)
         subscriptions = db.scalars(select(ClientPlanSubscription).join(Plan).where(
             ClientPlanSubscription.user_id == student.id, Plan.kind == PlanKind.FORFAIT,
             ClientPlanSubscription.status == SubscriptionStatus.ACTIVE,
@@ -49,11 +47,11 @@ def context(quote_id: UUID, db: Session = Depends(get_db), _: User = Depends(req
         check_review_current(db, quote, lines)
     except HTTPException as exc:
         review_error = str(exc.detail)
-    return {"applicable": applicable, "students": [{"id": str(s.id), "label": f"{s.first_name or ''} {s.last_name or ''}".strip()} for s in students],
+    return {"applicable": applicable, "students": [option(s) for s in students],
         "enrollments": enrollments, "review_error": review_error,
         "manual_discounts": [display_line(l) for l in lines if l.line_type == "discount" and not (l.meta or {}).get("annual_auto_discount")],
         "families": families, "references": references, "primary_courses": primary_courses, "review": (quote.meta or {}).get(KEY),
-        "lines": [{"id": str(l.id), "title": l.title, "quantity": str(l.quantity)} for l, _, _ in reviewed_lines(db, quote, lines)]}
+        "lines": [{"id": str(l.id), "title": l.title, "quantity": str(l.quantity), "audiences": sorted(activity_audiences(a))} for l, a, _ in reviewed_lines(db, quote, lines)]}
 
 
 @router.post("/quotes/{quote_id}/annual-pricing/preview")

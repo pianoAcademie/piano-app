@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_db, require_admin_or_permissions, require_roles
 from app.core.config import settings
 from app.services.annual_pricing_review import KEY as ANNUAL_REVIEW_KEY, check_review_current
+from app.services.annual_pricing_students import review_client_id, review_prospect_for_transformation, birth_date as annual_student_birth_date
 from app.services.annual_contracts import bind_contract_course, decorate_contract_price
 from app.api.routes.admin_clients import (
     _allocate_invoice_number_for_seller_entity,
@@ -9412,7 +9413,8 @@ def _resolve_followup_clients(
     selected_client_id = _parse_uuid_value(client_resolution.get("selectedClientId"))
     selected_parent_client_id = _parse_uuid_value(client_resolution.get("selectedParentClientId"))
 
-    quote_prospect = _load_prospect_for_update(db, quote.prospect_id)
+    reviewed_prospect = review_prospect_for_transformation(db, quote)
+    quote_prospect = _load_prospect_for_update(db, reviewed_prospect.id if reviewed_prospect else quote.prospect_id)
     parent_prospect = _resolve_quote_parent_prospect(db, quote_prospect=quote_prospect)
     if quote_prospect is not None:
         _remember_prospect_snapshot(prospect_snapshots, quote_prospect)
@@ -9619,7 +9621,7 @@ def _resolve_followup_clients(
         quote_prospect=quote_prospect,
         parent_prospect=parent_prospect,
     )
-    child_birth_date = _quote_child_birth_date(quote)
+    child_birth_date = (annual_student_birth_date(reviewed_prospect) if reviewed_prospect else None) or _quote_child_birth_date(quote)
     child_phone = _normalized_phone(quote_prospect.phone)
     billing = _load_user_for_update(db, selected_parent_client_id)
     if billing is None and parent_prospect is not None:
@@ -9700,6 +9702,10 @@ def _resolve_followup_clients(
     student = None
     candidate_student_ids: list[UUID] = []
     candidate_ids_to_reuse = () if mode == "new_child_existing_parent" else (selected_client_id, quote_prospect.linked_client_id, quote.client_id)
+    if reviewed_prospect and reviewed_prospect.linked_client_id:
+        # A verified prospect already converted in this workflow identifies one
+        # exact client. Retrying must not create a second child for that prospect.
+        candidate_ids_to_reuse = (reviewed_prospect.linked_client_id,)
     for candidate_id in candidate_ids_to_reuse:
         if candidate_id is None or candidate_id in candidate_student_ids:
             continue
@@ -9715,6 +9721,8 @@ def _resolve_followup_clients(
         student = candidate_student
         break
 
+    if reviewed_prospect and reviewed_prospect.linked_client_id and student is None:
+        raise HTTPException(409, "La fiche client liée au prospect vérifié n'est pas une fiche enfant valide. Vérifiez le rattachement sans créer de doublon.")
     if student is None and child_email:
         candidate_student = _find_user_by_email_for_update(db, child_email)
         if (
@@ -11216,7 +11224,7 @@ def _execute_quote_followup_transformation(
         created_subscription_ids=created_subscription_ids,
     )
     annual_review = (quote.meta or {}).get(ANNUAL_REVIEW_KEY)
-    if annual_review and (str(student.id) != annual_review["student_id"] or not plan or plan.kind != PlanKind.FORFAIT):
+    if annual_review and (student.id != review_client_id(db, annual_review) or not plan or plan.kind != PlanKind.FORFAIT):
         raise HTTPException(409, "L'élève et le forfait doivent correspondre à la décision tarifaire validée.")
     monthly_card_billing = _quote_followup_uses_monthly_card_payment(quote=quote, followup=followup)
     monthly_card_auto_rule_id: UUID | None = None
@@ -11626,7 +11634,7 @@ def _rollback_quote_followup_transformation(
     if reviewed_course_keys:
         # Also remove only this quote's bindings from a pre-existing annual contract.
         subscriptions = db.scalars(select(ClientPlanSubscription).where(
-            ClientPlanSubscription.user_id == _parse_uuid_value((quote.meta or {}).get(ANNUAL_REVIEW_KEY, {}).get("student_id"))
+            ClientPlanSubscription.user_id == review_client_id(db, (quote.meta or {}).get(ANNUAL_REVIEW_KEY, {}))
         ).with_for_update()).all()
         for subscription in subscriptions:
             subscription.annual_pricing_terms = [t for t in (subscription.annual_pricing_terms or []) if t["course_key"] not in reviewed_course_keys]

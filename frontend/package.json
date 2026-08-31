@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "test:annual-pricing-selection": "node --experimental-strip-types --test scripts/test-annual-pricing-selection.mjs",
     "test:quote-live-slots": "node --experimental-strip-types --test scripts/test-quote-live-slots.mjs",
     "dev": "next dev -p 3000",
     "build": "next build",

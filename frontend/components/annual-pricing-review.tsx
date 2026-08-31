@@ -4,14 +4,15 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { annualPricingAction } from "../lib/actions";
 import { PricingLinesTable, pricingMoney, type PricingLine } from "./quote-pricing-recap";
+import { allowedAudiences, initialStudent, type StudentOption, type CourseOption, type Audience } from "../lib/annual-pricing-selection";
 
 type Option = { id: string; label: string };
 type Enrollment = { status: "AUTO" | "NEW" | "RETURNING_MANUAL"; history_found: boolean; evidence: { note: string; actor_name: string; verified_at: string } | null };
 type Context = {
   applicable: boolean;
-  students: Option[]; families: Record<string, Option[]>; references: Record<string, string | null>;
+  students: StudentOption[]; families: Record<string, Option[]>; references: Record<string, string | null>;
   primary_courses: Record<string, Option[]>;
-  lines: { id: string; title: string; quantity: string }[];
+  lines: CourseOption[];
   enrollments: Record<string, Enrollment>; manual_discounts: PricingLine[]; review_error: string | null;
   review: { verified_at: string; actor_name?: string; student_id: string; audience: string; primary_line_id: string; primary_contract_course_key?: string; review_note: string;
     enrollment?: { status: string; source: string; note: string }; family: boolean; family_reference_child_id?: string; keep_manual?: boolean; total: string } | null;
@@ -39,9 +40,10 @@ export default function AnnualPricingReview({ quoteId, editable, revision }: { q
   const [manualPolicy, setManualPolicy] = useState("BLOCK");
   function populate(data: Context): void {
     setContext(data); setPreview(null); setManualPolicy("BLOCK"); setReplaceReference(false);
-    const id = data.review?.student_id || (data.students.length === 1 ? data.students[0].id : "");
+    const id = initialStudent(data.students, data.review?.student_id);
     setStudent(id); setReference(data.references[id] || "");
-    setAudience(data.review?.audience || "");
+    const allowed = allowedAudiences(data.students.find(s => s.id === id), data.lines);
+    setAudience(allowed.includes(data.review?.audience as Audience) ? data.review!.audience : "");
     setPrimary(data.review?.primary_contract_course_key ? `contract:${data.review.primary_contract_course_key}` : data.review?.primary_line_id || (data.lines.length === 1 ? data.lines[0].id : ""));
     setNote(data.review?.review_note || "");
     setEnrollmentStatus(data.enrollments[id]?.status || "AUTO");
@@ -81,7 +83,12 @@ export default function AnnualPricingReview({ quoteId, editable, revision }: { q
     } finally { setBusy(false); }
   }
   if (context && !context.applicable) return null;
-  const missing = !context ? "Chargement des critères…" : !student ? "Sélectionnez l'élève." : !audience ? "Sélectionnez la catégorie vérifiée." : !primary ? "Sélectionnez le premier cours annuel." :
+  const selectedStudent = context?.students.find(s => s.id === student);
+  const audiences = allowedAudiences(selectedStudent, context?.lines || []);
+  const missing = !context ? "Chargement des critères…" : !context.students.length ? "Rattachez un élève client ou prospect dans le cadre du devis." :
+    !context.lines.length ? "Aucun cours annuel pris en charge dans ce devis. Les montants enregistrés restent inchangés." :
+    !student ? "Sélectionnez l'élève." : !audiences.length ? "Les cours du devis ne correspondent pas à la catégorie de cet élève. Vérifiez le dossier." :
+    !audience || !audiences.includes(audience as Audience) ? "Sélectionnez la catégorie vérifiée." : !primary ? "Sélectionnez le premier cours annuel." :
     enrollmentStatus === "RETURNING_MANUAL" && enrollmentNote.trim().length < 10 ? "Justifiez la réinscription (10 caractères minimum)." :
     note.trim().length < 10 ? "Complétez le justificatif du calcul (10 caractères minimum)." :
     context.manual_discounts.length > 0 && manualPolicy === "BLOCK" ? "Choisissez de conserver ou remplacer les remises manuelles ci-dessous." : "";
@@ -102,37 +109,40 @@ export default function AnnualPricingReview({ quoteId, editable, revision }: { q
     <summary><strong>Vérifier et calculer les remises annuelles</strong>{context?.review ? " · Décision enregistrée" : ""}</summary>
     <p>Prix issus de la grille, remises détaillées par séance et conservées à l'inscription. Les remises manuelles ne sont jamais cumulées automatiquement.</p>
     {!editable ? <p>Devis verrouillé : décision tarifaire conservée, aucune modification.</p> : <>
-      {context && !context.students.length ? <p role="alert">Rattachez d'abord une fiche enfant au client du devis pour vérifier les liens familiaux. Aucun rapprochement automatique par nom.</p> : null}
-      <fieldset disabled={busy || !context} onChange={() => { setPreview(null); setMessage(""); }}>
+      {context && !context.students.length ? <p role="alert">Aucun élève rattaché à ce devis. <a href={`/admin/quotes/${encodeURIComponent(quoteId)}?section=cadre`}>Vérifier le cadre du devis</a>. Sélectionnez la fiche client ou prospect existante, sans créer de doublon.</p> : null}
+      {selectedStudent?.kind === "PROSPECT" ? <p>Élève prospect : {selectedStudent.label}. Vous pouvez vérifier ce devis avant l'inscription. Aucune fiche client ne sera créée par ce calcul.</p> : null}
+      <fieldset disabled={busy || !context || !context.students.length || !context.lines.length} onChange={() => { setPreview(null); setMessage(""); }}>
         <div className="grid cols-2">
           <label>Élève concerné<select value={student} onChange={e => { const id = e.target.value; setStudent(id); setReference(context?.references[id] || "");
             setEnrollmentStatus(context?.enrollments[id]?.status || "AUTO"); setEnrollmentNote(context?.enrollments[id]?.evidence?.note || ""); setNote(""); setAudience(""); setPrimary(""); }}>
             <option value="">Sélectionner</option>{context?.students.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
           </select></label>
-          <label>Catégorie vérifiée pour ce cours<select value={audience} onChange={e => setAudience(e.target.value)}>
-            <option value="">À vérifier</option><option value="CHILD">Enfant (hors adolescent)</option><option value="TEEN">Adolescent</option>
+          <label>Catégorie vérifiée pour ce cours<select value={audience} onChange={e => { setAudience(e.target.value); if (e.target.value === "ADULT") { setReference(""); setReplaceReference(false); } }}>
+            <option value="">À vérifier</option>{audiences.map(a => <option key={a} value={a}>{a === "CHILD" ? "Enfant (hors adolescent)" : a === "TEEN" ? "Adolescent" : "Adulte"}</option>)}
           </select></label>
           <label>Premier cours annuel<select value={primary} onChange={e => setPrimary(e.target.value)}>
             <option value="">Sélectionner le cours principal</option>{context?.lines.map(l => <option key={l.id} value={l.id}>{l.title} · {l.quantity} séances</option>)}
             {context?.primary_courses[student]?.map(c => <option key={c.id} value={`contract:${c.id}`}>Déjà souscrit : {c.label}</option>)}
           </select></label>
-          <label>Enfant de référence de la famille pour la saison<select value={reference} onChange={e => setReference(e.target.value)}>
+          {audience !== "ADULT" && selectedStudent?.audiences?.includes("ADULT") !== true ? <label>Enfant de référence de la famille pour la saison<select value={reference} onChange={e => setReference(e.target.value)}>
             <option value="">Pas de remise famille</option>{context?.families[student]?.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
-          </select></label>
+          </select></label> : <p>Adulte : aucune remise enfant/adolescent n'est appliquée automatiquement. Les remises manuelles restent soumises à votre choix ci-dessous.</p>}
         </div>
         <div className="grid cols-2">
           <label>Inscription pour cette saison<select value={enrollmentStatus} onChange={e => setEnrollmentStatus(e.target.value as Enrollment["status"])}>
             <option value="AUTO">Reprendre la confirmation enregistrée ou vérifier l’historique</option><option value="NEW">Nouvelle inscription</option>
             <option value="RETURNING_MANUAL">Réinscription — fidélité confirmée par l’administration</option>
           </select></label>
-          <p>{context?.enrollments[student]?.history_found ? "Historique annuel de la saison précédente retrouvé." : "Aucun historique annuel retrouvé. Pour un ancien élève issu de l’ancien logiciel, confirmez la réinscription ci-contre."}</p>
+          {student ? <p>{context?.enrollments[student]?.history_found ? "Historique annuel de la saison précédente retrouvé." : "Aucun historique annuel retrouvé. Pour un ancien élève issu de l’ancien logiciel, confirmez la réinscription ci-contre."}</p> : null}
         </div>
         {enrollmentStatus === "RETURNING_MANUAL" ? <label>Justificatif de réinscription (obligatoire, 10 caractères minimum)
           <textarea value={enrollmentNote} maxLength={2000} onChange={e => setEnrollmentNote(e.target.value)} placeholder="Ex. inscription 2025-2026 vérifiée dans l’ancien logiciel, référence du dossier…" />
         </label> : null}
         <p className="muted">La confirmation est mémorisée pour cet élève et cette saison après enregistrement, y compris pour les devis manuels. Elle ne modifie pas les devis déjà envoyés.</p>
-        <p>La référence ne dépend pas de l'ordre d'acceptation des devis. Vérifiez l'inscription annuelle de cet enfant et conservez le même choix pour toute la famille.</p>
-        <label><input type="checkbox" checked={replaceReference} onChange={e => setReplaceReference(e.target.checked)} /> Modifier la référence de la famille (brouillons seulement ; les autres devis devront être revérifiés)</label>
+        {audience !== "ADULT" && selectedStudent?.audiences?.includes("ADULT") !== true ? <>
+          <p>La référence ne dépend pas de l'ordre d'acceptation des devis. Vérifiez l'inscription annuelle de cet enfant et conservez le même choix pour toute la famille.</p>
+          <label><input type="checkbox" checked={replaceReference} onChange={e => setReplaceReference(e.target.checked)} /> Modifier la référence de la famille (brouillons seulement ; les autres devis devront être revérifiés)</label>
+        </> : null}
         {context?.manual_discounts.length ? <section className="card top-gap-sm">
           <h4>Remises manuelles / importées déjà enregistrées</h4><PricingLinesTable lines={context.manual_discounts} />
           <label>Traitement de ces remises<select value={manualPolicy} onChange={e => setManualPolicy(e.target.value)}>
