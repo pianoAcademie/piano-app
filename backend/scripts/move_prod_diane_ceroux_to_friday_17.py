@@ -127,7 +127,7 @@ def _target_series_key(session_obj: CourseSession) -> str:
     return f"standalone:{session_obj.id}"
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, *, session_factory=None) -> int:
     parser = argparse.ArgumentParser(
         description="Move Diane Ceroux's 2026-2027 weekly bookings to Friday 17h at the same location."
     )
@@ -142,7 +142,15 @@ def main(argv: list[str] | None = None) -> int:
     start_utc = SEASON_START_LOCAL.astimezone(timezone.utc)
     end_utc = SEASON_END_LOCAL.astimezone(timezone.utc)
 
-    with SessionLocal() as db:
+    with (session_factory or SessionLocal)() as db:
+        if args.allow_missing and db.scalar(select(User.id).where(
+            User.role == UserRole.CLIENT,
+            func.lower(func.coalesce(User.first_name, "")).contains(FIRST_NAME)
+            | func.lower(func.coalesce(User.last_name, "")).contains("roux"),
+        ).limit(1)) is None:
+            db.rollback()
+            print(f"{SCRIPT_PREFIX}|summary|result=student_missing_noop|applied={args.apply}")
+            return 0
         candidates = db.scalars(
             select(User)
             .where(

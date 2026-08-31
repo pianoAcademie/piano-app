@@ -7,6 +7,9 @@ Create Date: 2026-08-28
 
 from __future__ import annotations
 
+from alembic import op
+from sqlalchemy.orm import Session
+
 revision = "20260828_0215"
 down_revision = "20260828_0214"
 branch_labels = None
@@ -14,12 +17,13 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # The guarded repair uses its own row-locking session and commits only after
-    # validating the exact course and its single cancelled booking. It is
-    # idempotent, so retrying the migration after an interruption is safe.
+    # Reuse Alembic's connection: its DDL locks would block a second connection.
+    # A savepoint isolates the script's commit/rollback without committing the
+    # enclosing migration (including its revision marker).
     from scripts.repair_prod_assas_thursday_17_slot import main as repair_main
 
-    result = repair_main(["--apply", "--allow-missing"])
+    result = repair_main(["--apply", "--allow-missing"], session_factory=lambda: Session(
+        bind=op.get_bind(), join_transaction_mode="create_savepoint"))
     if result != 0:
         raise RuntimeError(f"Assas slot repair failed with exit code {result}")
 

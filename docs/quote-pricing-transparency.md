@@ -40,3 +40,15 @@ Les devis envoyés/acceptés restent verrouillés ; utiliser une révision.
 Tests : PostgreSQL isolé (persistance, non-cumul, remplacement atomique,
 cas 31 × 38 − 62 + 245 + 25 = 1 386 €, cohérence documentaire, migrations aller/retour),
 tests documents et intégration tarifaire, compilation Next.js avec contrôle des types.
+
+## Déblocage des migrations historiques
+
+Les révisions 0215 à 0219 réutilisent la connexion Alembic dans un savepoint.
+Les scripts conservent leur transaction autonome lorsqu'ils sont exécutés en CLI.
+Leurs chemins « cible absente » ne chargent que les clés stables, afin de ne pas
+demander les colonnes ajoutées plus tard dans l'historique. Les révisions déjà
+appliquées ne sont pas rejouées lors du déploiement.
+
+La validation comprend la reconstruction du schéma par migrations et 20 cas de
+non-blocage sous verrou, commit, rollback et erreur, sur PostgreSQL isolé. Les
+fixtures tarifaires respectent également les contraintes de ce schéma migré.

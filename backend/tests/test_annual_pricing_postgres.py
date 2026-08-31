@@ -14,6 +14,7 @@ from app.models.catalog import CourseType, Location, DeliveryMode
 from app.models.family import ClientFamilyLink
 from app.models.quote import Quote, QuoteLine, PricingCatalog, PricingActivityPrice
 from app.models.annual_pricing import AnnualFamilyReference
+from app.models.ops import LegalEntity
 from app.services.annual_pricing_review import AnnualReviewRequest, prepare_review, apply_review, check_review_current, quote_fingerprint
 
 URL = os.environ.get("ANNUAL_PRICING_TEST_DATABASE_URL", "")
@@ -34,9 +35,12 @@ def case():
             db.add(u); db.flush(); return u
         a, b, parent = child("Premier"), child("Second"), child("Parent")
         parent.client_kind = ClientKind.ADULT
+        entity = LegalEntity(name="Entité test", invoice_prefix="TEST")
+        db.add(entity); db.flush()
         db.add_all([ClientFamilyLink(adult_user_id=parent.id, child_user_id=a.id), ClientFamilyLink(adult_user_id=parent.id, child_user_id=b.id)])
-        location = Location(code=str(uuid4()), name="Salle Paris test", city="Paris", timezone="Europe/Paris")
+        location = Location(code=str(uuid4()), name="Salle Paris test", address_line="1 rue de test", city="Paris", country_code="FR", timezone="Europe/Paris")
         activity = CourseType(code=str(uuid4()), name="Cours collectif enfants présentiel", service_code="PIANO", mode=DeliveryMode.ONSITE,
+                              payor_legal_entity_id=entity.id, seller_legal_entity_id=entity.id,
                               duration_minutes=60, default_capacity=6, color_hex="#FFFFFF")
         catalog = PricingCatalog(name="Test annual", school_year_label="2026-2027", lifecycle_status="PUBLISHED", is_active=True,
             effective_from=datetime(2026, 8, 1, tzinfo=timezone.utc), published_at=datetime.now(timezone.utc))
@@ -264,7 +268,7 @@ def test_named_pack_is_not_an_annual_quote(case):
     from app.models.quote import QuoteType
     from app.models.plan import Plan, PlanKind
     db, q, lines, request, _, _ = case
-    plan = Plan(code=str(uuid4()), name="Carnet", kind=PlanKind.PACK)
+    plan = Plan(code=str(uuid4()), name="Carnet", kind=PlanKind.PACK, credits_count=10, pack_validity_months=6)
     db.add(plan); db.flush()
     kind = QuoteType(code="FORFAIT_2026_2027", name="Forfait 2026-2027", formula_id=plan.id)
     db.add(kind); db.flush()
@@ -347,7 +351,9 @@ def setup_move(case):
     plan = Plan(code=str(uuid4()), name="Annual test", kind=PlanKind.FORFAIT)
     db.add(plan); db.flush()
     start = datetime.now(timezone.utc) + timedelta(days=30)
-    subscription = ClientPlanSubscription(user_id=req.student_id, plan_id=plan.id, started_at=start-timedelta(days=10), ends_at=start+timedelta(days=60))
+    subscription = ClientPlanSubscription(user_id=req.student_id, plan_id=plan.id, started_at=start-timedelta(days=10), ends_at=start+timedelta(days=60),
+        forfait_loyalty_discount_per_hour_ttc=0, forfait_family_discount_per_hour_ttc=0,
+        forfait_short_commitment_supplement_per_hour_ttc=0)
     db.add(subscription); db.flush()
     sources, targets, bookings = [], [], []
     source_group, target_group = uuid4(), uuid4()
@@ -355,6 +361,7 @@ def setup_move(case):
         def slot(offset, group):
             at = start+timedelta(days=week*7, hours=offset)
             s = CourseSession(course_type_id=lines[0].activity_id, location_id=quote.location_id, title="Test move",
+                snapshot_payor_legal_entity_id=db.get(CourseType, lines[0].activity_id).payor_legal_entity_id,
                 start_at_utc=at, end_at_utc=at+timedelta(hours=1), capacity_max=6,
                 recurrence_group_id=group, timezone="Europe/Paris", auto_cancel_deadline_utc=at-timedelta(hours=1))
             db.add(s); db.flush(); return s
