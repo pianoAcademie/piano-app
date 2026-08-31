@@ -2367,18 +2367,8 @@ def _filter_sessions_blocked_by_quote_school_calendar(
 
 
 def _quote_line_recommendation_key(line: QuoteLine, *, force_line_key: bool = False) -> str:
-    activity_id = str(getattr(line, "activity_id", None) or "").strip()
-    if not activity_id:
-        return ""
-    line_meta = _json_object(getattr(line, "meta", None))
-    source = str(line_meta.get("typeform_automatic_line") or "").strip()
-    if source:
-        return f"{activity_id}:{source}"
-    if force_line_key:
-        line_id = str(getattr(line, "id", None) or "").strip()
-        if line_id:
-            return f"{activity_id}:line:{line_id}"
-    return activity_id
+    from app.services.quotes.line_sessions import line_planning_key
+    return line_planning_key(line, force_line_key=force_line_key)
 
 
 def _planning_session_limit_from_quote_line_meta(
@@ -2502,11 +2492,16 @@ def _calendar_snapshot_with_line_recommendation_keys(
 
         activity_lines = lines_by_activity_id.get(activity_id) or []
         existing_key = str(block.get("recommendation_key") or "").strip()
+        stable_line = lines_by_recommendation_key.get(existing_key)
+        stable_meta = _json_object(getattr(stable_line, "meta", None))
+        explicitly_bound = existing_key and existing_key == str(
+            stable_meta.get("recommendation_key") or stable_meta.get("line_recommendation_key") or ""
+        ).strip()
         should_reassign_duplicate_line_key = (
             len(activity_lines) > 1
             and (
                 not existing_key
-                or ":line:" in existing_key
+                or (":line:" in existing_key and not explicitly_bound)
                 or existing_key not in lines_by_recommendation_key
             )
         )

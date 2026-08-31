@@ -658,12 +658,8 @@ def _quote_fixed_fees_ttc_for_monthly_schedule(db: Session, quote: Quote) -> Dec
 
 
 def _quote_line_recommendation_key_for_monthly_schedule(line: QuoteLine) -> str | None:
-    activity_id = str(line.activity_id or "").strip()
-    if not activity_id:
-        return None
-    meta = _json_object(line.meta)
-    automatic_key = str(meta.get("typeform_automatic_line") or "").strip()
-    return f"{activity_id}:{automatic_key}" if automatic_key else activity_id
+    from app.services.quotes.line_sessions import line_planning_key
+    return line_planning_key(line) or None
 
 
 def _planned_session_quantities(calendar_snapshot: object | None) -> dict[str, Decimal]:
@@ -688,32 +684,28 @@ def _sync_typeform_planned_quote_line_quantities(
     Typeform quote lines marked as planning-derived must follow the final calendar
     snapshot. This deliberately leaves manual quote lines untouched.
     """
-    planned_quantities = _planned_session_quantities(calendar_snapshot)
-    if not planned_quantities:
+    from app.services.quotes.line_sessions import resolve_line_sessions
+    if not any(_json_object(line.meta).get("typeform_planned_quantity_applied") for line in lines):
         return False
+
+    resolved = resolve_line_sessions(lines, _json_object(calendar_snapshot))
 
     changed = False
     now = _utcnow()
-    for line in lines:
+    for line, sessions, stable_key in resolved:
         meta = _json_object(line.meta)
         if not bool(meta.get("typeform_planned_quantity_applied")):
             continue
         if line.line_category != "service" or line.line_type != "item" or line.pricing_unit != "session":
             continue
-        recommendation_key = _quote_line_recommendation_key_for_monthly_schedule(line)
-        activity_id = str(line.activity_id or "").strip()
-        planned_quantity = planned_quantities.get(recommendation_key or "")
-        if planned_quantity is None and activity_id:
-            planned_quantity = planned_quantities.get(activity_id)
-        if planned_quantity is None or planned_quantity <= Decimal("0.00"):
-            continue
-
-        normalized_quantity = _q2(planned_quantity)
+        normalized_quantity = _q2(Decimal(len(sessions)))
         next_meta = {
             **meta,
             "typeform_planned_quantity_applied": True,
             "typeform_planned_quantity": str(normalized_quantity),
         }
+        if stable_key:
+            next_meta["recommendation_key"] = stable_key
         quantity_changed = _q2(Decimal(line.quantity or 0)) != normalized_quantity
         meta_changed = next_meta != meta
         if not quantity_changed and not meta_changed:
@@ -759,6 +751,8 @@ def _quote_monthly_service_amounts_ttc_for_schedule(db: Session, quote: Quote) -
 
     calendar_snapshot = _calendar_snapshot_with_line_recommendation_keys(db, quote.calendar_snapshot or {}, lines=lines)
     calendar_snapshot = _calendar_snapshot_with_planning_sessions(db, calendar_snapshot)
+    from app.services.quotes.line_sessions import resolve_line_sessions
+    line_sessions = {id(line): sessions for line, sessions, _ in resolve_line_sessions(lines, calendar_snapshot)}
     sessions_by_key: dict[str, list[dict[str, object]]] = {}
     sessions_by_activity: dict[str, list[dict[str, object]]] = {}
     for item in _json_list(calendar_snapshot.get("sessions")):
@@ -783,7 +777,7 @@ def _quote_monthly_service_amounts_ttc_for_schedule(db: Session, quote: Quote) -
             continue
         recommendation_key = _quote_line_recommendation_key_for_monthly_schedule(line)
         activity_id = str(line.activity_id or "").strip()
-        sessions = (
+        sessions = line_sessions.get(id(line)) if _quote_line_is_service_item(line) else (
             sessions_by_key.get(recommendation_key or "")
             or sessions_by_activity.get(activity_id)
             or []

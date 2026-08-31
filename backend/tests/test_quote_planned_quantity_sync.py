@@ -10,6 +10,9 @@ from uuid import uuid4
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.api.routes.quotes import _sync_typeform_planned_quote_line_quantities
+from fastapi import HTTPException
+from app.services.quotes.line_sessions import resolve_line_sessions
+from app.services.quotes.quote_documents import _calendar_snapshot_with_line_recommendation_keys
 
 
 def _line(*, activity_id, quantity: str, automatic_key: str | None = None, planned: bool = True):
@@ -20,6 +23,7 @@ def _line(*, activity_id, quantity: str, automatic_key: str | None = None, plann
         meta["typeform_planned_quantity_applied"] = True
         meta["typeform_planned_quantity"] = quantity
     return SimpleNamespace(
+        id=uuid4(),
         activity_id=activity_id,
         line_category="service",
         line_type="item",
@@ -36,6 +40,82 @@ def _line(*, activity_id, quantity: str, automatic_key: str | None = None, plann
 
 
 class QuotePlannedQuantitySyncTests(unittest.TestCase):
+    def kenza(self):
+        activity = uuid4()
+        first = _line(activity_id=activity, quantity="63.00")
+        second = _line(activity_id=activity, quantity="31.00", automatic_key="second_piano_course")
+        first.unit_price_ht, first.unit_vat_amount = Decimal("31.67"), Decimal("6.33")
+        second.unit_price_ht, second.unit_vat_amount = Decimal("26.67"), Decimal("5.33")
+        old_key = f"{activity}:line:{uuid4()}"
+        second_key = f"{activity}:second_piano_course"
+        snapshot = {"blocks": [{"activity_id":str(activity), "recommendation_key":key} for key in (old_key, second_key)],
+                    "sessions": [{"activity_id":str(activity), "recommendation_key":key, "date":f"session-{i}"}
+                                 for key, count in ((old_key,32),(second_key,31)) for i in range(count)]}
+        return first, second, snapshot, old_key
+
+    def test_kenza_primary_is_32_not_63_and_repeated_save_is_stable(self):
+        first, second, snapshot, old_key = self.kenza()
+        self.assertTrue(_sync_typeform_planned_quote_line_quantities([first,second],calendar_snapshot=snapshot))
+        self.assertEqual((first.quantity,second.quantity),(Decimal(32),Decimal(31)))
+        self.assertEqual(first.amount_ttc + second.amount_ttc + Decimal(305), Decimal(2513))
+        self.assertEqual(first.meta["recommendation_key"],old_key)
+        self.assertFalse(_sync_typeform_planned_quote_line_quantities([first,second],calendar_snapshot=snapshot))
+        # The editor can recreate database rows: saved group identity must survive.
+        first.id,second.id = uuid4(),uuid4()
+        self.assertFalse(_sync_typeform_planned_quote_line_quantities([second,first],calendar_snapshot=snapshot))
+        hydrated = _calendar_snapshot_with_line_recommendation_keys(None,snapshot,lines=[second,first])
+        self.assertEqual(hydrated['blocks'][0]['recommendation_key'],old_key)
+        self.assertEqual({id(l):len(s) for l,s,_ in resolve_line_sessions([first,second],hydrated)}, {id(first):32,id(second):31})
+
+    def test_explicit_line_key_overrides_automatic_tag(self):
+        first,second,snapshot,old_key = self.kenza()
+        first.meta.update(recommendation_key=old_key,typeform_automatic_line="legacy-primary")
+        _sync_typeform_planned_quote_line_quantities([first,second],calendar_snapshot=snapshot)
+        self.assertEqual(first.quantity,32)
+
+    def test_unknown_explicit_key_blocks_instead_of_falling_back(self):
+        first,second,snapshot,_ = self.kenza()
+        first.meta['recommendation_key']='missing-group'
+        with self.assertRaises(HTTPException) as error:
+            _sync_typeform_planned_quote_line_quantities([first,second],calendar_snapshot=snapshot)
+        self.assertEqual(error.exception.status_code,409)
+        self.assertEqual(first.quantity,63)
+        self.assertEqual(second.meta.get('recommendation_key'),None)
+
+    def test_two_unmatched_lines_never_use_order_or_price_to_guess(self):
+        first,second,snapshot,_ = self.kenza()
+        second.meta.pop('typeform_automatic_line')
+        with self.assertRaises(HTTPException):
+            _sync_typeform_planned_quote_line_quantities([first,second],calendar_snapshot=snapshot)
+        self.assertEqual(first.quantity,63)
+
+    def test_same_group_cannot_pay_two_lines(self):
+        first,second,snapshot,old_key = self.kenza()
+        first.meta['recommendation_key']=old_key
+        second.meta['recommendation_key']=old_key
+        with self.assertRaises(HTTPException):
+            _sync_typeform_planned_quote_line_quantities([first,second],calendar_snapshot=snapshot)
+
+    def test_generic_group_is_not_activity_aggregate_when_second_group_exists(self):
+        first,second,snapshot,old_key = self.kenza()
+        for session in snapshot['sessions']:
+            if session['recommendation_key']==old_key:
+                session['recommendation_key']=str(first.activity_id)
+        _sync_typeform_planned_quote_line_quantities([first,second],calendar_snapshot=snapshot)
+        self.assertEqual(first.quantity,32)
+
+    def test_manual_second_course_is_not_modified_or_absorbed(self):
+        first,second,snapshot,_ = self.kenza()
+        second.meta['typeform_planned_quantity_applied']=False
+        second.quantity=Decimal(25)
+        _sync_typeform_planned_quote_line_quantities([first,second],calendar_snapshot=snapshot)
+        self.assertEqual((first.quantity,second.quantity),(Decimal(32),Decimal(25)))
+
+    def test_single_legacy_line_can_cover_multiple_groups(self):
+        first,_,snapshot,_ = self.kenza()
+        _sync_typeform_planned_quote_line_quantities([first],calendar_snapshot=snapshot)
+        self.assertEqual(first.quantity,63)
+
     def test_realigns_intake_line_to_final_planning_count(self) -> None:
         activity_id = uuid4()
         line = _line(
