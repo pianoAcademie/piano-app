@@ -43,6 +43,8 @@ from app.schemas.admin import (
     AdminCollaboratorMessageOut,
     AdminCollaboratorMessageRequest,
     AdminCollaboratorSendPasswordOut,
+    AdminCollaboratorDailyScheduleRequest,
+    AdminCollaboratorDailyScheduleOut,
     AdminProfessorContractDeleteOut,
     AdminProfessorContractOut,
     AdminProfessorCreateRequest,
@@ -77,6 +79,7 @@ from app.services.messaging_templates import (
     resolve_sender_profile,
 )
 from app.services.email_delivery import send_email
+from app.services.professor_daily_digest_manual import send_manual_daily_schedule
 from app.services.professor_permissions import (
     DEFAULT_PROFESSOR_PERMISSIONS,
     PERMISSION_FIELDS,
@@ -1203,6 +1206,17 @@ def get_collaborator(
     linked_user = _find_user_by_email(db, professor.email)
     permission_row = db.scalar(select(ProfessorPermission).where(ProfessorPermission.professor_id == professor_id))
     return _to_detail(professor, linked_user=linked_user, permission_row=permission_row, legacy_permissions_if_missing=True)
+
+
+@router.post("/{professor_id}/send-daily-schedule", response_model=AdminCollaboratorDailyScheduleOut)
+def send_collaborator_daily_schedule(
+    professor_id: UUID,
+    payload: AdminCollaboratorDailyScheduleRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminCollaboratorDailyScheduleOut:
+    professor = _load_professor_or_404(db, professor_id, lock=True)
+    return send_manual_daily_schedule(db, professor=professor, actor=actor, payload=payload, now=_utcnow())
 
 
 @router.post("/{professor_id}/send-password", response_model=AdminCollaboratorSendPasswordOut)

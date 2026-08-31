@@ -2240,6 +2240,20 @@ class AdminCollaboratorSendPasswordOut(BaseModel):
     expires_at: datetime
 
 
+class AdminCollaboratorDailyScheduleRequest(BaseModel):
+    confirmed: Literal[True]
+    request_id: UUID
+    digest_date: date
+    recipient: str = Field(min_length=3, max_length=320)
+
+
+class AdminCollaboratorDailyScheduleOut(BaseModel):
+    status: Literal["sent", "already_sent", "no_courses"]
+    digest_date: date
+    recipient: str
+    message_id: str | None = None
+
+
 class AdminProfessorRateOut(BaseModel):
     id: UUID
     course_type_id: UUID | None

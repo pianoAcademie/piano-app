@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import AdminProfessorPayrollEditor from "../../../../components/admin-professor-payroll-editor";
+import CollaboratorDailyScheduleForm from "../../../../components/collaborator-daily-schedule-form";
 import {
   adminViewTeacherPortalAction,
   deleteAdminCollaboratorContractAction,
@@ -683,6 +684,16 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
             ) : null}
           </article>
 
+          {canManageCollaborators ? (
+            <CollaboratorDailyScheduleForm
+              professorId={professor.id}
+              email={professor.email}
+              active={professor.active}
+              returnTo={tabHref(professor.id, "profil")}
+              language={language}
+            />
+          ) : null}
+
           {isEditProfileOpen && canManageCollaborators ? (
             <section className="modal-overlay" role="dialog" aria-modal="true" aria-label={t("admin.professor_detail.edit_dialog_aria")}>
               <section className="modal-panel professor-profile-modal">
@@ -1319,6 +1330,16 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
             <h3>{t("admin.professor_detail.schedule_title")}</h3>
             <span className="badge">{agendaRange.title}</span>
           </div>
+
+          {canManageCollaborators ? (
+            <CollaboratorDailyScheduleForm
+              professorId={professor.id}
+              email={professor.email}
+              active={professor.active}
+              returnTo={`${tabHref(professor.id, "planning")}&agenda_view=${agendaView}&agenda_date=${agendaDate}`}
+              language={language}
+            />
+          ) : null}
 
           <form method="get" className="grid cols-4">
             <input type="hidden" name="tab" value="planning" />

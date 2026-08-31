@@ -8571,6 +8571,39 @@ export async function updateAdminCollaboratorProfileAction(formData: FormData): 
   redirect(appendQueryMessage(`/admin/professors/${professorId}?tab=${returnTab}`, "ok", t("admin.professor_action.profile_updated")));
 }
 
+export async function sendAdminCollaboratorDailyScheduleAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) redirect("/login?error_code=session_expired");
+  const language = await ensureAdminAndGetLanguage(token);
+  const professorId = String(formData.get("professor_id") ?? "").trim();
+  if (!professorId) redirect("/admin/professors");
+  const returnTo = safeAdminReturnPath(formData, `/admin/professors/${professorId}`);
+  const result = await backendRequest<{
+    status: "sent" | "already_sent" | "no_courses";
+    digest_date: string;
+    recipient: string;
+    message_id: string | null;
+  }>(`/api/v1/admin/collaborators/${professorId}/send-daily-schedule`, {
+    method: "POST",
+    body: JSON.stringify({
+      confirmed: formData.get("confirmed") === "true",
+      request_id: String(formData.get("request_id") ?? ""),
+      digest_date: String(formData.get("digest_date") ?? ""),
+      recipient: String(formData.get("recipient") ?? ""),
+    }),
+  }, token);
+  if (!result.ok) redirect(appendQueryMessage(returnTo, "error", result.message));
+  revalidatePath(`/admin/professors/${professorId}`);
+  revalidatePath("/admin/communications");
+  const en = language === "en";
+  const message = result.data.status === "no_courses"
+    ? (en ? "No classes today (Paris time). No email sent." : "Aucun cours aujourd’hui (heure de Paris). Aucun email envoyé.")
+    : result.data.status === "already_sent"
+      ? (en ? "This request has already been sent. No duplicate email sent." : "Cette demande a déjà été envoyée. Aucun doublon envoyé.")
+      : (en ? `Today's schedule has been sent to ${result.data.recipient}.` : `Le planning du jour a été envoyé à ${result.data.recipient}.`);
+  redirect(appendQueryMessage(returnTo, "ok", message));
+}
+
 export async function sendAdminCollaboratorPasswordLinkAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
