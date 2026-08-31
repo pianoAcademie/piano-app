@@ -298,6 +298,7 @@ export async function loadLivePlanningMatchForBlock({
     series_key: seriesKey || null,
     start_date: first.local.date,
     end_date: last.local.date,
+    sessions_count: limited.length,
     source: "live_planning",
   };
 

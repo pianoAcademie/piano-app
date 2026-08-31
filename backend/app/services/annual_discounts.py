@@ -54,7 +54,7 @@ def annual_discount_price(*, base: Decimal, eligibility: AnnualEligibility, vat_
                 components.append(PricingComponent("FAMILY", "Remise famille adolescent", Decimal("-2")))
         elif e.site == "BAR_LE_DUC" and e.family and not e.second_course:
             components.append(PricingComponent("FAMILY", "Remise famille Bar-le-Duc", Decimal("-2")))
-    elif eligible and e.site == "PARIS" and e.activity_family == "MUSICAL_AWAKENING" and e.family and not e.second_course:
+    elif eligible and e.site == "PARIS" and e.activity_family == "MUSICAL_AWAKENING" and e.audience == "CHILD" and e.family and not e.second_course:
         components.append(PricingComponent("FAMILY", "Remise famille éveil musical", Decimal("-2")))
     net = base + sum((c.amount_ttc for c in components), Decimal("0"))
     if net < 0:

@@ -738,6 +738,7 @@ type LivePlanningSeriesOption = {
   start_time: string;
   end_time: string;
   sessions_count: number;
+  session_dates: string[];
   planning_session_limit: number | null;
   modality: string | null;
   label: string;
@@ -1075,52 +1076,10 @@ function quoteLinePlanningLimit(line: QuoteLineOut): number {
   const template = readObject(meta.typeform_template) || {};
   const explicit = positiveInt(meta.planning_session_limit)
     || positiveInt(template.planning_session_limit);
-  if (explicit > 0) {
-    return explicit;
-  }
-  if (String(line.pricing_unit || "").trim().toLowerCase() !== "session") {
-    return 0;
-  }
-  const quantity = Number(line.quantity);
-  return Number.isInteger(quantity) && quantity > 1 ? quantity : 0;
-}
-
-function inferUniqueActivityPlanningLimit(activityId: string, lines: QuoteLineOut[]): number {
-  const candidates = lines
-    .filter((line) => String(line.line_category || "").toLowerCase() === "service")
-    .filter((line) => String(line.line_type || "").toLowerCase() === "item")
-    .filter((line) => String(line.activity_id || "") === activityId)
-    .map(quoteLinePlanningLimit)
-    .filter((limit) => limit > 0);
-  const unique = Array.from(new Set(candidates));
-  return unique.length === 1 ? unique[0] : 0;
-}
-
-function matchingPlanningBlockStartDate({
-  snapshot,
-  activityId,
-  locationId,
-  weekday,
-  startTime,
-  endTime,
-}: {
-  snapshot: Record<string, unknown>;
-  activityId: string;
-  locationId: string;
-  weekday: number;
-  startTime: string;
-  endTime: string;
-}): string | null {
-  const candidates = getPlanningBlocks(snapshot)
-    .filter((block) => String(block.activity_id ?? "").trim() === activityId)
-    .filter((block) => String(block.location_id ?? "").trim() === locationId)
-    .filter((block) => Number.parseInt(String(block.weekday ?? ""), 10) === weekday)
-    .filter((block) => String(block.start_time ?? "").trim() === startTime)
-    .filter((block) => String(block.end_time ?? "").trim() === endTime)
-    .map((block) => String(block.start_date ?? "").trim())
-    .filter((value) => /^\d{4}-\d{2}-\d{2}$/.test(value));
-  const unique = Array.from(new Set(candidates));
-  return unique.length === 1 ? unique[0] : null;
+  // A billed quantity is an output, not a planning constraint. In particular,
+  // 31 Saturday lessons must not cap another block of the same activity at 31.
+  // Only deliberately configured pack/template limits constrain a block.
+  return explicit > 0 ? explicit : 0;
 }
 
 function dateOnly(value: string): Date | null {
@@ -1241,16 +1200,12 @@ async function loadLivePlanningSeriesOptions({
   token,
   schoolYearLabel,
   activities,
-  lines,
-  planningSnapshot,
   calendarPresets,
   language,
 }: {
   token: string;
   schoolYearLabel: string | null;
   activities: AdminActivityOut[];
-  lines: QuoteLineOut[];
-  planningSnapshot: Record<string, unknown>;
   calendarPresets: PlanningCalendarPreset[];
   language: UiLanguage;
 }): Promise<LivePlanningSeriesOption[]> {
@@ -1340,32 +1295,13 @@ async function loadLivePlanningSeriesOptions({
     if (!firstCapped || !lastCapped) {
       continue;
     }
-    const planningSessionLimit = inferUniqueActivityPlanningLimit(session.course_type_id, lines);
-    const existingBlockStartDate = matchingPlanningBlockStartDate({
-      snapshot: planningSnapshot,
-      activityId: session.course_type_id,
-      locationId: session.location_id,
-      weekday: firstCapped.local.weekday,
-      startTime: firstCapped.local.start_time,
-      endTime: firstCapped.local.end_time,
-    });
-    const planningStartDate = existingBlockStartDate
-      && existingBlockStartDate >= firstCapped.local.date
-      && existingBlockStartDate <= seriesTeachingEndDate
-      ? existingBlockStartDate
-      : firstCapped.local.date;
-    const expectedDates = planningSessionLimit > 0
-      ? expectedWeeklyDates({
-        startDate: planningStartDate,
-        endDate: seriesTeachingEndDate,
-        weekday: firstCapped.local.weekday,
-        excludedDates,
-        limit: planningSessionLimit,
-      })
-      : cappedFilteredRows.map((row) => row.local.date);
-    const startDate = expectedDates[0] ?? firstCapped.local.date;
-    const endDate = expectedDates[expectedDates.length - 1] ?? lastCapped.local.date;
-    const sessionsCount = expectedDates.length || cappedFilteredRows.length;
+    // The slot catalogue describes actual scheduled occurrences, independently
+    // of the quote's existing lines or blocks. Never synthesize missing lessons
+    // or truncate a series to a billed quantity. Intentional custom periods and
+    // pack limits belong to the selected block, not this shared catalogue.
+    const startDate = firstCapped.local.date;
+    const endDate = lastCapped.local.date;
+    const sessionsCount = cappedFilteredRows.length;
     const weekdayText = uiText(language, QUOTE_PLANNING_WEEKDAY_KEYS[firstCapped.local.weekday] || "admin.quote_planning.weekday_unset");
     const period = `${formatDateForLivePlanningLabel(startDate)} -> ${formatDateForLivePlanningLabel(endDate)}`;
     const sessionsText = uiText(language, "admin.quote_planning.live_slot_sessions", { count: sessionsCount });
@@ -1393,7 +1329,8 @@ async function loadLivePlanningSeriesOptions({
       start_time: firstCapped.local.start_time,
       end_time: firstCapped.local.end_time,
       sessions_count: sessionsCount,
-      planning_session_limit: planningSessionLimit > 0 ? planningSessionLimit : null,
+      session_dates: cappedFilteredRows.map((row) => row.local.date),
+      planning_session_limit: null,
       modality,
       label: `${weekdayText} ${firstCapped.local.start_time}-${firstCapped.local.end_time} · ${period} · ${sessionsText}`,
     });
@@ -2345,8 +2282,6 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
       token,
       schoolYearLabel: planningEditorSchoolYearLabel,
       activities,
-      lines: detail.lines,
-      planningSnapshot: planningSnapshotForEditor,
       calendarPresets: planningCalendarPresets,
       language,
     })

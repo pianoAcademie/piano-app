@@ -90,6 +90,7 @@ type LivePlanningSeriesOption = {
   start_time: string;
   end_time: string;
   sessions_count: number;
+  session_dates: string[];
   planning_session_limit: number | null;
   modality: string | null;
   label: string;
@@ -804,6 +805,9 @@ function normalizePlanningBlockWithActivity(
 function editablePlanningBlockChanged(current: PlanningBlock, next: PlanningBlock): boolean {
   return current.activity_id !== next.activity_id
     || current.location_id !== next.location_id
+    || current.series_key !== next.series_key
+    || current.planning_session_limit !== next.planning_session_limit
+    || current.sessions_count !== next.sessions_count
     || current.weekday !== next.weekday
     || current.recurrence_frequency !== next.recurrence_frequency
     || current.start_date !== next.start_date
@@ -813,6 +817,46 @@ function editablePlanningBlockChanged(current: PlanningBlock, next: PlanningBloc
     || current.start_time !== next.start_time
     || current.end_time !== next.end_time
     || current.modality !== next.modality;
+}
+
+function selectedLivePlanningOptionKey(block: PlanningBlock, options: LivePlanningSeriesOption[]): string {
+  if (block.custom_period || block.forced_planning || block.recurrence_frequency !== "weekly") {
+    return "";
+  }
+  // A matching hour/recurrence ID is not enough: an older truncated block may
+  // still have the same identity. Leave it unselected until the user chooses
+  // the full slot; opening a saved quote must never silently extend its period.
+  return options.find((option) => (
+    option.activity_id === block.activity_id
+    && option.location_id === block.location_id
+    && option.start_time === block.start_time
+    && option.end_time === block.end_time
+    && option.start_date === block.start_date
+    && option.end_date === block.end_date
+    && option.weekday === block.weekday
+    && (option.planning_session_limit || 0) === planningSessionLimit(block)
+  ))?.key ?? "";
+}
+
+function displayedPlanningSessionDates(
+  block: PlanningBlock,
+  snapshotSessions: SnapshotSession[],
+  liveOptions: LivePlanningSeriesOption[],
+): string[] {
+  if ((!block.saved || block.dirty) && block.source === "live_planning") {
+    const selectedKey = selectedLivePlanningOptionKey(block, liveOptions);
+    const selected = liveOptions.find((option) => option.key === selectedKey);
+    if (selected) {
+      // The draft follows the explicitly selected live slot, not the old saved
+      // snapshot or a theoretical recurrence that could recreate cancellations.
+      return uniqueSortedDateList(selected.session_dates);
+    }
+  }
+  const calculatedDates = datesFromSnapshotSessions(block, snapshotSessions);
+  const targetSessionLimit = block.custom_period ? 0 : planningSessionLimit(block);
+  return calculatedDates.length > 0 && (targetSessionLimit <= 0 || calculatedDates.length >= targetSessionLimit)
+    ? calculatedDates
+    : estimateSessionDates(block);
 }
 
 export default function QuotePlanningEditor({
@@ -1019,7 +1063,9 @@ export default function QuotePlanningEditor({
       series_key: option.series_key,
       source: "live_planning",
       sessions_count: option.sessions_count,
-      planning_session_limit: option.planning_session_limit ?? block.planning_session_limit,
+      // Selecting a complete live slot also replaces any old inferred cap.
+      // Null means unbounded, not "keep the previous block's quantity".
+      planning_session_limit: option.planning_session_limit,
       custom_period: false,
       forced_planning: false,
       weekday: option.weekday,
@@ -1282,13 +1328,7 @@ export default function QuotePlanningEditor({
               const activity = activities.find((item) => item.id === block.activity_id);
               const locationLabel = locations.find((item) => item.id === block.location_id)?.name || t("admin.quote_detail.location_not_defined");
               const selectionPending = block.weekday === WEEKDAY_UNSET;
-              const calculatedDates = datesFromSnapshotSessions(block, snapshotSessions);
-              const targetSessionLimit = block.custom_period ? 0 : planningSessionLimit(block);
-              const theoreticalDates = estimateSessionDates(block);
-              const estimatedDates =
-                calculatedDates.length > 0 && (targetSessionLimit <= 0 || calculatedDates.length >= targetSessionLimit)
-                  ? calculatedDates
-                  : theoreticalDates;
+              const estimatedDates = displayedPlanningSessionDates(block, snapshotSessions, matchingLiveSeriesOptions(block));
               const displayStartDate = estimatedDates[0] || block.start_date || "-";
               const displayEndDate = estimatedDates[estimatedDates.length - 1] || block.end_date || "-";
               const semester1 = summarizeBySemester(estimatedDates, 1, language);
@@ -1446,10 +1486,7 @@ export default function QuotePlanningEditor({
               const pendingSlotOptions =
                 selectionPending && blockSolfegeLevel ? slotOptionsFromRule(blockSolfegeRule, locationLabel, language) : [];
               const liveOptions = matchingLiveSeriesOptions(editorBlock);
-              const selectedLiveOptionKey =
-                liveOptions.find((option) => option.series_key === editorBlock.series_key)?.key
-                ?? liveOptions.find((option) => option.start_time === editorBlock.start_time && option.end_time === editorBlock.end_time)?.key
-                ?? "";
+              const selectedLiveOptionKey = selectedLivePlanningOptionKey(editorBlock, liveOptions);
               return (
                 <article className="quote-line-card quote-line-card-modal">
                   <div className="row spread wrap gap-sm">
@@ -1563,6 +1600,9 @@ export default function QuotePlanningEditor({
                           }}
                           disabled={!editable || selectionPending}
                         >
+                          {!selectedLiveOptionKey ? (
+                            <option value="">{t("admin.quote_planning.live_slot_choose")}</option>
+                          ) : null}
                           {liveOptions.map((option) => (
                             <option key={option.key} value={option.key}>
                               {option.label}

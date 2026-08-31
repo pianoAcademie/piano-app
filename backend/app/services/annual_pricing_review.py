@@ -8,26 +8,28 @@ from uuid import UUID, uuid4
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
 from typing import Literal
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from app.models.annual_pricing import AnnualFamilyReference, AnnualStudentEnrollment
-from app.services.annual_enrollment import enrollment_context, resolve_enrollment
+from app.services.annual_enrollment import resolve_enrollment
 from app.models.catalog import CourseType, Location
-from app.models.family import ClientFamilyLink
 from app.models.plan import ClientPlanSubscription, Plan, PlanKind, SubscriptionStatus
-from app.models.quote import Quote, QuoteLine, QuoteType
-from app.models.user import User, ClientKind
+from app.models.quote import Quote, QuoteLine, QuoteType, Prospect
 from app.services.annual_discounts import AnnualEligibility, annual_discount_price, POLICY_VERSION
 from app.services.client_pricing import build_price_version, split_tax
 from app.services.pricing_catalog import resolve_catalog_activity_price
+from app.services.annual_pricing_students import (
+    quote_students, family_members, identity, canonical_id, is_child, birth_date,
+    student_enrollment, save_enrollment, family_reference, save_family_reference,
+    lock_family, identity_evidence,
+)
 
 KEY = "annual_pricing_review"
 
 
 class AnnualReviewRequest(BaseModel):
     student_id: UUID
-    audience: Literal["CHILD", "TEEN"]
+    audience: Literal["CHILD", "TEEN", "ADULT"]
     primary_line_id: UUID | None = None
     primary_contract_course_key: str | None = None
     family_reference_child_id: UUID | None = None
@@ -62,32 +64,6 @@ def quote_fingerprint(quote, lines):
         } for l in sorted(lines, key=lambda row: str(row.id))])
 
 
-def family_members(db, student_id):
-    """Connected family graph: both guardians share one reference, never separate discounts."""
-    children, adults = {student_id}, set()
-    while True:
-        old = (len(children), len(adults))
-        adults.update(db.scalars(select(ClientFamilyLink.adult_user_id).where(ClientFamilyLink.child_user_id.in_(children))).all())
-        if adults:
-            children.update(db.scalars(select(ClientFamilyLink.child_user_id).where(ClientFamilyLink.adult_user_id.in_(adults))).all())
-        if old == (len(children), len(adults)):
-            break
-    return children, adults
-
-
-def quote_students(db, quote):
-    from app.models.quote import Prospect
-    client_id = quote.client_id
-    if not client_id and quote.prospect_id:
-        prospect = db.get(Prospect, quote.prospect_id)
-        client_id = prospect.linked_client_id if prospect else None
-    if not client_id:
-        return []
-    ids = {client_id}
-    ids.update(db.scalars(select(ClientFamilyLink.child_user_id).where(ClientFamilyLink.adult_user_id == client_id)).all())
-    return db.scalars(select(User).where(User.id.in_(ids), User.client_kind == ClientKind.CHILD).order_by(User.last_name, User.first_name)).all()
-
-
 def is_annual_quote(db, quote):
     quote_type = db.get(QuoteType, quote.quote_type_id) if quote.quote_type_id else None
     if quote_type and quote_type.formula_id:
@@ -98,14 +74,29 @@ def is_annual_quote(db, quote):
 
 
 def activity_family(activity):
+    if not activity:
+        return None
     label = normalized(activity.name)
     if any(word in label for word in ("essai", "trial", "solfege", "masterclass")):
         return None
     if "eveil" in label:
         return "MUSICAL_AWAKENING"
-    if "collectif" in label and "ligne" not in label:
+    if ("collectif" in label or "initiation au piano" in label) and "ligne" not in label:
         return "COLLECTIVE_ONSITE"
     return None
+
+
+def activity_audiences(activity):
+    label = normalized(activity.name)
+    if any(word in label for word in ("eveil", "initiation", "enfant")):
+        return {"CHILD"}
+    if "ado" in label and "adult" in label:
+        return {"TEEN", "ADULT"}
+    if "ado" in label:
+        return {"TEEN"}
+    if "adult" in label:
+        return {"ADULT"}
+    return {"CHILD", "TEEN", "ADULT"}
 
 
 def reviewed_lines(db, quote, lines):
@@ -129,14 +120,20 @@ def check_review_current(db, quote, lines):
     # Sent documents keep their decision even if the family graph later changes.
     if quote.sent_at:
         return
+    student = next((s for s in quote_students(db, quote) if str(s.id) == review["student_id"]), None)
+    if student is None:
+        fail("Le rattachement de l'élève a changé : revérifiez la décision tarifaire.")
+    if review.get("identity_evidence"):
+        _, guardians = family_members(db, student.id)
+        if identity_evidence(db, student, guardians) != review["identity_evidence"]:
+            fail("La fiche élève ou ses liens familiaux ont changé : revérifiez les remises.")
     if "enrollment" in review:
-        saved = db.get(AnnualStudentEnrollment, (UUID(review["student_id"]), quote.school_year_label))
-        status = saved.status if saved else "AUTO"
+        status = student_enrollment(db, student.id, quote.school_year_label)["status"]
         if status != review["enrollment"]["status"]:
             fail("La réinscription de cet élève a changé. Revérifiez les remises dans Lignes facturées avant envoi.")
     for guardian_id in review.get("guardian_ids", []):
-        reference = db.get(AnnualFamilyReference, (UUID(guardian_id), quote.school_year_label))
-        if not reference or str(reference.child_id) != review.get("family_reference_child_id"):
+        reference = family_reference(db, UUID(guardian_id), quote.school_year_label)
+        if not reference or canonical_id(db, reference.child_id) != canonical_id(db, review.get("family_reference_child_id")):
             fail("L'enfant de référence de la famille a changé : vérifiez de nouveau les remises.")
     reference_id = review.get("family_reference_child_id")
     if reference_id and reference_id != review.get("student_id"):
@@ -145,6 +142,10 @@ def check_review_current(db, quote, lines):
 
 
 def reference_has_engagement(db, quote, reference_id):
+    reference_id = canonical_id(db, reference_id)
+    if not reference_id:
+        return False
+    aliases = {reference_id, *db.scalars(select(Prospect.id).where(Prospect.linked_client_id == reference_id)).all()}
     subscription = db.scalar(select(ClientPlanSubscription.id).join(Plan).where(
         ClientPlanSubscription.user_id == reference_id, Plan.kind == PlanKind.FORFAIT,
         ClientPlanSubscription.started_at < datetime(2027, 8, 1, tzinfo=timezone.utc),
@@ -153,8 +154,11 @@ def reference_has_engagement(db, quote, reference_id):
     ).limit(1))
     quotes = db.scalars(select(Quote).where(Quote.school_year_label == quote.school_year_label,
         Quote.total_ttc > 0,
+        or_(Quote.client_id.in_(aliases), Quote.prospect_id.in_(aliases),
+            Quote.meta[KEY]["student_id"].astext.in_([str(i) for i in aliases])),
         Quote.status.in_(["created", "sent", "approved", "accepted"]), Quote.id != quote.id)).all()
-    return bool(subscription or any((q.client_id == reference_id or (q.meta or {}).get(KEY, {}).get("student_id") == str(reference_id)) and is_annual_quote(db, q) for q in quotes))
+    return bool(subscription or any((canonical_id(db, q.client_id or q.prospect_id) == reference_id or
+        canonical_id(db, (q.meta or {}).get(KEY, {}).get("student_id")) == reference_id) and is_annual_quote(db, q) for q in quotes))
 
 
 def prepare_review(db: Session, quote: Quote, lines: list[QuoteLine], request: AnnualReviewRequest):
@@ -168,34 +172,40 @@ def prepare_review(db: Session, quote: Quote, lines: list[QuoteLine], request: A
     candidates = quote_students(db, quote)
     student = next((u for u in candidates if u.id == request.student_id), None)
     if student is None:
-        fail("Rattachez d'abord l'élève au client du devis. Aucun rapprochement par nom n'est effectué.")
+        fail("Sélectionnez l'élève client ou prospect rattaché à ce devis. Aucun rapprochement par nom n'est effectué.")
     # Serialize household choices across distinct quotes and both guardians.
     children, guardians = family_members(db, student.id)
-    db.scalars(select(User).where(User.id.in_({student.id, *guardians})).order_by(User.id).with_for_update()).all()
-    birth = student.birth_date
-    if birth and date(2026, 9, 1).year - birth.year - ((9, 1) < (birth.month, birth.day)) >= 18:
+    lock_family(db, {student.id, *guardians})
+    children, current_guardians = family_members(db, student.id)
+    if guardians != current_guardians or not any(s.id == student.id for s in quote_students(db, quote)):
+        fail("Le rattachement familial a changé pendant le calcul. Rechargez le formulaire.")
+    birth = birth_date(student)
+    adult_age = birth and date(2026, 9, 1).year - birth.year - ((9, 1) < (birth.month, birth.day)) >= 18
+    if request.audience != "ADULT" and (not is_child(student) or adult_age):
         fail("La fiche élève indique un adulte : les remises enfant/adolescent ne peuvent pas être attribuées.")
+    if request.audience == "ADULT" and (is_child(student) and not adult_age or birth and not adult_age):
+        fail("La fiche élève indique un mineur : sélectionnez enfant ou adolescent.")
     reference_id = request.family_reference_child_id
+    if request.audience == "ADULT" and reference_id:
+        fail("Les remises famille enfant/adolescent ne s'appliquent pas aux adultes.")
     if reference_id and (reference_id not in children or not guardians):
         fail("L'enfant de référence doit appartenir à la même famille vérifiée.")
-    references = db.scalars(select(AnnualFamilyReference).where(
-        AnnualFamilyReference.guardian_id.in_(guardians), AnnualFamilyReference.season == quote.school_year_label,
-    ).with_for_update()).all() if guardians else []
-    if references and any(row.child_id != reference_id for row in references):
+    references = [r for g in sorted(guardians, key=str) if (r := family_reference(db, g, quote.school_year_label))]
+    if references and any(canonical_id(db, row.child_id) != reference_id for row in references):
         if not reference_id or not request.replace_family_reference:
             fail("Cette famille possède déjà un enfant de référence. Confirmez explicitement le changement pour les brouillons ou conservez ce choix.")
         sent = db.scalars(select(Quote).where(Quote.school_year_label == quote.school_year_label, Quote.sent_at.is_not(None))).all()
         if any(set((q.meta or {}).get(KEY, {}).get("guardian_ids", [])) & {str(i) for i in guardians} for q in sent):
             fail("Une décision de cette famille a déjà été envoyée : l'enfant de référence est figé pour cette saison. Une révision coordonnée est nécessaire.")
     if reference_id:
-        reference_user = db.get(User, reference_id)
-        if not reference_user or reference_user.client_kind != ClientKind.CHILD:
+        reference_user = identity(db, reference_id)
+        if not reference_user or not is_child(reference_user):
             fail("L'enfant de référence doit être une fiche enfant.")
     family = bool(reference_id and reference_id != student.id)
     if family:
         if not reference_has_engagement(db, quote, reference_id):
             fail("Préparez d'abord le devis annuel de l'enfant de référence (son acceptation n'est pas nécessaire), ou rattachez son contrat annuel. Aucun engagement de cet enfant n'a été retrouvé.")
-    enrollment_before = enrollment_context(db, student.id, quote.school_year_label)
+    enrollment_before = student_enrollment(db, student.id, quote.school_year_label)
     try:
         enrollment = resolve_enrollment(enrollment_before, request.enrollment_status, request.enrollment_note)
     except ValueError as exc:
@@ -213,6 +223,9 @@ def prepare_review(db: Session, quote: Quote, lines: list[QuoteLine], request: A
             fail("Le cours principal doit être un cours annuel vérifié du même élève, sans double sélection.")
     if not entries or (not external_primary and request.primary_line_id not in {line.id for line, _, _ in entries}):
         fail("Choisissez le premier cours annuel parmi les activités éligibles du devis.")
+    for _, activity, _ in entries:
+        if request.audience not in activity_audiences(activity):
+            fail(f"La catégorie sélectionnée ne correspond pas à {activity.name}. Vérifiez enfant, adolescent ou adulte.")
     primary_family = activity_family(db.get(CourseType, UUID(external_primary["activity_id"]))) if external_primary else next(item[2] for item in entries if item[0].id == request.primary_line_id)
     if (len(entries) > 1 or external_primary) and primary_family != "COLLECTIVE_ONSITE":
         fail("Le premier cours doit être un cours collectif en présentiel pour attribuer une remise deuxième cours.")
@@ -238,11 +251,9 @@ def prepare_review(db: Session, quote: Quote, lines: list[QuoteLine], request: A
         if not location or location.is_online:
             fail("Les remises collectives concernent les cours en présentiel.")
         site = "BAR_LE_DUC" if location.code == "BAR_LE_DUC" else "PARIS" if normalized(location.city) == "paris" and location.code != "DOMICILE" else "OTHER"
-        if "ado" in normalized(activity.name) and request.audience != "TEEN":
-            fail("Cette activité est destinée aux adolescents : sélectionnez le profil adolescent.")
         duration = Decimal(line.duration_minutes or activity.duration_minutes) / 60
         catalog = resolve_catalog_activity_price(db, activity_id=activity.id, location_id=location.id,
-            student_category="CHILD", channel="ANNUAL_FORFAIT", catalog_id=quote.pricing_catalog_id,
+            student_category="ADULT" if request.audience == "ADULT" else "CHILD", channel="ANNUAL_FORFAIT", catalog_id=quote.pricing_catalog_id,
             at=datetime(2026, 9, 1, tzinfo=timezone.utc))
         if not catalog:
             fail(f"Tarif annuel publié manquant pour {activity.name} à {location.name}. Complétez la grille avant calcul.")
@@ -268,8 +279,9 @@ def prepare_review(db: Session, quote: Quote, lines: list[QuoteLine], request: A
     for decision in decisions:
         decision["course_key"] = str((next(l for l in lines if str(l.id) == decision["line_id"]).meta or {}).get("annual_course_key") or decision["line_id"])
     stable_decisions = [{**d, "pricing": {k: v for k, v in d["pricing"].items() if k != "calculated_at"}} for d in decisions]
+    evidence = identity_evidence(db, student, guardians)
     preview_version = build_price_version("annual-review-preview", quote=version, request=request.model_dump(exclude={"expected_version"}), decisions=stable_decisions,
-        references=[str(r.child_id) for r in references], enrollment=enrollment, enrollment_before=enrollment_before)
+        references=[str(r.child_id) for r in references], enrollment=enrollment, enrollment_before=enrollment_before, identity=evidence)
     retained = [l for l in lines if keep_manual or (not (l.meta or {}).get("annual_auto_discount") and l not in legacy)]
     total = sum((Decimal(l.amount_ttc) for l in retained), Decimal("0"))
     for decision in decisions:
@@ -286,6 +298,7 @@ def prepare_review(db: Session, quote: Quote, lines: list[QuoteLine], request: A
                 "total": str(Decimal(str(component["amount_ttc"])) * Decimal(decision["quantity"]))})
     return {"version": preview_version, "previous_total": str(quote.total_ttc), "total": str(total.quantize(Decimal("0.01"))),
         "decisions": decisions, "returning_verified": enrollment["returning"], "family": family,
+        "student_kind": "PROSPECT" if isinstance(student, Prospect) else "CLIENT", "identity_evidence": evidence,
         "enrollment": enrollment, "display_lines": display_lines, "keep_manual": keep_manual,
         "replaced_discounts": [display_line(l) for l in legacy] if not keep_manual else [],
         "guardian_ids": sorted(str(i) for i in guardians) if reference_id else [], "policy": POLICY_VERSION}
@@ -321,22 +334,12 @@ def apply_review(db, quote, lines, request, actor):
                 amount_ht=ht, amount_vat=tax, amount_ttc=total, sort_order=line.sort_order + 1,
                 meta={"annual_auto_discount": True, "target_course_key": entry["course_key"], "discount_kind": component["code"].lower()}))
     for guardian in preview["guardian_ids"]:
-        ref = db.get(AnnualFamilyReference, (UUID(guardian), quote.school_year_label))
-        if not ref:
-            db.add(AnnualFamilyReference(guardian_id=UUID(guardian), season=quote.school_year_label,
-                child_id=request.family_reference_child_id, evidence={"quote_id": str(quote.id), "actor_id": str(actor.id), "note": request.review_note}))
-        elif ref.child_id != request.family_reference_child_id:
-            ref.child_id = request.family_reference_child_id
-            ref.evidence = {"quote_id": str(quote.id), "actor_id": str(actor.id), "note": request.review_note}
+        save_family_reference(db, UUID(guardian), request.family_reference_child_id, quote.school_year_label,
+            {"quote_id": str(quote.id), "actor_id": str(actor.id), "note": request.review_note})
     evidence = {"actor_id": str(actor.id), "actor_name": f"{actor.first_name or ''} {actor.last_name or ''}".strip() or actor.email,
                 "verified_at": datetime.now(timezone.utc).isoformat(), "quote_id": str(quote.id), "note": preview["enrollment"]["note"]}
     if preview["enrollment"]["status"] != "AUTO":
-        saved = db.get(AnnualStudentEnrollment, (request.student_id, quote.school_year_label))
-        if not saved:
-            saved = AnnualStudentEnrollment(student_id=request.student_id, season=quote.school_year_label)
-        saved.status = preview["enrollment"]["status"]
-        saved.evidence = evidence
-        db.add(saved)
+        save_enrollment(db, request.student_id, quote.school_year_label, preview["enrollment"]["status"], evidence)
     quote.total_ttc = Decimal(preview["total"])
     db.flush()
     updated_lines = db.scalars(select(QuoteLine).where(QuoteLine.quote_id == quote.id).order_by(QuoteLine.sort_order, QuoteLine.created_at)).all()
