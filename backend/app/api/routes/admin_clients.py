@@ -3465,6 +3465,11 @@ def _normalize_invoice_range_metadata(payload: dict[str, object]) -> dict[str, o
             normalized[field] = value
 
     status_value = str(payload.get("invoice_status") or "ISSUED").strip().upper()
+    # Server-owned payment requests must survive every invoice note round-trip.
+    # Never rebuild them from the last PSP reference or from the invoice balance.
+    partial_requests = payload.get("partial_payment_requests")
+    if isinstance(partial_requests, list):
+        normalized["partial_payment_requests"] = partial_requests
     normalized["invoice_status"] = status_value if status_value in INVOICE_RANGE_STATUSES else "ISSUED"
 
     included_payment_keys = _normalize_invoice_range_payment_keys(payload.get("included_payment_keys"))
@@ -10960,6 +10965,7 @@ def create_admin_client_manual_transaction(
     marked_reconciled_invoices_paid = bool(
         can_mark_reconciled_invoices_paid and (payload.mark_reconciled_invoices_paid or auto_mark_reconciled_invoices_paid)
     )
+    paid_reconciled_note_ids: set[UUID] = set()
     if reconciled_invoices:
         payment_id = str(row.id)
         for note, metadata, _, _ in reconciled_invoices:
@@ -10975,11 +10981,25 @@ def create_admin_client_manual_transaction(
                 note_created_at=note.created_at,
                 metadata=metadata,
             )
-            if marked_reconciled_invoices_paid:
+            mark_current_invoice_paid = marked_reconciled_invoices_paid
+            if metadata.get("partial_payment_requests") and not metadata.get("family_billing_split_group_id"):
+                # A confirmed partial card payment has already reduced the due
+                # amount: the later cash receipt need only cover that remainder.
+                # Received but uncashed cheques must never close the invoice.
+                remaining = _invoice_range_decimal_map(metadata.get("total_to_pay_by_currency"))
+                _, _, pending_checks = _invoice_range_pending_check_coverage(db, metadata=metadata)
+                mark_current_invoice_paid = bool(
+                    status_value in PAID_PAYMENT_STATUSES
+                    and remaining
+                    and all(value <= Decimal("0.00") for value in remaining.values())
+                    and not pending_checks
+                )
+            if mark_current_invoice_paid:
                 metadata["invoice_status"] = "PAID"
+                paid_reconciled_note_ids.add(note.id)
             note.message = _build_invoice_range_note_message(metadata)
             db.add(note)
-            if marked_reconciled_invoices_paid:
+            if mark_current_invoice_paid:
                 _propagate_paid_deposit_to_issued_long_period_invoice(
                     db,
                     owner_client_id=client.id,
@@ -10988,6 +11008,11 @@ def create_admin_client_manual_transaction(
                     payment_transaction_id=row.id,
                 )
             evaluate_referrals_for_invoice(db, client_id=client.id, note=note, metadata=metadata)
+
+        marked_reconciled_invoices_paid = len(paid_reconciled_note_ids) == len(reconciled_invoices)
+        auto_mark_reconciled_invoices_paid = auto_mark_reconciled_invoices_paid or bool(
+            marked_reconciled_invoices_paid and not payload.mark_reconciled_invoices_paid
+        )
 
     receipt_recipients: list[str] = []
     receipt_message_id: str | None = None
@@ -11133,7 +11158,7 @@ def create_admin_client_manual_transaction(
         if payload.mark_reconciled_invoices_paid or auto_mark_reconciled_invoices_paid:
             if marked_reconciled_invoices_paid:
                 if auto_mark_reconciled_invoices_paid and not payload.mark_reconciled_invoices_paid:
-                    note_message += " Facture(s) marquee(s) comme payee(s) automatiquement (paiement CB en ligne)."
+                    note_message += " Facture(s) marquee(s) comme payee(s) automatiquement (solde intégralement reçu)."
                 else:
                     note_message += " Facture(s) marquee(s) comme payee(s)."
             else:
@@ -12854,6 +12879,8 @@ def split_admin_client_range_invoice_by_family(
     )
     if str(source_metadata.get("invoice_status") or "ISSUED").strip().upper() != "ISSUED":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Seule une facture émise peut être répartie.")
+    from app.services.invoice_partial_payments import assert_no_active_partial_request
+    assert_no_active_partial_request(source_metadata)
     if _normalize_optional(str(source_metadata.get("payment_provider_reference") or "")):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -13083,7 +13110,7 @@ def split_admin_client_range_invoice_by_family(
         for field in list(new_metadata):
             if field.startswith("payment_") or field.startswith("bank_transfer_"):
                 new_metadata.pop(field, None)
-        for field in ("emailed_at", "reminded_at", "paid_at", "applied_payment_lines"):
+        for field in ("emailed_at", "reminded_at", "paid_at", "applied_payment_lines", "partial_payment_requests"):
             new_metadata.pop(field, None)
         allocation = allocation_by_payer[payer_id]
         new_metadata.update(
@@ -13224,6 +13251,7 @@ def create_admin_client_range_invoice_credit_note(
 
     credit_metadata = dict(source_metadata)
     for field in (
+        "partial_payment_requests",
         "emailed_at",
         "reminded_at",
         "paid_at",
@@ -13509,6 +13537,10 @@ def delete_admin_client_range_invoice(
 ) -> Response:
     client = _require_client(db, client_id)
     note, metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=True)
+    from app.services.invoice_partial_payments import assert_no_active_partial_request
+    assert_no_active_partial_request(metadata)
+    if any(row.get("link_sent_to") for row in metadata.get("partial_payment_requests", [])):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Un lien de paiement a déjà été envoyé pour cette facture.")
     if str(metadata.get("document_type") or "INVOICE").strip().upper() == "CREDIT_NOTE":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Un avoir ne peut pas être supprimé")
     if _parse_iso_datetime(metadata.get("emailed_at")) is not None or _parse_iso_datetime(metadata.get("reminded_at")) is not None:
@@ -15106,6 +15138,8 @@ def start_admin_client_range_invoice_public_card_payment(
         note_id=note_id,
         metadata=metadata,
     )
+    from app.services.invoice_partial_payments import assert_no_active_partial_request
+    assert_no_active_partial_request(metadata)
 
     invoice_status = str(metadata.get("invoice_status") or "ISSUED").strip().upper()
     if invoice_status == "CANCELLED":
@@ -15201,6 +15235,8 @@ def start_admin_client_range_invoice_public_bank_transfer(
         note_id=note_id,
         metadata=metadata,
     )
+    from app.services.invoice_partial_payments import assert_no_active_partial_request
+    assert_no_active_partial_request(metadata)
     invoice_status = str(metadata.get("invoice_status") or "ISSUED").strip().upper()
     if invoice_status == "CANCELLED":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Facture annulee")

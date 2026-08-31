@@ -32,6 +32,7 @@ from app.api.routes import (
     mobile_push,
     impersonation,
     payments_public,
+    invoice_partial_payments,
     plans,
     professor_catalog,
     professors,
@@ -77,4 +78,5 @@ api_router.include_router(internal_jobs.router, tags=["internal-jobs"])
 api_router.include_router(notification_webhooks.router, tags=["notification-webhooks"])
 api_router.include_router(mobile_push.router, tags=["mobile-push"])
 api_router.include_router(payments_public.router, tags=["public-payments"])
+api_router.include_router(invoice_partial_payments.router, tags=["invoice-partial-payments"])
 api_router.include_router(impersonation.router, tags=["impersonation"])
