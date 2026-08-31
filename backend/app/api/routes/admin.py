@@ -97,6 +97,7 @@ from app.services.session_teachers import (
     replace_session_professors,
 )
 from app.services.makeup_passes import grant_makeup_for_excused_absence, revoke_pending_makeup_for_corrected_absence
+from app.services.makeup_accounting import makeup_role
 from app.services.session_audience import (
     coerce_session_scope_sets,
     legacy_flags_from_scopes,
@@ -848,6 +849,8 @@ def _move_planning_reorganization_booking_occurrence(
         return False, "Eleve deja sur ce creneau"
     if booking.status not in BOOKING_STATUSES_ACTIVE:
         return False, "Reservation inactive ignoree"
+    if makeup_role(booking) is not None:
+        return False, "Rattrapage lié à une absence : utilisez le suivi Pass Récup de la fiche élève."
     if target_session.status != SessionStatus.SCHEDULED:
         return False, "Creneau cible non planifie"
 
@@ -5762,6 +5765,11 @@ def add_admin_session_booking(
             plan = None
             if selected is not None:
                 subscription, plan = selected
+                from app.services.makeup_passes import is_restricted_annual_forfait
+                if is_restricted_annual_forfait(plan):
+                    skipped_count += 1
+                    add_detail("Pour un Pass Récup, utilisez Programmer ce rattrapage dans la fiche élève, onglet Réservations.")
+                    continue
             elif not force_allowed:
                 skipped_count += 1
                 add_detail("Aucun abonnement actif/credit disponible pour ce client")
@@ -5992,6 +6000,8 @@ def cancel_admin_session_booking(
         target_booking.status = BookingStatus.CANCELLED
         target_booking.cancelled_at = now
         target_booking.cancellation_reason = "ADMIN_REMOVED"
+        from app.services.makeup_booking import release_replacement
+        release_replacement(db, target_booking, now=now)
 
         skip_pending_reminders_for_booking(
             db,

@@ -1103,8 +1103,15 @@ def _resolve_booking_pricing(
     subscription: ClientPlanSubscription | None,
     plan: Plan | None,
     covered_by_manual_credit: bool = False,
+    use_makeup: bool = False,
 ) -> PricingComputation:
     if subscription is not None and plan is not None and plan.kind == PlanKind.FORFAIT:
+        if use_makeup and is_restricted_annual_forfait(plan):
+            request = pending_makeup_request_for_subscription(db, user_id=user.id, subscription_id=subscription.id)
+            if request is not None:
+                from app.services.makeup_booking import validate_target, makeup_price
+                original, _, _ = validate_target(db, request, session_obj, now=now)
+                return makeup_price(original, request, now=now)
         contractual = contract_price_for_session(subscription, session_obj, now=now)
         if contractual is not None:
             return contractual
@@ -1413,7 +1420,7 @@ def _promote_waitlist_if_possible(
                         subscription=eligible_subscription,
                         now=now,
                     )
-                except ValueError:
+                except (ValueError, HTTPException):
                     next_waitlisted.status = BookingStatus.CANCELLED
                     next_waitlisted.cancelled_at = now
                     next_waitlisted.cancellation_reason = "WAITLIST_PROMOTION_NO_MAKEUP_REQUEST"
@@ -1685,6 +1692,7 @@ def _book_session_internal(
         subscription=subscription,
         plan=plan,
         covered_by_manual_credit=manual_credit_type_id is not None,
+        use_makeup=True,
     )
     price, vat_rate, vat_amount, total, currency = pricing.legacy_tuple()
     pricing_fields = booking_snapshot_fields(pricing)

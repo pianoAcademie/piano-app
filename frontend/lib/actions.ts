@@ -13299,6 +13299,25 @@ export async function createQuoteDraftAction(formData: FormData): Promise<void> 
   redirect(withUiMessageCode(detailPath, "ok", "quote_detail_created", { lang: adminLanguage }));
 }
 
+export async function makeupProgrammingAction(studentId: string, requestId: string, operation: "options" | "program", payload: Record<string, string>): Promise<{ ok: true; data: unknown } | { ok: false; message: string }> {
+  const token = currentToken();
+  if (!token) return { ok: false, message: "Session expirée. Reconnectez-vous." };
+  await ensureAdminAndGetLanguage(token);
+  let path = `/api/v1/admin/clients/${encodeURIComponent(studentId)}/makeups/${encodeURIComponent(requestId)}/${operation}`;
+  if (operation === "options") {
+    const start = new Date(`${payload.start}T00:00:00Z`);
+    if (Number.isNaN(start.getTime())) return { ok: false, message: "Date invalide." };
+    const end = new Date(start); end.setUTCDate(end.getUTCDate() + 31);
+    path += `?${new URLSearchParams({ start: start.toISOString(), end: end.toISOString() })}`;
+  }
+  const result = await backendRequest<unknown>(path, operation === "options" ? {} : { method: "POST", body: JSON.stringify({ session_id: payload.session_id, expected_version: payload.expected_version }) }, token);
+  if (!result.ok) return { ok: false, message: result.message };
+  if (operation === "program") {
+    revalidatePath("/admin/clients", "layout"); revalidatePath("/admin/planning"); revalidatePath("/dashboard");
+  }
+  return { ok: true, data: result.data };
+}
+
 export async function annualPricingAction(quoteId: string, operation: "context" | "preview" | "apply", payload?: Record<string, unknown>): Promise<{ ok: true; data: unknown } | { ok: false; message: string }> {
   const token = currentToken();
   if (!token) return { ok: false, message: "Session expirée. Reconnectez-vous." };

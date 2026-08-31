@@ -8,10 +8,11 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models.catalog import Booking, CourseSession
+from app.models.catalog import Booking, CourseSession, Location
 from app.models.makeup import MakeupPassPurchase, MakeupRequest, MakeupRequestStatus
 from app.models.plan import ClientPlanSubscription, Plan, PlanKind, SubscriptionStatus
 from app.models.user import ClientKind, User
+from app.services.makeup_accounting import mark_original, clear_original, makeup_role
 
 RESTRICTED_FORFAIT_NAME = "annee 2026 2027"
 
@@ -64,6 +65,8 @@ def claim_pending_makeup_request(
     )
     if request is None:
         raise ValueError("MAKEUP_REQUEST_REQUIRED")
+    from app.services.makeup_booking import attach_replacement
+    attach_replacement(db, request, booking, now=now)
     request.reserved_booking_id = booking.id
     request.status = MakeupRequestStatus.BOOKED
     request.booked_at = now
@@ -115,6 +118,12 @@ def consume_pass_and_create_makeup(
     actor_user_id: UUID,
     now: datetime,
 ) -> MakeupRequest:
+    if makeup_role(booking) == "replacement":
+        from app.services.makeup_booking import release_replacement
+        request = release_replacement(db, booking, now=now)
+        if request is None:
+            raise ValueError("MAKEUP_REQUEST_REQUIRED")
+        return request
     purchase = db.scalar(
         select(MakeupPassPurchase)
         .where(
@@ -146,6 +155,7 @@ def consume_pass_and_create_makeup(
     db.flush()
     booking.makeup_request_id = request.id
     booking.makeup_credit_consumed = True
+    mark_original(booking, request)
     return request
 
 
@@ -156,6 +166,9 @@ def grant_makeup_for_excused_absence(
     actor_user_id: UUID,
     now: datetime,
 ) -> bool:
+    if makeup_role(booking) == "replacement":
+        from app.services.makeup_booking import release_replacement
+        return release_replacement(db, booking, now=now) is not None
     existing_request = db.scalar(
         select(MakeupRequest.id).where(MakeupRequest.original_booking_id == booking.id).limit(1)
     )
@@ -185,16 +198,20 @@ def revoke_pending_makeup_for_corrected_absence(
     booking: Booking,
     now: datetime,
 ) -> bool:
+    from fastapi import HTTPException
     request = db.scalar(
         select(MakeupRequest)
         .where(
             MakeupRequest.original_booking_id == booking.id,
-            MakeupRequest.status == MakeupRequestStatus.PROPOSED,
         )
         .with_for_update()
         .limit(1)
     )
     if request is None:
+        return False
+    if request.status == MakeupRequestStatus.BOOKED:
+        raise HTTPException(409, "Un rattrapage est déjà réservé pour cette absence. Annulez d'abord le rattrapage avant de corriger la présence.")
+    if request.status != MakeupRequestStatus.PROPOSED:
         return False
     purchase = None
     if request.used_pass_purchase_id is not None:
@@ -211,6 +228,7 @@ def revoke_pending_makeup_for_corrected_absence(
     request.updated_at = now
     booking.makeup_request_id = None
     booking.makeup_credit_consumed = False
+    clear_original(booking)
     db.add(request)
     return True
 
@@ -266,6 +284,9 @@ def makeup_summaries(
             active_by_user[purchase.user_id] = True
     requests_by_user: dict[UUID, list[dict[str, object]]] = {user_id: [] for user_id in user_ids}
     for request, booking, session in requests:
+        replacement = db.get(Booking, request.reserved_booking_id) if request.reserved_booking_id else None
+        replacement_session = db.get(CourseSession, replacement.session_id) if replacement else None
+        replacement_location = db.get(Location, replacement_session.location_id) if replacement_session else None
         requests_by_user.setdefault(request.user_id, []).append(
             {
                 "id": request.id,
@@ -274,6 +295,11 @@ def makeup_summaries(
                 "original_session_title": session.title,
                 "original_session_start_at_utc": session.start_at_utc,
                 "created_at": request.created_at,
+                "reserved_booking_id": request.reserved_booking_id,
+                "reserved_session_title": replacement_session.title if replacement_session else None,
+                "reserved_session_start_at_utc": replacement_session.start_at_utc if replacement_session else None,
+                "reserved_location": replacement_location.name if replacement_location else None,
+                "replacement_covered_by_pass": makeup_role(replacement) == "replacement" if replacement else False,
             }
         )
     result: list[dict[str, object]] = []

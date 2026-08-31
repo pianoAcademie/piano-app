@@ -357,6 +357,11 @@ export type MakeupCreditOut = {
   original_session_title: string;
   original_session_start_at_utc: string;
   created_at: string;
+  reserved_booking_id?: string | null;
+  reserved_session_title?: string | null;
+  reserved_session_start_at_utc?: string | null;
+  reserved_location?: string | null;
+  replacement_covered_by_pass?: boolean;
 };
 
 export type MakeupStudentSummaryOut = {

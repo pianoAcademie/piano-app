@@ -44,7 +44,8 @@ class _FakeSession:
 
 
 class MakeupPassCancellationTests(unittest.TestCase):
-    def test_pending_makeup_is_claimed_by_the_replacement_booking(self) -> None:
+    @patch("app.services.makeup_booking.attach_replacement")
+    def test_pending_makeup_is_claimed_by_the_replacement_booking(self, attach) -> None:
         now = datetime(2026, 9, 28, 18, 0, tzinfo=timezone.utc)
         request = SimpleNamespace(
             id=uuid4(),
@@ -69,6 +70,7 @@ class MakeupPassCancellationTests(unittest.TestCase):
         self.assertEqual(request.status, MakeupRequestStatus.BOOKED)
         self.assertEqual(request.booked_at, now)
         self.assertEqual(booking.makeup_request_id, request.id)
+        attach.assert_called_once_with(db, request, booking, now=now)
 
     def test_replacement_booking_is_rejected_without_pending_makeup(self) -> None:
         db = _FakeSession(None)

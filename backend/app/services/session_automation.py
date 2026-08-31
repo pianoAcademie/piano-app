@@ -111,6 +111,10 @@ def restore_cancelled_booking_credit(db: Session, *, booking: Booking) -> bool:
     Subscription and forfait bookings do not consume a unit credit. Pack and
     manual-credit bookings do, so only those balances are incremented.
     """
+    from app.services.makeup_accounting import makeup_role
+    if makeup_role(booking) == "replacement":
+        from app.services.makeup_booking import release_replacement
+        return release_replacement(db, booking, now=datetime.now(timezone.utc)) is not None
     restored = False
     if booking.client_plan_subscription_id is not None:
         row = db.execute(

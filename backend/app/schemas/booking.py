@@ -89,6 +89,11 @@ class MakeupCreditOut(BaseModel):
     original_session_title: str
     original_session_start_at_utc: datetime
     created_at: datetime
+    reserved_booking_id: UUID | None = None
+    reserved_session_title: str | None = None
+    reserved_session_start_at_utc: datetime | None = None
+    reserved_location: str | None = None
+    replacement_covered_by_pass: bool = False
 
 
 class MakeupStudentSummaryOut(BaseModel):

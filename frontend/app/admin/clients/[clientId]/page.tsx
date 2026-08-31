@@ -1,4 +1,5 @@
 import Link from "next/link";
+import ProgramMakeup from "../../../../components/program-makeup";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
@@ -7814,6 +7815,15 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 <article className="item" key={credit.id}>
                   <strong>{credit.original_session_title}</strong>
                   <p className="muted">{formatDate(credit.original_session_start_at_utc, language)}</p>
+                  <ProgramMakeup studentId={summary.user_id} requestId={credit.id} studentName={summary.display_name} />
+                </article>
+              ))}
+              {summary.history.filter(credit => credit.status === "BOOKED").map(credit => (
+                <article className="item" key={credit.id}>
+                  <strong>Rattrapage programmé</strong>
+                  <p>Absence : {credit.original_session_title} · {formatDate(credit.original_session_start_at_utc, language)}</p>
+                  <p>Remplacement : {credit.reserved_session_title} · {credit.reserved_session_start_at_utc ? formatDate(credit.reserved_session_start_at_utc, language) : ""} · {credit.reserved_location}</p>
+                  {credit.replacement_covered_by_pass ? <span className="badge">Sans supplément</span> : null}
                 </article>
               ))}
             </article>

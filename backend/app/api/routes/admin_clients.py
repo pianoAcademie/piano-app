@@ -157,6 +157,7 @@ from app.schemas.admin import (
 )
 from app.schemas.booking import MakeupStudentSummaryOut
 from app.services.makeup_passes import makeup_summaries
+from app.services.makeup_accounting import makeup_role
 from app.schemas.plan import ClientSubscriptionOut, PlanMiniOut
 from app.api.routes.bookings import (
     PAYMENT_TIMEOUT_CANCELLATION_REASON,
@@ -10046,6 +10047,11 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
         )
 
     for booking, session_obj, course_type, location, forfait_subscription, plan in rows_bookings:
+        recovery_role = makeup_role(booking)
+        if recovery_role == "replacement":
+            # The original lesson is the charge. Keep this free replacement in
+            # Reservations, not as another purchase or cancellation credit.
+            continue
         if booking.id in hidden_transferred_booking_ids:
             # Keep the immutable invoice history out of the operational account:
             # the successor is the lesson that will actually be delivered.
@@ -10061,6 +10067,10 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
         total_incl_vat = booking.total_incl_vat_snapshot
         currency = booking.currency_snapshot
         cancelled_statuses = {BookingStatus.CANCELLED, BookingStatus.EXCUSED_ABSENCE}
+        if recovery_role == "original":
+            # A signalled absence using a pass is not a refund of annual tuition.
+            cancelled_statuses = set()
+            status_value = "BOOKED"
         is_free_trial = _is_non_billable_free_trial_booking(booking)
         if booking.status in cancelled_statuses:
             if is_locked_booking:
@@ -13999,6 +14009,8 @@ def generate_admin_client_booking_final_invoice(
 ) -> AdminRangeInvoiceOut:
     _require_client(db, client_id)
     booking, session_obj, course_type, location, owner = _booking_context_for_receipt(db, booking_id=booking_id)
+    if makeup_role(booking) == "replacement":
+        raise HTTPException(409, "Ce rattrapage est couvert par le cours d'origine : aucune nouvelle facture à émettre.")
     if owner.id != client_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reservation introuvable")
     try:
