@@ -50,7 +50,7 @@ def _count_rows_for_sessions(db, *, table_name: str, session_ids: list[UUID]) ->
     )
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, *, session_factory=None) -> int:
     parser = argparse.ArgumentParser(
         description=(
             "Merge Ryo's accidentally cancelled Assas Thursday 17h series into the active empty duplicate series."
@@ -65,7 +65,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     now = datetime.now(timezone.utc)
 
-    with SessionLocal() as db:
+    with (session_factory or SessionLocal)() as db:
+        if args.allow_missing and db.scalar(select(CourseSession.id).where(
+            CourseSession.id == SOURCE_ANCHOR_SESSION_ID)) is None:
+            db.rollback()
+            print(f"{SCRIPT_PREFIX}|summary|result=anchor_missing_noop|applied={args.apply}")
+            return 0
         anchor = db.scalar(
             select(CourseSession)
             .where(CourseSession.id == SOURCE_ANCHOR_SESSION_ID)

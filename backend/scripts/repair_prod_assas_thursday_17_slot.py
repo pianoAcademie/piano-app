@@ -127,7 +127,7 @@ def _undo_restored_credit(db, *, booking: Booking, now: datetime) -> list[str]: 
     return changes
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, *, session_factory=None) -> int:
     parser = argparse.ArgumentParser(
         description="Reactivate only the cancelled Rue d'Assas lesson on 10 September 2026 at 17:00 and its one student."
     )
@@ -140,7 +140,16 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     now = datetime.now(timezone.utc)
 
-    with SessionLocal() as db:
+    # Migrations provide a session on their existing connection; CLI runs keep
+    # owning their transaction. Never open a second connection under DDL locks.
+    with (session_factory or SessionLocal)() as db:
+        # An empty historical database may not have columns introduced after
+        # this repair. Check only the stable target key before loading models.
+        if args.allow_missing and db.scalar(select(CourseSession.id).where(
+            CourseSession.start_at_utc == TARGET_START_UTC).limit(1)) is None:
+            db.rollback()
+            print(f"{SCRIPT_PREFIX}|summary|result=target_missing_noop|all_at_time=0|applied={args.apply}")
+            return 0
         rows = db.execute(
             select(CourseSession, Location)
             .join(Location, Location.id == CourseSession.location_id)

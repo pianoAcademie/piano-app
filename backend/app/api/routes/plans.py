@@ -1101,7 +1101,7 @@ def purchase_plan(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.CLIENT)),
 ) -> ClientSubscriptionOut:
-    plan = db.scalar(select(Plan).where(Plan.id == plan_id, Plan.active.is_(True)))
+    plan = db.scalar(select(Plan).where(Plan.id == plan_id, Plan.active.is_(True), Plan.is_private.is_(False)))
     if plan is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan not found")
 

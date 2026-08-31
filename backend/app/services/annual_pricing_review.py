@@ -11,7 +11,8 @@ from typing import Literal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models.annual_pricing import AnnualFamilyReference
+from app.models.annual_pricing import AnnualFamilyReference, AnnualStudentEnrollment
+from app.services.annual_enrollment import enrollment_context, resolve_enrollment
 from app.models.catalog import CourseType, Location
 from app.models.family import ClientFamilyLink
 from app.models.plan import ClientPlanSubscription, Plan, PlanKind, SubscriptionStatus
@@ -31,6 +32,9 @@ class AnnualReviewRequest(BaseModel):
     primary_contract_course_key: str | None = None
     family_reference_child_id: UUID | None = None
     replace_family_reference: bool = False
+    enrollment_status: Literal["AUTO", "NEW", "RETURNING_MANUAL"] = "AUTO"
+    enrollment_note: str = Field(default="", max_length=2000)
+    manual_discount_policy: Literal["BLOCK", "KEEP", "REPLACE"] = "BLOCK"
     review_note: str = Field(min_length=10, max_length=2000)
     expected_version: str | None = None
 
@@ -125,6 +129,11 @@ def check_review_current(db, quote, lines):
     # Sent documents keep their decision even if the family graph later changes.
     if quote.sent_at:
         return
+    if "enrollment" in review:
+        saved = db.get(AnnualStudentEnrollment, (UUID(review["student_id"]), quote.school_year_label))
+        status = saved.status if saved else "AUTO"
+        if status != review["enrollment"]["status"]:
+            fail("La réinscription de cet élève a changé. Revérifiez les remises dans Lignes facturées avant envoi.")
     for guardian_id in review.get("guardian_ids", []):
         reference = db.get(AnnualFamilyReference, (UUID(guardian_id), quote.school_year_label))
         if not reference or str(reference.child_id) != review.get("family_reference_child_id"):
@@ -186,12 +195,12 @@ def prepare_review(db: Session, quote: Quote, lines: list[QuoteLine], request: A
     if family:
         if not reference_has_engagement(db, quote, reference_id):
             fail("Préparez d'abord le devis annuel de l'enfant de référence (son acceptation n'est pas nécessaire), ou rattachez son contrat annuel. Aucun engagement de cet enfant n'a été retrouvé.")
-    previous_subscription = db.scalar(select(ClientPlanSubscription.id).join(Plan).where(
-        ClientPlanSubscription.user_id == student.id, Plan.kind == PlanKind.FORFAIT,
-        ClientPlanSubscription.started_at < datetime(2026, 8, 1, tzinfo=timezone.utc),
-        ClientPlanSubscription.ends_at >= datetime(2025, 9, 1, tzinfo=timezone.utc),
-        ClientPlanSubscription.status.in_([SubscriptionStatus.ACTIVE, SubscriptionStatus.EXPIRED]),
-    ).limit(1))
+    enrollment_before = enrollment_context(db, student.id, quote.school_year_label)
+    try:
+        enrollment = resolve_enrollment(enrollment_before, request.enrollment_status, request.enrollment_note)
+    except ValueError as exc:
+        fail(str(exc))
+    previous_subscription = enrollment["subscription_id"]
     entries = reviewed_lines(db, quote, lines)
     external_primary = None
     if request.primary_contract_course_key:
@@ -209,11 +218,12 @@ def prepare_review(db: Session, quote: Quote, lines: list[QuoteLine], request: A
         fail("Le premier cours doit être un cours collectif en présentiel pour attribuer une remise deuxième cours.")
     # Existing explicit discounts are never guessed/stacked with this engine.
     legacy = [line for line in lines if line.line_type == "discount" and not (line.meta or {}).get("annual_auto_discount")]
-    if legacy:
-        fail("Ce devis contient déjà des remises manuelles. Retirez-les après vérification pour éviter un double avantage, puis relancez le calcul.")
+    if legacy and request.manual_discount_policy == "BLOCK":
+        fail("Ce devis contient des remises manuelles. Dans Lignes facturées, choisissez explicitement de les conserver sans cumul ou de les remplacer, puis relancez l'aperçu.")
+    keep_manual = bool(legacy and request.manual_discount_policy == "KEEP")
     version = quote_fingerprint(quote, lines)
     decisions = []
-    for line, activity, family_code in entries:
+    for line, activity, family_code in ([] if keep_manual else entries):
         if line.pricing_unit != "session" or Decimal(line.quantity) != int(line.quantity):
             fail("Les remises par séance exigent une quantité entière avec l'unité séance.")
         key = str((line.meta or {}).get("recommendation_key") or (line.meta or {}).get("line_recommendation_key") or "")
@@ -241,10 +251,11 @@ def prepare_review(db: Session, quote: Quote, lines: list[QuoteLine], request: A
         try:
             price = annual_discount_price(base=catalog.amount_for_duration(duration),
                 eligibility=AnnualEligibility(site, request.audience, family_code, family=family,
-                    returning=bool(previous_subscription), second_course=line.id != request.primary_line_id),
+                    returning=enrollment["returning"], second_course=line.id != request.primary_line_id),
                 vat_rate=Decimal(line.vat_rate), source=f"quote:{quote.id}:course:{line.id}",
                 evidence_version=build_price_version("eligibility", student=student.id, reference=reference_id,
-                    primary=request.primary_line_id or request.primary_contract_course_key, prior=previous_subscription, note=request.review_note, catalog=catalog.version))
+                    primary=request.primary_line_id or request.primary_contract_course_key, prior=previous_subscription,
+                    enrollment=enrollment, note=request.review_note, catalog=catalog.version))
         except ValueError as exc:
             fail(str(exc))
         decisions.append({"line_id": str(line.id), "course_key": str((line.meta or {}).get("annual_course_key") or uuid4()),
@@ -258,14 +269,32 @@ def prepare_review(db: Session, quote: Quote, lines: list[QuoteLine], request: A
         decision["course_key"] = str((next(l for l in lines if str(l.id) == decision["line_id"]).meta or {}).get("annual_course_key") or decision["line_id"])
     stable_decisions = [{**d, "pricing": {k: v for k, v in d["pricing"].items() if k != "calculated_at"}} for d in decisions]
     preview_version = build_price_version("annual-review-preview", quote=version, request=request.model_dump(exclude={"expected_version"}), decisions=stable_decisions,
-        references=[str(r.child_id) for r in references])
-    total = sum((Decimal(l.amount_ttc) for l in lines if not (l.meta or {}).get("annual_auto_discount")), Decimal("0"))
+        references=[str(r.child_id) for r in references], enrollment=enrollment, enrollment_before=enrollment_before)
+    retained = [l for l in lines if keep_manual or (not (l.meta or {}).get("annual_auto_discount") and l not in legacy)]
+    total = sum((Decimal(l.amount_ttc) for l in retained), Decimal("0"))
     for decision in decisions:
         line = next(l for l in lines if str(l.id) == decision["line_id"])
         total += Decimal(decision["net"]) * Decimal(decision["quantity"]) - Decimal(line.amount_ttc)
+    display_lines = [display_line(l) for l in retained]
+    for decision in decisions:
+        display_lines = [l for l in display_lines if l["id"] != decision["line_id"]]
+        display_lines.append({"id": decision["line_id"], "title": decision["title"], "kind": "item", "origin": "Grille annuelle",
+            "quantity": decision["quantity"], "unit": decision["base"], "total": str(Decimal(decision["base"]) * Decimal(decision["quantity"]))})
+        for component in decision["pricing"]["components"]:
+            display_lines.append({"id": f'{decision["line_id"]}:{component["code"]}', "title": f'{component["label"]} — {decision["title"]}',
+                "kind": "discount", "origin": "Calcul automatique", "quantity": decision["quantity"], "unit": str(component["amount_ttc"]),
+                "total": str(Decimal(str(component["amount_ttc"])) * Decimal(decision["quantity"]))})
     return {"version": preview_version, "previous_total": str(quote.total_ttc), "total": str(total.quantize(Decimal("0.01"))),
-        "decisions": decisions, "returning_verified": bool(previous_subscription), "family": family,
+        "decisions": decisions, "returning_verified": enrollment["returning"], "family": family,
+        "enrollment": enrollment, "display_lines": display_lines, "keep_manual": keep_manual,
+        "replaced_discounts": [display_line(l) for l in legacy] if not keep_manual else [],
         "guardian_ids": sorted(str(i) for i in guardians) if reference_id else [], "policy": POLICY_VERSION}
+
+
+def display_line(line):
+    return {"id": str(line.id), "title": line.title, "kind": line.line_type,
+            "quantity": str(line.quantity), "unit": str(line.unit_price_ttc), "total": str(line.amount_ttc),
+            "origin": "Calcul automatique" if (line.meta or {}).get("annual_auto_discount") else "Remise manuelle / importée" if line.line_type == "discount" else "Ligne enregistrée"}
 
 
 def apply_review(db, quote, lines, request, actor):
@@ -273,7 +302,8 @@ def apply_review(db, quote, lines, request, actor):
     if request.expected_version != preview["version"]:
         fail("Le devis ou ses critères ont changé. Relancez l'aperçu avant confirmation.")
     for line in lines:
-        if (line.meta or {}).get("annual_auto_discount"):
+        if not preview["keep_manual"] and ((line.meta or {}).get("annual_auto_discount") or
+                (line.line_type == "discount" and request.manual_discount_policy == "REPLACE")):
             db.delete(line)
     for entry in preview["decisions"]:
         line = next(l for l in lines if str(l.id) == entry["line_id"])
@@ -298,11 +328,20 @@ def apply_review(db, quote, lines, request, actor):
         elif ref.child_id != request.family_reference_child_id:
             ref.child_id = request.family_reference_child_id
             ref.evidence = {"quote_id": str(quote.id), "actor_id": str(actor.id), "note": request.review_note}
+    evidence = {"actor_id": str(actor.id), "actor_name": f"{actor.first_name or ''} {actor.last_name or ''}".strip() or actor.email,
+                "verified_at": datetime.now(timezone.utc).isoformat(), "quote_id": str(quote.id), "note": preview["enrollment"]["note"]}
+    if preview["enrollment"]["status"] != "AUTO":
+        saved = db.get(AnnualStudentEnrollment, (request.student_id, quote.school_year_label))
+        if not saved:
+            saved = AnnualStudentEnrollment(student_id=request.student_id, season=quote.school_year_label)
+        saved.status = preview["enrollment"]["status"]
+        saved.evidence = evidence
+        db.add(saved)
     quote.total_ttc = Decimal(preview["total"])
     db.flush()
     updated_lines = db.scalars(select(QuoteLine).where(QuoteLine.quote_id == quote.id).order_by(QuoteLine.sort_order, QuoteLine.created_at)).all()
     review = {**request.model_dump(mode="json", exclude={"expected_version"}), **preview,
-              "actor_id": str(actor.id), "verified_at": datetime.now(timezone.utc).isoformat(),
+              "actor_id": str(actor.id), "actor_name": evidence["actor_name"], "verified_at": evidence["verified_at"],
               "fingerprint": quote_fingerprint(quote, updated_lines)}
     quote.meta = {**(quote.meta or {}), KEY: review}
     return review

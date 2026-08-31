@@ -4283,6 +4283,12 @@ def _freeze_quote_document_snapshot(
     state: str,
     audience: str = AUDIENCE_CLIENT_PDF,
 ) -> QuoteDocumentSnapshot:
+    # Rebuild the document from the exact saved lines shown in the billing tab.
+    # Never send an inconsistent stored total or a stale reviewed calculation.
+    expected_total = _quote_total_with_adjustment(
+        lines_total_ttc=_q2(sum((Decimal(line.amount_ttc) for line in lines), Decimal("0"))), meta=quote.meta or {})
+    if expected_total != _q2(quote.total_ttc):
+        raise HTTPException(409, "Le total enregistré ne correspond pas aux lignes facturées et ajustements. Corrigez le devis avant de générer ou envoyer le document.")
     body_html, terms_html, combined_html = render_quote_parts_html(
         db=db,
         quote=quote,
@@ -7484,6 +7490,7 @@ def resend_quote(
     current_user: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> QuoteDetailOut:
     quote = _load_quote(db, quote_id, lock=True)
+    check_review_current(db, quote, _load_quote_lines(db, quote_id))
     if _quote_meta_dict(quote).get(QUOTE_CHANGE_REQUEST_REVISION_ID_META_KEY):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

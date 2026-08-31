@@ -21,6 +21,7 @@ import QuoteWorkspaceSidebar, { type SidebarItem } from "../../../../components/
 import QuoteFollowupSlotForm from "../../../../components/quote-followup-slot-form";
 import QuoteLinesEditor from "../../../../components/quote-lines-editor";
 import AnnualPricingReview from "../../../../components/annual-pricing-review";
+import QuotePricingRecap from "../../../../components/quote-pricing-recap";
 import QuotePlanningEditor from "../../../../components/quote-planning-editor";
 import RichMessageEditor from "../../../../components/rich-message-editor";
 import {
@@ -4398,6 +4399,11 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
 	          <h3>{t("admin.quote_detail.billed_lines_title")}</h3>
 	          <p className="muted">{t("admin.quote_detail.billed_lines_subtitle", { count: detail.lines.length })}</p>
 	        </div>
+          <QuotePricingRecap total={String(detail.quote.total_ttc)} currency={detail.quote.currency}
+            adjustment={{ amount: adjustmentSignedAmount(quoteAdjustment), label: quoteAdjustment.label }}
+            lines={detail.lines.map(line => ({ id: line.id, title: line.title, kind: line.line_type,
+              quantity: String(line.quantity), unit: String(line.unit_price_ttc), total: String(line.amount_ttc),
+              origin: line.meta?.annual_auto_discount ? "Calcul automatique" : line.line_type === "discount" ? "Remise manuelle / importée" : "Ligne enregistrée" }))} />
         {detail.quote.school_year_label === "2026-2027" ? (
           <AnnualPricingReview revision={detail.quote.updated_at} quoteId={detail.quote.id} editable={canEditQuote && !detail.quote.sent_at} />
         ) : null}

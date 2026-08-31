@@ -17,7 +17,7 @@ from sqlalchemy import select
 
 from app.db.session import SessionLocal
 from app.models.catalog import Booking, CourseSession, Location, Professor
-from app.models.ops import EmailReminder
+from app.models.ops import AppSetting, EmailReminder
 from app.models.plan import Plan, PlanEntitlement, PlanKind
 from app.models.user import User, UserRole
 
@@ -132,7 +132,7 @@ def get_pack_plan_and_course_type() -> tuple[str, str]:
         row = db.execute(
             select(Plan.id, PlanEntitlement.course_type_id)
             .join(PlanEntitlement, PlanEntitlement.plan_id == Plan.id)
-            .where(Plan.kind == PlanKind.PACK, Plan.active.is_(True))
+            .where(Plan.kind == PlanKind.PACK, Plan.active.is_(True), Plan.is_private.is_(False))
             .limit(1)
         ).first()
         ensure(row is not None, "no active PACK plan entitlement found")
@@ -201,6 +201,9 @@ def create_session_as_admin(
         "start_at_utc": start_at.isoformat(),
         "end_at_utc": (start_at + timedelta(hours=1)).isoformat(),
         "capacity_max": capacity,
+        "child_bookings_enabled": False,
+        "adult_bookings_enabled": True,
+        "adult_capacity_max": capacity,
         "auto_cancel_deadline_utc": (start_at - timedelta(hours=deadline_hours_before)).isoformat(),
         "zoom_link": "https://zoom.us/j/smoke-test",
     }
@@ -212,7 +215,9 @@ def create_session_as_admin(
 
 
 def buy_plan(token: str, plan_id: str) -> str:
-    res = api.call("POST", f"/api/v1/plans/{plan_id}/purchase", token=token)
+    rejected = api.call("POST", f"/api/v1/plans/{plan_id}/purchase", token=token)
+    ensure(rejected.status == 422, f"purchase without CGV must be rejected: {rejected.status}")
+    res = api.call("POST", f"/api/v1/plans/{plan_id}/purchase", {"legal_terms_accepted": True}, token=token)
     ensure(res.status == 201, f"purchase plan failed: {res.status} {res.data}")
     sub_id = res.data.get("id") if isinstance(res.data, dict) else None
     ensure(isinstance(sub_id, str), "missing subscription id after purchase")
@@ -243,6 +248,19 @@ def main() -> None:
 
     step("health")
     wait_backend_ready()
+
+    # The stock disposable Compose stack uses these exact development values.
+    # Never provision synthetic terms against a configured production database.
+    stock_dev_stack = (
+        os.environ.get("DATABASE_URL") == "postgresql+psycopg://piano:piano@db:5432/piano_academie"
+        and os.environ.get("JWT_SECRET_KEY") == "dev-secret-change-me"
+    )
+    if os.environ.get("SMOKE_ALLOW_TEST_FIXTURES") == "1" or stock_dev_stack:
+        with SessionLocal() as db:
+            terms = db.get(AppSetting, "config_account_legal_terms")
+            if terms is None:
+                db.add(AppSetting(key="config_account_legal_terms", value="Conditions fictives du test automatisé — aucun achat réel."))
+                db.commit()
 
     client_email = f"smoke.client.{ts}@example.com"
     wait_email = f"smoke.wait.{ts}@example.com"
@@ -410,14 +428,14 @@ def main() -> None:
     sub_wait = buy_plan(wait_token, plan_id)
 
     step("purchase guards")
-    duplicate_pack = api.call("POST", f"/api/v1/plans/{plan_id}/purchase", token=client_token)
+    duplicate_pack = api.call("POST", f"/api/v1/plans/{plan_id}/purchase", {"legal_terms_accepted": True}, token=client_token)
     ensure(duplicate_pack.status == 409, f"duplicate pack purchase should fail: {duplicate_pack.status} {duplicate_pack.data}")
 
     if sub_plan_billing_method:
         first_monthly = api.call(
             "POST",
             f"/api/v1/plans/{sub_plan_id}/purchase",
-            {"billing_method_code": sub_plan_billing_method},
+            {"billing_method_code": sub_plan_billing_method, "legal_terms_accepted": True},
             client_token,
         )
         ensure(first_monthly.status == 201, f"first monthly purchase failed: {first_monthly.status} {first_monthly.data}")
@@ -425,7 +443,7 @@ def main() -> None:
         duplicate_monthly = api.call(
             "POST",
             f"/api/v1/plans/{sub_plan_id}/purchase",
-            {"billing_method_code": sub_plan_billing_method},
+            {"billing_method_code": sub_plan_billing_method, "legal_terms_accepted": True},
             client_token,
         )
         ensure(
@@ -449,7 +467,7 @@ def main() -> None:
             private_preview.status == 404,
             f"private plan preview should fail with 404: {private_preview.status} {private_preview.data}",
         )
-        private_purchase = api.call("POST", f"/api/v1/plans/{private_plan_id}/purchase", token=client_token)
+        private_purchase = api.call("POST", f"/api/v1/plans/{private_plan_id}/purchase", {"legal_terms_accepted": True}, token=client_token)
         ensure(
             private_purchase.status == 404,
             f"private plan purchase should fail with 404: {private_purchase.status} {private_purchase.data}",
@@ -465,7 +483,7 @@ def main() -> None:
     capacity_upgrade = api.call(
         "PATCH",
         f"/api/v1/admin/sessions/{waitlist_session_id}",
-        {"capacity_max": 5},
+        {"capacity_max": 5, "adult_capacity_max": 5},
         admin_token,
     )
     ensure(
@@ -524,7 +542,9 @@ def main() -> None:
     patch_auto = api.call(
         "PATCH",
         f"/api/v1/admin/sessions/{auto_session_id}",
-        {"auto_cancel_deadline_utc": (now - timedelta(minutes=5)).isoformat()},
+        {"auto_cancel_deadline_utc": (now - timedelta(minutes=5)).isoformat(),
+         "auto_cancel_rule_enabled_override": True, "auto_cancel_if_booked_less_than_override": 1,
+         "auto_cancel_hours_before_start_override": 48},
         admin_token,
     )
     ensure(patch_auto.status == 200, f"patch auto-cancel deadline failed: {patch_auto.status} {patch_auto.data}")
