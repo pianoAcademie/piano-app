@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from uuid import UUID
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlparse
@@ -62,6 +62,18 @@ class PaymentLookupResult:
     payment_method_exp_year: int | None = None
     payment_method_type: str | None = None
     setup_complete: bool = False
+    amount: Decimal | None = None
+    currency: str | None = None
+
+
+def _lookup_amount(raw: object, *, cents: bool = False) -> Decimal | None:
+    try:
+        value = Decimal(str(raw))
+        if not value.is_finite() or value < 0:
+            return None
+        return value / 100 if cents else value
+    except (InvalidOperation, ValueError, TypeError):
+        return None
 
 
 def create_stripe_payment_method_setup_session(
@@ -577,6 +589,8 @@ def _mollie_lookup_payment(secret: str, payment_reference: str) -> PaymentLookup
         failed=failed,
         metadata=metadata,
         message=message or "ok",
+        amount=_lookup_amount((parsed.get("amount") or {}).get("value")) if isinstance(parsed.get("amount"), dict) else None,
+        currency=str((parsed.get("amount") or {}).get("currency") or "").upper() if isinstance(parsed.get("amount"), dict) else None,
     )
 
 
@@ -655,6 +669,8 @@ def _payplug_lookup_payment(secret: str, payment_reference: str) -> PaymentLooku
         failed=is_failed and not is_paid,
         metadata=_normalize_metadata(parsed.get("metadata")),
         message=message or "ok",
+        amount=_lookup_amount(parsed.get("amount"), cents=True),
+        currency=str(parsed.get("currency") or "").upper() or None,
         payment_method_reference=card_reference,
         payment_method_brand=card_brand,
         payment_method_last4=card_last4,
@@ -729,6 +745,8 @@ def _stripe_lookup_payment(secret: str, payment_reference: str) -> PaymentLookup
             failed=intent_status in {"canceled", "requires_payment_method"},
             metadata=metadata,
             message=message or "ok",
+            amount=_lookup_amount(parsed.get("amount_received"), cents=True),
+            currency=str(parsed.get("currency") or "").upper() or None,
             payment_method_reference=payment_method_reference or None,
             payment_method_brand=payment_method_brand,
             payment_method_last4=payment_method_last4,
@@ -822,6 +840,8 @@ def _stripe_lookup_payment(secret: str, payment_reference: str) -> PaymentLookup
         payment_method_exp_year=exp_year,
         payment_method_type=payment_method_type or None,
         setup_complete=setup_complete,
+        amount=_lookup_amount(parsed.get("amount_total"), cents=True),
+        currency=str(parsed.get("currency") or "").upper() or None,
     )
 
 

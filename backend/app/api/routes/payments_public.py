@@ -204,6 +204,15 @@ async def payment_webhook(
                 )
             invoice_client_id = _metadata_uuid(lookup.metadata, "client_id")
             invoice_note_id = _metadata_uuid(lookup.metadata, "note_id")
+            if "partial_request_id" in lookup.metadata:
+                # Never feed a partial settlement into the legacy full-invoice recorder.
+                from app.api.routes.invoice_partial_payments import callback as partial_callback
+                partial_id = _metadata_uuid(lookup.metadata, "partial_request_id")
+                attempt_id = _metadata_uuid(lookup.metadata, "partial_attempt_id")
+                if not lookup.success or not all((invoice_client_id, invoice_note_id, partial_id, attempt_id)):
+                    raise HTTPException(409, "Invalid partial payment metadata")
+                return partial_callback(db, client_id=invoice_client_id, note_id=invoice_note_id,
+                    request_id=partial_id, attempt_id=attempt_id, token=None, background_tasks=background_tasks)
             if invoice_client_id is not None and invoice_note_id is not None:
                 result = reconcile_admin_client_range_invoice_public_payment_by_provider_reference(
                     db,

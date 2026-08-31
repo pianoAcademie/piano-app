@@ -12478,6 +12478,29 @@ button.danger:focus-visible {
   padding-bottom: 8px;
 }
 
+.invoice-partial-payment-modal {
+  width: min(760px, 94vw);
+  max-height: calc(100dvh - 48px);
+  padding: 20px;
+  gap: 14px;
+}
+
+.invoice-partial-payment-modal p,
+.invoice-partial-payment-modal h4 {
+  margin: 0;
+}
+
+.invoice-partial-payment-modal .card {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  overflow-wrap: anywhere;
+}
+
+.invoice-partial-payment-modal .modal-title {
+  padding-right: 44px;
+}
+
 .modal-panel-wide {
   width: min(1200px, 96vw);
   max-height: 92vh;

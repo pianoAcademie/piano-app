@@ -1,6 +1,7 @@
 "use server";
 
 import { Buffer } from "node:buffer";
+import { partialPaymentCents, type PartialPaymentActionState } from "./invoice-partial-payment";
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
@@ -6630,6 +6631,30 @@ export async function reissueAdminClientRangeInvoiceAction(formData: FormData): 
 
   revalidatePath(`/admin/clients/${clientId}`);
   redirect(`/admin/clients/${clientId}?${params.toString()}`);
+}
+
+export async function sendAdminClientPartialPaymentAction(_previous: PartialPaymentActionState, formData: FormData): Promise<PartialPaymentActionState> {
+  const token = currentToken();
+  if (!token) return { error: "Votre session a expiré. Reconnectez-vous avant d’envoyer le lien." };
+  await ensureAdminAndGetLanguage(token);
+  const clientId = String(formData.get("client_id") ?? "");
+  const noteId = String(formData.get("note_id") ?? "");
+  const requestId = String(formData.get("request_id") ?? "");
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (![clientId, noteId, requestId].every((id) => uuid.test(id))) return { error: "Référence de facture invalide." };
+  const cancelling = formData.get("intent") === "cancel";
+  const cents = partialPaymentCents(String(formData.get("amount") ?? ""));
+  if (!cancelling && (cents === null || cents < 100)) return { error: "Indiquez un montant valide, d’au moins 1 €." };
+  const endpoint = `/api/v1/admin/clients/${clientId}/invoices/range/${noteId}/partial-payments`;
+  const result = await backendRequest<{ sent?: boolean; error?: string; recipients?: string[] }>(
+    cancelling ? `${endpoint}/${requestId}/cancel` : endpoint,
+    { method: "POST", ...(cancelling ? {} : { body: JSON.stringify({ request_id: requestId, amount: (cents! / 100).toFixed(2) }) }) }, token, 60000,
+  );
+  revalidatePath(`/admin/clients/${clientId}`);
+  if (!result.ok) return { error: result.message };
+  if (!cancelling && !result.data.sent) return { error: result.data.error ?? "L’envoi n’a pas été confirmé. Réessayez avec la même demande." };
+  return { ok: true, message: cancelling ? "Demande annulée. L’ancien lien n’est plus utilisable." :
+    `Lien envoyé à ${(result.data.recipients ?? []).join(", ")}. Aucun paiement enregistré tant que la banque ne l’a pas confirmé.` };
 }
 
 export async function sendAdminClientRangeInvoiceEmailAction(formData: FormData): Promise<void> {

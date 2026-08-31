@@ -1,4 +1,7 @@
 import Link from "next/link";
+import { randomUUID } from "node:crypto";
+import InvoicePartialPaymentModal from "../../../../components/invoice-partial-payment-modal";
+import type { PartialPaymentContext } from "../../../../lib/invoice-partial-payment";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
@@ -34,6 +37,7 @@ import {
   refundAdminClientPaymentReceiptAction,
   sendAdminClientPaymentReceiptAction,
   sendAdminClientRangeInvoiceEmailAction,
+  sendAdminClientPartialPaymentAction,
   splitAdminClientRangeInvoiceByFamilyAction,
   sendAdminClientMessageAction,
   setFamilyBillingRecipientAction,
@@ -2957,9 +2961,13 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       manualTransactionLegalEntities.find((entity) => entity.id === row.sellerLegalEntityId)?.name ?? row.billingEntity ?? null,
   }));
   const selectedRangeInvoiceForModal =
-    (paymentModalAction === "invoice_email" || paymentModalAction === "invoice_bank_transfer") && invoiceNoteId
+    (paymentModalAction === "invoice_email" || paymentModalAction === "invoice_bank_transfer" || paymentModalAction === "invoice_partial_payment") && invoiceNoteId
       ? generatedRangeInvoices.find((row) => row.noteId === invoiceNoteId) ?? null
       : null;
+  const partialPaymentContext = paymentModalAction === "invoice_partial_payment" && selectedRangeInvoiceForModal
+    ? await backendRequest<PartialPaymentContext>(`/api/v1/admin/clients/${params.clientId}/invoices/range/${selectedRangeInvoiceForModal.noteId}/partial-payments`, {}, token)
+    : null;
+  if (partialPaymentContext && !partialPaymentContext.ok) errors.push(partialPaymentContext.message);
   const invoiceSmsDefaultPhone = client.mobile_phone_1 || client.mobile_phone_2 || client.phone || client.home_phone || "";
   const invoiceChangeSummaryReferenceOptions = selectedRangeInvoiceForModal
     ? generatedRangeInvoices
@@ -6115,6 +6123,9 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                               >
                                 ✉
                               </Link> : null}
+                              {row.status === "ISSUED" ? <Link className="mode-link" href={invoicesHref(client.id, {
+                                payment_modal: "invoice_partial_payment", payment_return_tab: "factures", invoice_note_id: row.noteId,
+                              })}>Envoyer un lien de paiement partiel</Link> : null}
                               {row.status !== "CREDIT_NOTE" && (row.remindersSuspended ? (
                                 <button
                                   type="button"
@@ -6674,6 +6685,10 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
         </section>
       ) : null}
 
+      {paymentModalAction === "invoice_partial_payment" && selectedRangeInvoiceForModal && partialPaymentContext?.ok ? (
+        <InvoicePartialPaymentModal clientId={client.id} noteId={selectedRangeInvoiceForModal.noteId}
+          requestId={randomUUID()} closeHref={invoicesHref(client.id, {})} context={partialPaymentContext.data} action={sendAdminClientPartialPaymentAction} />
+      ) : null}
       {currentTab === "paiements" && paymentModalAction === "add" ? (
         <section className="modal-overlay">
           <article className="modal-panel modal-compact">
