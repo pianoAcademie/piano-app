@@ -32,6 +32,7 @@ from app.api.routes.admin_clients import (
     _effective_pack_credits_for_plan,
     _forfait_period_bounds,
     _invoice_issued_at_for_date,
+    _invoice_render_timezone,
     _invoice_referral_credit_tax_breakdown,
     _invoice_recipient_snapshot_for_client,
     _payment_billing_entity,
@@ -232,6 +233,8 @@ QUOTE_MONTHLY_CARD_DUE_DAYS_OFFSET = 1
 QUOTE_ANNUAL_INVOICE_PERIOD_START = date(2026, 8, 1)
 QUOTE_ANNUAL_INVOICE_PERIOD_END = date(2027, 6, 30)
 QUOTE_ANNUAL_INVOICE_DUE_DATE = date(2026, 9, 1)
+QUOTE_TRANSFORMATION_INVOICE_TERMS_START = date(2026, 8, 31)
+QUOTE_TRANSFORMATION_INVOICE_DUE_DAYS = 3
 CARD_4X_FEES_PAYMENT_INSTRUCTION = (
     "Le paiement par carte bancaire en 4 fois est géré par notre partenaire Oney.\n"
     "Votre dossier sera donc soumis à Oney, qui pourra l’accepter ou le refuser.\n"
@@ -9349,18 +9352,31 @@ def _validated_quote_transform_expected_dates(
     expected_dates: list[date],
     *,
     session_limit: int | None,
+    approved_dates_count: int | None = None,
 ) -> list[date]:
     if session_limit is None:
         return expected_dates
     limited_dates = expected_dates[:session_limit]
     if len(limited_dates) != session_limit:
+        if not limited_dates and approved_dates_count:
+            detail = (
+                f"Inscription bloquée : le devis contient bien {approved_dates_count} séances, "
+                "mais aucune n’est reliée à la série sélectionnée. "
+                "Le créneau a peut-être été remplacé depuis la création du devis. "
+                "À l’étape 3 « Planning », vérifiez le jour, l’horaire et le lieu. "
+                "S’ils correspondent au devis, faites rétablir le lien avec la série actuelle "
+                "sans modifier les dates ni les montants validés."
+            )
+        else:
+            detail = (
+                f"Inscription bloquée : {len(limited_dates)} séances du devis sont reliées "
+                f"à la série sélectionnée, pour {session_limit} séances facturées. "
+                "À l’étape 3 « Planning », vérifiez la série et les dates prévues "
+                "avant de finaliser l’inscription."
+            )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                "Transformation bloquee : le planning valide du devis contient "
-                f"{len(limited_dates)} creneau(x), alors que la ligne facturee en prevoit "
-                f"{session_limit}. Regenerer ou corriger le planning avant integration."
-            ),
+            detail=detail,
         )
     return limited_dates
 
@@ -10606,6 +10622,14 @@ def _find_reusable_followup_deposit_payment(
     return None
 
 
+def _quote_transformation_invoice_due_date(*, issued_date: date, legacy_due_date: date) -> date:
+    # New invoices only: never recalculate terms on already-issued invoices.
+    # The rule uses calendar days, including weekends and month/year changes.
+    if issued_date >= QUOTE_TRANSFORMATION_INVOICE_TERMS_START:
+        return issued_date + timedelta(days=QUOTE_TRANSFORMATION_INVOICE_DUE_DAYS)
+    return legacy_due_date
+
+
 def _create_followup_deposit_invoice(
     db: Session,
     *,
@@ -10623,8 +10647,11 @@ def _create_followup_deposit_invoice(
 
     deposit_amount_ttc, deposit_amount_ht, deposit_vat_rate, deposit_vat_amount = breakdown
     now = _utcnow()
-    issued_date = now.astimezone(timezone.utc).date()
-    due_date = issued_date + timedelta(days=7)
+    issued_date = now.astimezone(_invoice_render_timezone()).date()
+    due_date = _quote_transformation_invoice_due_date(
+        issued_date=issued_date,
+        legacy_due_date=issued_date + timedelta(days=7),
+    )
     issued_at = _invoice_issued_at_for_date(issued_date=issued_date, now=now)
     category = _resolve_configured_product_category(
         db,
@@ -11001,8 +11028,11 @@ def _create_followup_annual_invoices(
     ordered_seller_ids = sorted(payments_by_seller, key=lambda value: str(value or ""))
     deposit_seller_id = quote.legal_entity_id if quote.legal_entity_id in payments_by_seller else ordered_seller_ids[0]
     now = _utcnow()
-    issued_date = now.date()
-    due_date = max(issued_date, QUOTE_ANNUAL_INVOICE_DUE_DATE)
+    issued_date = now.astimezone(_invoice_render_timezone()).date()
+    due_date = _quote_transformation_invoice_due_date(
+        issued_date=issued_date,
+        legacy_due_date=max(issued_date, QUOTE_ANNUAL_INVOICE_DUE_DATE),
+    )
     issued_at = _invoice_issued_at_for_date(issued_date=issued_date, now=now)
     recipient_snapshot = _invoice_recipient_snapshot_for_client(db, billing)
     student_name = " ".join(
@@ -11305,9 +11335,20 @@ def _execute_quote_followup_transformation(
             )
             if len(block_dates) > len(expected_dates):
                 expected_dates = block_dates
+        # Count approved dates without the selected series filter only to explain
+        # a mismatch. This must never bypass the strict series/date validation.
+        approved_dates_count = None
+        if session_limit is not None and not expected_dates:
+            approved_dates_count = len(_expected_activity_dates_from_snapshot(
+                quote,
+                activity_id=activity_id,
+                schedule_key=schedule_key,
+                calendar_snapshot=calendar_snapshot_for_transform,
+            ))
         expected_dates = _validated_quote_transform_expected_dates(
             expected_dates,
             session_limit=session_limit,
+            approved_dates_count=approved_dates_count,
         )
         if selected_session.status != SessionStatus.SCHEDULED:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Le creneau selectionne n'est plus reservable")

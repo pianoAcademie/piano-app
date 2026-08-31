@@ -833,8 +833,23 @@ class QuoteLiveSeriesMatchingTests(unittest.TestCase):
             )
 
         self.assertEqual(raised.exception.status_code, 409)
-        self.assertIn("13 creneau(x)", str(raised.exception.detail))
-        self.assertIn("31", str(raised.exception.detail))
+        self.assertIn("13 séances du devis sont reliées", str(raised.exception.detail))
+        self.assertIn("31 séances facturées", str(raised.exception.detail))
+        self.assertIn("étape 3", str(raised.exception.detail))
+
+    def test_unmatched_series_explains_that_approved_dates_still_exist(self) -> None:
+        with self.assertRaises(HTTPException) as raised:
+            _validated_quote_transform_expected_dates([], session_limit=32, approved_dates_count=32)
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertIn("le devis contient bien 32 séances", str(raised.exception.detail))
+        self.assertIn("aucune n’est reliée", str(raised.exception.detail))
+        self.assertIn("sans modifier les dates ni les montants", str(raised.exception.detail))
+
+    def test_empty_planning_does_not_claim_approved_dates_exist(self) -> None:
+        with self.assertRaises(HTTPException) as raised:
+            _validated_quote_transform_expected_dates([], session_limit=32, approved_dates_count=0)
+        self.assertIn("0 séances du devis sont reliées", str(raised.exception.detail))
+        self.assertNotIn("contient bien", str(raised.exception.detail))
 
     def test_transform_keeps_the_full_approved_session_quantity(self) -> None:
         approved_dates = [date(2026, 9, 1) + timedelta(days=index * 7) for index in range(31)]

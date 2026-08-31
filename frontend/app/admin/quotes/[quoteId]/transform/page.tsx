@@ -506,9 +506,12 @@ export default async function AdminQuoteTransformPage({ params, searchParams }: 
       {ok ? (
         <section className="modal-overlay" role="dialog" aria-modal="true" aria-label={t("admin.quote_transform.confirm_dialog_aria")}>
           <article className="modal-panel modal-compact">
-            <Link className="modal-close-x" href={dismissOkHref} aria-label={t("admin.quote_transform.close_confirmation")}>
-              ×
-            </Link>
+            <header className="row spread">
+              <h3 className="modal-title">{t("admin.quote_transform.confirm_dialog_aria")}</h3>
+              <Link className="modal-close-x" href={dismissOkHref} aria-label={t("admin.quote_transform.close_confirmation")}>
+                ×
+              </Link>
+            </header>
             <section className="flash-ok modal-flash" role="status">
               {ok}
             </section>
@@ -518,9 +521,12 @@ export default async function AdminQuoteTransformPage({ params, searchParams }: 
       {error ? (
         <section className="modal-overlay" role="dialog" aria-modal="true" aria-label={t("admin.quote_transform.error_dialog_aria")}>
           <article className="modal-panel modal-compact">
-            <Link className="modal-close-x" href={dismissErrorHref} aria-label={t("admin.quote_transform.close_error")}>
-              ×
-            </Link>
+            <header className="row spread">
+              <h3 className="modal-title">{t("admin.quote_transform.error_dialog_aria")}</h3>
+              <Link className="modal-close-x" href={dismissErrorHref} aria-label={t("admin.quote_transform.close_error")}>
+                ×
+              </Link>
+            </header>
             <section className="flash-err modal-flash" role="alert">
               {error}
             </section>
