@@ -102,6 +102,7 @@ from app.schemas.admin import (
     AdminClientManualTransactionCreateRequest,
     AdminClientManualTransactionStatusUpdateRequest,
     AdminClientManualTransactionUpdateRequest,
+    AdminClientCheckReconciliationRequest,
     AdminClientPaymentRefundOut,
     AdminClientPaymentRefundRequest,
     AdminCheckDepositBulkUpdateOut,
@@ -12145,6 +12146,97 @@ def bulk_update_admin_check_deposit_status(
         updated_transaction_ids=updated_ids,
         unmatched_rows=unmatched,
     )
+
+
+@router.post("/{client_id}/invoices/range/{note_id}/received-checks")
+def reconcile_existing_received_checks(
+    client_id: UUID,
+    note_id: UUID,
+    payload: AdminClientCheckReconciliationRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_roles(UserRole.ADMIN)),
+) -> dict[str, object]:
+    client = _require_client(db, client_id)
+    # Lock payments in stable order, then the invoice: concurrent submissions
+    # cannot consume the same cheque or overwrite another batch's allocation.
+    rows = [
+        _load_manual_transaction_for_client(db, client=client, transaction_id=payment_id, for_update=True)
+        for payment_id in sorted(set(payload.transaction_ids), key=str)
+    ]
+    note, metadata = _load_range_invoice_note(db, client_id=client.id, note_id=note_id, for_update=True)
+    if (metadata.get("invoice_status") != "ISSUED"
+        or metadata.get("document_type") == "CREDIT_NOTE"
+        or metadata.get("family_billing_split_group_id")):
+        raise HTTPException(409, "Rattachement possible uniquement sur une facture émise non répartie entre payeurs")
+    from app.services.invoice_partial_payments import check_other_checkout, assert_no_active_partial_request
+    check_other_checkout(db, client.id, note.id, metadata)
+    assert_no_active_partial_request(metadata)
+    _, _, seller_id = _frozen_invoice_selection_for_note(db, note_id=note.id, metadata=metadata)
+    seller_id = seller_id or _parse_optional_uuid(metadata.get("seller_legal_entity_id"))
+    existing = set(_invoice_range_reconciled_manual_payment_ids(metadata))
+    locks = _active_invoice_lock_by_payment_key(db, client_id=client.id)
+    # A child can be visible from more than one payer account. Search links
+    # across invoice owners, not only the current account's display scope.
+    frozen_note_ids = select(ClientInvoiceLine.note_id).where(
+        ClientInvoiceLine.source == "MANUAL",
+        ClientInvoiceLine.source_payment_id.in_([row.id for row in rows]),
+    )
+    candidates = db.scalars(select(ClientNoteEntry).where(or_(
+        ClientNoteEntry.id.in_(frozen_note_ids),
+        *[ClientNoteEntry.message.contains(str(row.id)) for row in rows],
+    ))).all()
+    selected_ids = {row.id for row in rows}
+    selected_keys = {_payment_key(source="MANUAL", payment_id=value) for value in selected_ids}
+    for candidate in candidates:
+        other = _parse_invoice_range_note_entry(candidate)
+        if candidate.id == note.id or other is None or other.get("invoice_status") in {"CANCELLED", "CREDIT_NOTE"}:
+            continue
+        frozen_keys, _, _ = _frozen_invoice_selection_for_note(db, note_id=candidate.id, metadata=other)
+        if (selected_ids.intersection(_invoice_range_reconciled_manual_payment_ids(other))
+            or selected_keys.intersection(_normalize_invoice_range_payment_keys(frozen_keys))):
+            raise HTTPException(409, "Un des chèques est déjà affecté à une autre facture")
+    additions: list[ClientManualTransaction] = []
+    for row in rows:
+        if row.transaction_type != "PAYMENT" or _manual_payment_method_code(row.reference) != "CHECK" or row.status not in {"CHECK_RECEIVED", "CHECK_DEPOSITED"}:
+            raise HTTPException(409, "Sélectionnez uniquement des chèques reçus ou déposés non encaissés")
+        if Decimal(row.total_incl_vat) >= Decimal("0"):
+            raise HTTPException(409, "Le montant de l’écriture de paiement est invalide")
+        if seller_id is None or row.legal_entity_id != seller_id:
+            raise HTTPException(409, "Le chèque et la facture doivent appartenir à la même entité juridique")
+        _invoice_range_total_in_currency(metadata, currency=row.currency)
+        lock = locks.get(_payment_key(source="MANUAL", payment_id=row.id))
+        if lock and lock[2] != note.id:
+            raise HTTPException(409, f"Chèque déjà rattaché à la facture {lock[1]}")
+        if row.id not in existing:
+            # A payment already included in the frozen invoice cannot also be
+            # applied as a settlement: that would count it twice.
+            if lock:
+                raise HTTPException(409, "Chèque déjà inclus dans les lignes de cette facture")
+            additions.append(row)
+    if not additions:
+        return {"linked_count": 0, "already_linked": True}
+    metadata = _synchronize_invoice_range_reconciled_payment_metadata(
+        db, client_id=client.id, note_id=note.id, note_created_at=note.created_at, metadata=metadata,
+    )
+    remaining = _invoice_range_decimal_map(metadata.get("total_to_pay_by_currency"))
+    amounts: dict[str, Decimal] = {}
+    for row in additions:
+        currency = _normalize_currency(row.currency, fallback="EUR")
+        amounts[currency] = amounts.get(currency, Decimal("0")) + abs(Decimal(row.total_incl_vat))
+    if any(amount > remaining.get(currency, Decimal("0")) for currency, amount in amounts.items()):
+        raise HTTPException(409, "Le montant des chèques sélectionnés dépasse le solde non couvert de la facture")
+    metadata["reconciled_manual_payment_ids"] = [str(value) for value in sorted(existing | {row.id for row in additions}, key=str)]
+    metadata = _synchronize_invoice_range_reconciled_payment_metadata(
+        db, client_id=client.id, note_id=note.id, note_created_at=note.created_at, metadata=metadata,
+    )
+    # Never change cheque status, invoice face value, frozen lines or paid state.
+    note.message = _build_invoice_range_note_message(metadata)
+    db.add(note)
+    _create_client_note(db, client_id=client.id, author_user_id=actor.id,
+        message=f"Rattachement de {len(additions)} chèque(s) existant(s) à {metadata.get('invoice_number')}: "
+        + ", ".join(str(row.id) for row in additions) + ". Statuts d'encaissement conservés.")
+    db.commit()
+    return {"linked_count": len(additions), "already_linked": False}
 
 
 @router.patch("/{client_id}/manual-transactions/{transaction_id}", response_model=AdminClientPaymentOut)

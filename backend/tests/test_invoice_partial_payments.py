@@ -25,7 +25,7 @@ from app.db.base import Base
 from app.models.client_record import ClientManualTransaction, ClientNoteEntry
 from app.models.ops import LegalEntity
 from app.models.user import User, UserRole
-from app.schemas.admin import AdminClientManualTransactionCreateRequest
+from app.schemas.admin import AdminClientManualTransactionCreateRequest, AdminClientCheckReconciliationRequest
 from app.services import invoice_partial_payments as service
 from app.services import payment_checkout as gateway
 from app.services.payment_checkout import PaymentLookupResult, CheckoutCreateResult
@@ -144,6 +144,137 @@ class PartialPaymentPostgresTests(unittest.TestCase):
         rid = request_id or uuid4()
         result = service.create_request(self.db, client_id=self.owner_id, note_id=self.note_id, request_id=rid, amount=Decimal(amount), actor=self.actor)
         return rid, result
+
+    def received_check(self, amount="395.50", **overrides):
+        values = dict(user_id=self.owner_id, transaction_type="PAYMENT", status="CHECK_RECEIVED",
+            label="Chèque reçu", description="À déposer en septembre 2026", reference="MODE:CHECK",
+            total_incl_vat=-Decimal(amount), amount_excl_vat=-Decimal(amount), vat_amount=0,
+            vat_rate=0, currency="EUR", legal_entity_id=self.entity_id)
+        values.update(overrides)
+        row = ClientManualTransaction(**values)
+        self.db.add(row)
+        self.db.commit()
+        return row
+
+    def link_checks(self, rows, note_id=None):
+        return invoices.reconcile_existing_received_checks(self.owner_id, note_id or self.note_id,
+            AdminClientCheckReconciliationRequest(transaction_ids=[row.id for row in rows]), self.db, self.actor)
+
+    def test_four_existing_checks_cover_invoice_without_changing_face_or_status(self):
+        data = invoices._parse_invoice_range_note_entry(self.note)
+        data.update(totals_by_currency={"EUR": "1782.00"}, total_to_pay_by_currency={"EUR": "1582.00"},
+            auto_include_previous_balance=True)
+        self.note.message = invoices._build_invoice_range_note_message(data)
+        self.db.commit()
+        checks = [self.received_check() for _ in range(4)]
+        self.assertEqual(self.link_checks(checks)["linked_count"], 4)
+        self.db.refresh(self.note)
+        data = invoices._parse_invoice_range_note_entry(self.note)
+        self.assertEqual(data["totals_by_currency"], {"EUR": "1782.00"})
+        self.assertEqual(data["total_to_pay_by_currency"], {"EUR": "0.00"})
+        self.assertEqual(data["invoice_status"], "ISSUED")
+        self.assertEqual(invoices._invoice_range_pending_check_coverage(self.db, metadata=data),
+            ("COVERED", {"EUR": "1582.00"}, 4))
+        self.assertEqual(self.transaction_count(), 4)
+        self.assertTrue(all(row.status == "CHECK_RECEIVED" and row.description == "À déposer en septembre 2026" for row in checks))
+        self.assertTrue(self.link_checks(checks)["already_linked"])
+        self.email.assert_not_called()
+
+    def test_link_checks_rejects_overpayment_atomically(self):
+        checks = [self.received_check("700"), self.received_check("700")]
+        with self.assertRaises(HTTPException) as error:
+            self.link_checks(checks)
+        self.assertEqual(error.exception.status_code, 409)
+        self.db.rollback()
+        self.assertFalse(invoices._invoice_range_reconciled_manual_payment_ids(invoices._parse_invoice_range_note_entry(self.note)))
+
+    def test_link_checks_rejects_another_invoice(self):
+        check = self.received_check()
+        self.link_checks([check])
+        data = invoice_metadata()
+        data["seller_legal_entity_id"] = str(self.entity_id)
+        other = ClientNoteEntry(user_id=self.owner_id, entry_type="AUTO", message=invoices._build_invoice_range_note_message(data))
+        self.db.add(other)
+        self.db.commit()
+        with self.assertRaises(HTTPException) as error:
+            self.link_checks([check], other.id)
+        self.assertEqual(error.exception.status_code, 409)
+
+    def test_link_checks_rejects_wrong_currency_status_and_entity(self):
+        for overrides in ({"currency": "USD"}, {"status": "PAID"}, {"reference": "MODE:CASH"},
+                          {"legal_entity_id": None}, {"total_incl_vat": Decimal("395.50")}):
+            with self.subTest(overrides=overrides):
+                check = self.received_check(**overrides)
+                with self.assertRaises(HTTPException):
+                    self.link_checks([check])
+                self.db.rollback()
+
+    def test_link_checks_rejects_other_client(self):
+        check = self.received_check(user_id=self.actor.id)
+        with self.assertRaises(HTTPException):
+            self.link_checks([check])
+
+    def test_link_checks_rejects_link_on_invoice_outside_current_scope(self):
+        check = self.received_check()
+        data = invoice_metadata()
+        data["reconciled_manual_payment_ids"] = [str(check.id)]
+        other = ClientNoteEntry(user_id=self.actor.id, entry_type="AUTO", message=invoices._build_invoice_range_note_message(data))
+        self.db.add(other)
+        self.db.commit()
+        with self.assertRaises(HTTPException) as error:
+            self.link_checks([check])
+        self.assertEqual(error.exception.status_code, 409)
+
+    def test_link_checks_rejects_live_partial_payment(self):
+        self.new_request()
+        check = self.received_check()
+        with self.assertRaises(HTTPException) as error:
+            self.link_checks([check])
+        self.assertEqual(error.exception.status_code, 409)
+
+    def test_link_checks_partial_coverage_then_remaining_batch(self):
+        first, second = self.received_check("500"), self.received_check("596")
+        self.link_checks([first])
+        self.db.refresh(self.note)
+        data = invoices._parse_invoice_range_note_entry(self.note)
+        self.assertEqual(data["total_to_pay_by_currency"], {"EUR": "596.00"})
+        self.assertEqual(invoices._invoice_range_pending_check_coverage(self.db, metadata=data)[0], "PARTIAL")
+        self.link_checks([first, second])
+        self.db.refresh(self.note)
+        data = invoices._parse_invoice_range_note_entry(self.note)
+        self.assertEqual(data["total_to_pay_by_currency"], {"EUR": "0.00"})
+        self.assertEqual(data["invoice_status"], "ISSUED")
+        from app.services.invoice_reminders import _invoice_is_covered_by_received_checks
+        self.assertTrue(_invoice_is_covered_by_received_checks(self.db, data))
+
+    def test_link_checks_rejects_paid_cancelled_and_split_invoices(self):
+        check = self.received_check()
+        original = invoices._parse_invoice_range_note_entry(self.note)
+        for changes in ({"invoice_status": "PAID"}, {"invoice_status": "CANCELLED"},
+                        {"family_billing_split_group_id": str(uuid4())}, {"document_type": "CREDIT_NOTE"}):
+            with self.subTest(changes=changes):
+                self.note.message = invoices._build_invoice_range_note_message({**original, **changes})
+                self.db.commit()
+                with self.assertRaises(HTTPException) as error:
+                    self.link_checks([check])
+                self.assertEqual(error.exception.status_code, 409)
+                self.db.rollback()
+
+    def test_link_checks_concurrent_same_payment_is_idempotent(self):
+        check = self.received_check("1096")
+        check_id, actor_id = check.id, self.actor.id
+        self.db.commit()
+        def run():
+            with self.Session() as db:
+                return invoices.reconcile_existing_received_checks(self.owner_id, self.note_id,
+                    AdminClientCheckReconciliationRequest(transaction_ids=[check_id]), db, db.get(User, actor_id))
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda _: run(), range(2)))
+        self.assertEqual(sorted(result["linked_count"] for result in results), [0, 1])
+        self.db.refresh(self.note)
+        data = invoices._parse_invoice_range_note_entry(self.note)
+        self.assertEqual(data["total_to_pay_by_currency"], {"EUR": "0.00"})
+        self.assertEqual(data["reconciled_manual_payment_ids"], [str(check_id)])
 
     def load_request(self, rid):
         note, data, payer = service.load(self.db, self.owner_id, self.note_id)

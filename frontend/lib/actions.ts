@@ -6944,6 +6944,25 @@ export async function createAdminClientManualTransactionAction(formData: FormDat
   redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=paiements`, "ok", t("admin.client_action.manual_transaction_added")));
 }
 
+export async function reconcileAdminClientChecksAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) redirect("/login?error_code=session_expired");
+  await ensureAdminAndGetLanguage(token);
+  const clientId = parseUuid(String(formData.get("client_id") ?? ""));
+  const noteId = parseUuid(String(formData.get("invoice_note_id") ?? ""));
+  const ids = formData.getAll("transaction_ids").map((value) => parseUuid(String(value)));
+  if (!clientId || !noteId || !ids.length || ids.some((id) => !id)) {
+    redirect(appendQueryMessage(clientId ? `/admin/clients/${clientId}?tab=paiements` : "/admin/clients", "error", "Sélectionnez une facture et au moins un chèque."));
+  }
+  const result = await backendRequest<{ linked_count: number }>(
+    `/api/v1/admin/clients/${clientId}/invoices/range/${noteId}/received-checks`,
+    { method: "POST", body: JSON.stringify({ transaction_ids: ids }) }, token,
+  );
+  revalidatePath(`/admin/clients/${clientId}`);
+  redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=paiements`, result.ok ? "ok" : "error",
+    result.ok ? "Chèques rattachés à la facture. Statuts d’encaissement conservés." : result.message));
+}
+
 export async function updateAdminClientManualTransactionAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {

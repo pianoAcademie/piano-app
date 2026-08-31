@@ -1869,6 +1869,10 @@ class AdminClientManualTransactionCreateRequest(BaseModel):
     check_receipt_location_id: UUID | None = None
 
 
+class AdminClientCheckReconciliationRequest(BaseModel):
+    transaction_ids: list[UUID] = Field(min_length=1, max_length=20)
+
+
 class AdminClientManualTransactionUpdateRequest(BaseModel):
     occurred_at: datetime | None = None
     label: str | None = Field(default=None, max_length=255)

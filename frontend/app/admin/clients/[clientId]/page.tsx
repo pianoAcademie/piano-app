@@ -29,6 +29,7 @@ import {
   reissueAdminClientRangeInvoiceAction,
   createAdminClientManualTransactionAction,
   updateAdminClientManualTransactionAction,
+  reconcileAdminClientChecksAction,
   updateAdminClientManualTransactionStatusAction,
   deleteAdminClientManualTransactionAction,
   dismissAdminClientBillingAdjustmentAction,
@@ -7010,6 +7011,37 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               ×
             </Link>
             <h3 className="modal-title">{t("admin.client_detail.edit_transaction_title")}</h3>
+            {selectedManualTransactionForEdit.payment_method_code === "CHECK" &&
+              selectedManualTransactionForEdit.can_edit &&
+              ["CHECK_RECEIVED", "CHECK_DEPOSITED"].includes(selectedManualTransactionForEdit.status) ? (
+              <form action={reconcileAdminClientChecksAction} className="card grid top-gap-sm">
+                <input type="hidden" name="client_id" value={client.id} />
+                <h4>Rattacher les chèques existants à une facture</h4>
+                <p className="muted">Sélectionnez les chèques et la facture, puis confirmez. Aucun nouveau paiement ne sera créé. Les montants, les dates de dépôt et les statuts d’encaissement seront conservés. Les autres modifications de cette fenêtre ne seront pas enregistrées par ce bouton.</p>
+                <label>Facture à couvrir
+                  <select name="invoice_note_id" defaultValue="" required>
+                    <option value="" disabled>Choisir une facture</option>
+                    {reconcilableRangeInvoices.filter((invoice) => invoice.sellerLegalEntityId === selectedManualTransactionForEdit.seller_legal_entity_id).map((invoice) => (
+                      <option key={invoice.noteId} value={invoice.noteId}>{invoice.invoiceNumber} · Solde : {invoice.balanceLabel ?? invoice.totalLabel}</option>
+                    ))}
+                  </select>
+                </label>
+                <fieldset>
+                  <legend>Chèques à rattacher (sélection explicite)</legend>
+                  {payments.filter((payment) => payment.source === "MANUAL" && payment.manual_transaction_type === "PAYMENT" &&
+                    payment.payment_method_code === "CHECK" && payment.can_edit &&
+                    ["CHECK_RECEIVED", "CHECK_DEPOSITED"].includes(payment.status) &&
+                    payment.seller_legal_entity_id === selectedManualTransactionForEdit.seller_legal_entity_id &&
+                    payment.student_user_id === selectedManualTransactionForEdit.student_user_id).map((payment) => (
+                    <label className="checkbox" key={payment.id}>
+                      <input type="checkbox" name="transaction_ids" value={payment.id} defaultChecked={payment.id === selectedManualTransactionForEdit.id} />
+                      {formatMoney(String(Math.abs(Number(payment.total_incl_vat))), payment.currency, language)} · {payment.description || payment.label}
+                    </label>
+                  ))}
+                </fieldset>
+                <ClientActionSubmitButton pendingLabel="Rattachement…">Confirmer le rattachement à la facture</ClientActionSubmitButton>
+              </form>
+            ) : null}
             {selectedManualTransactionForEdit.can_edit ? (
               <form action={updateAdminClientManualTransactionAction} className="grid top-gap-sm">
                 <input type="hidden" name="client_id" value={client.id} />
