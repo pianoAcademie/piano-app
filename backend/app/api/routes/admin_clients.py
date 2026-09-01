@@ -10074,6 +10074,17 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
         )
 
     for booking, session_obj, course_type, location, forfait_subscription, plan in rows_bookings:
+        if (
+            forfait_subscription is not None
+            and plan is not None
+            and plan.kind == PlanKind.FORFAIT
+            and str(forfait_subscription.billing_method_code or "").strip().upper()
+            in {"CARD_MONTHLY_FIXED", "CB_MONTHLY_FIXED"}
+        ):
+            # A fixed monthly annual plan is billed through its dated installment
+            # transactions. The bookings remain operational reservations, but must
+            # not also become invoice lines or the annual tuition is charged twice.
+            continue
         recovery_role = makeup_role(booking)
         if recovery_role == "replacement":
             # The original lesson is the charge. Keep this free replacement in
