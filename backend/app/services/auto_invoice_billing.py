@@ -59,10 +59,12 @@ def _compute_period_for_occurrence(
     normalized_timing = (billing_timing or "").strip().upper()
     if normalized_timing == "PREVIOUS_LESSONS":
         period_start = _add_months(cycle_anchor, -months)
-        period_end = cycle_anchor
+        period_end = cycle_anchor - timedelta(days=1)
         return period_start, period_end
     period_start = cycle_anchor
-    period_end = _add_months(cycle_anchor, months)
+    # Invoice-range boundaries are inclusive. Stop on the day before the next
+    # cycle so an installment dated on that next anchor is not billed twice.
+    period_end = _add_months(cycle_anchor, months) - timedelta(days=1)
     return period_start, period_end
 
 
