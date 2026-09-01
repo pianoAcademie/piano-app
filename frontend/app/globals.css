@@ -3022,6 +3022,46 @@ button.danger:focus-visible {
   align-items: start;
 }
 
+.client-regular-schedule-list {
+  display: grid;
+  gap: 10px;
+}
+
+.client-regular-schedule-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.5fr) repeat(4, minmax(130px, 1fr));
+  gap: 12px;
+  align-items: center;
+  padding: 14px 16px;
+  border: 1px solid #dbe2ea;
+  border-radius: 14px;
+  background: #fbfcfe;
+}
+
+.client-regular-schedule-row > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.client-regular-schedule-row small {
+  color: #687386;
+}
+
+.client-regular-schedule-activity {
+  justify-items: start;
+}
+
+@media (max-width: 1100px) {
+  .client-regular-schedule-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .client-regular-schedule-activity {
+    grid-column: 1 / -1;
+  }
+}
+
 .client-hero {
   background:
     linear-gradient(180deg, #222831 0 58%, #f4f6f8 58% 100%);

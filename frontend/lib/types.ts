@@ -589,6 +589,8 @@ export type AdminClientBookingOut = {
   session_end_at_utc: string;
   course_type_name: string;
   location_name: string;
+  recurrence_group_id: string | null;
+  professor_name: string | null;
   client_plan_subscription_id: string | null;
   plan_name: string | null;
   status: string;
