@@ -12,6 +12,10 @@
 .check { display: flex !important; grid-template-columns: auto 1fr; align-items: center; justify-content: flex-start; }
 .check input { width: auto; }
 .translation { border-top: 1px solid #eadfcc; padding-top: 12px; }
+.audiences { border: 1px solid #ead3aa; border-radius: 14px; padding: 12px; }
+.audiences legend { font-weight: 800; padding: 0 6px; }
+.audiences p { margin: 0 0 10px; color: #70665d; font-size: .9rem; }
+.audienceGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
 .translation > .formGrid { margin-top: 12px; }
 .list { display: grid; gap: 12px; }
 .article header { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
@@ -24,4 +28,5 @@
   .hero, .article header { align-items: flex-start; flex-direction: column; }
   .formGrid { grid-template-columns: 1fr; }
   .wide { grid-column: auto; }
+  .audienceGrid { grid-template-columns: 1fr; }
 }

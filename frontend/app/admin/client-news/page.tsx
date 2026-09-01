@@ -3,11 +3,23 @@ import { redirect } from "next/navigation";
 import { createClientNewsAction, deleteClientNewsAction, updateClientNewsAction } from "../../../lib/actions";
 import { getAdminToken } from "../../../lib/auth-cookies";
 import { backendRequest } from "../../../lib/backend";
-import type { AdminClientNewsOut, UserOut } from "../../../lib/types";
+import type { AdminClientNewsOut, ClientNewsAudienceCode, UserOut } from "../../../lib/types";
 import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage } from "../../../lib/ui-i18n";
 import styles from "./client-news.module.css";
 
 type SearchParams = Record<string, string | string[] | undefined>;
+
+const AUDIENCES: Array<{ code: ClientNewsAudienceCode; fr: string; en: string }> = [
+  { code: "ALL_CLIENTS", fr: "Tous les clients", en: "All clients" },
+  { code: "PARENTS_CHILD_5_12", fr: "Parents d’enfants de 5 à 12 ans", en: "Parents of children aged 5–12" },
+  { code: "PARENTS_TEEN", fr: "Parents d’adolescents", en: "Parents of teenagers" },
+  { code: "PARENTS_EARLY_MUSIC", fr: "Parents – éveil musical", en: "Parents – early music" },
+  { code: "PARENTS_INITIATION", fr: "Parents – initiation", en: "Parents – initiation" },
+  { code: "ADULT_STUDENTS", fr: "Élèves adultes", en: "Adult students" },
+  { code: "CHILD_ONLINE_ONLY", fr: "Parents – enfants uniquement en ligne", en: "Parents – online-only children" },
+  { code: "ADULT_ONLINE_ONLY", fr: "Adultes uniquement en ligne", en: "Online-only adults" },
+  { code: "PROFESSORS", fr: "Professeurs uniquement", en: "Professors only" },
+];
 
 const NEWS_TEXT: Record<UiLanguage, Record<string, string>> = {
   fr: {
@@ -45,6 +57,8 @@ const NEWS_TEXT: Record<UiLanguage, Record<string, string>> = {
     delete: "Supprimer",
     empty: "Aucune actualité pour le moment.",
     access_denied: "Accès non autorisé",
+    audience: "Public concerné *",
+    audience_help: "Plusieurs catégories clients peuvent être sélectionnées. Une actualité n’est affichée qu’une fois par compte.",
   },
   en: {
     status_draft: "Draft",
@@ -81,6 +95,8 @@ const NEWS_TEXT: Record<UiLanguage, Record<string, string>> = {
     delete: "Delete",
     empty: "No news items yet.",
     access_denied: "Access denied",
+    audience: "Audience *",
+    audience_help: "Several client categories may be selected. A news item is shown only once per account.",
   },
 };
 
@@ -126,6 +142,23 @@ function NewsFields({ article, language }: { article?: AdminClientNewsOut; langu
       <label><span>{text.publication_paris}</span><input type="datetime-local" name="published_at_local" defaultValue={localDateTimeValue(article?.published_at ?? null)} /></label>
       <label><span>{text.optional_expiration}</span><input type="datetime-local" name="expires_at_local" defaultValue={localDateTimeValue(article?.expires_at ?? null)} /></label>
       <label className={styles.check}><input type="checkbox" name="is_pinned" defaultChecked={article?.is_pinned ?? false} /> {text.pin_first}</label>
+      <fieldset className={`${styles.audiences} ${styles.wide}`}>
+        <legend>{text.audience}</legend>
+        <p>{text.audience_help}</p>
+        <div className={styles.audienceGrid}>
+          {AUDIENCES.map((audience) => (
+            <label className={styles.check} key={audience.code}>
+              <input
+                type="checkbox"
+                name="audience_codes"
+                value={audience.code}
+                defaultChecked={(article?.audience_codes ?? ["ALL_CLIENTS"]).includes(audience.code)}
+              />
+              {language === "en" ? audience.en : audience.fr}
+            </label>
+          ))}
+        </div>
+      </fieldset>
       <label className={styles.wide}><span>{text.optional_link}</span><input type="url" name="link_url" placeholder="https://..." defaultValue={article?.link_url ?? ""} /></label>
       <label><span>{text.link_label}</span><input name="link_label_fr" maxLength={120} placeholder={text.learn_more} defaultValue={article?.link_label_fr ?? ""} /></label>
       <details className={`${styles.translation} ${styles.wide}`}>
@@ -179,6 +212,7 @@ export default async function AdminClientNewsPage({ searchParams = {} }: { searc
           <article className={styles.article} key={article.id}>
             <header><div><h2>{language === "en" ? article.title_en || article.title_fr : article.title_fr}</h2><p>{language === "en" ? article.summary_en || article.body_en?.slice(0, 180) || article.summary_fr || article.body_fr.slice(0, 180) : article.summary_fr || article.body_fr.slice(0, 180)}</p></div><span className={styles.badge}>{article.is_pinned ? `${text.pinned} · ` : ""}{statusLabel(article, language)}</span></header>
             <p className={styles.meta}>{text.publication} : {article.published_at ? new Date(article.published_at).toLocaleString(locale, { timeZone: "Europe/Paris" }) : text.not_published}{article.expires_at ? ` · ${text.expiration} : ${new Date(article.expires_at).toLocaleString(locale, { timeZone: "Europe/Paris" })}` : ""}</p>
+            <p className={styles.meta}>{text.audience} : {(article.audience_codes ?? ["ALL_CLIENTS"]).map((code) => AUDIENCES.find((item) => item.code === code)?.[language] ?? code).join(" · ")}</p>
             <details>
               <summary>{text.edit}</summary>
               <form action={updateClientNewsAction} className={styles.form}>

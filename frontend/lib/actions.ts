@@ -18873,6 +18873,10 @@ function clientNewsPayload(formData: FormData): Record<string, unknown> {
   const status = String(formData.get("status") ?? "DRAFT").trim().toUpperCase() === "PUBLISHED"
     ? "PUBLISHED"
     : "DRAFT";
+  const selectedAudiences = formData.getAll("audience_codes").map((value) => String(value));
+  const audienceCodes = selectedAudiences.length > 1
+    ? selectedAudiences.filter((code) => code !== "ALL_CLIENTS")
+    : selectedAudiences;
   return {
     title_fr: String(formData.get("title_fr") ?? "").trim(),
     title_en: optionalField(formData, "title_en"),
@@ -18885,6 +18889,7 @@ function clientNewsPayload(formData: FormData): Record<string, unknown> {
     link_label_en: optionalField(formData, "link_label_en"),
     status,
     is_pinned: checkboxField(formData, "is_pinned"),
+    audience_codes: audienceCodes,
     published_at: status === "PUBLISHED" ? clientNewsDateTime(formData, "published_at_local") : null,
     expires_at: clientNewsDateTime(formData, "expires_at_local"),
   };

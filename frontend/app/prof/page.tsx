@@ -53,6 +53,7 @@ import type {
   ProfessorSessionMessageOut,
   ProfessorInboxMessageOut,
   ProfessorSessionOut,
+  ClientNewsOut,
   UserOut,
 } from "../../lib/types";
 import { normalizeUiLanguage, resolveAuthOkMessage, type UiLanguage, uiText } from "../../lib/ui-i18n";
@@ -612,6 +613,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
     catalogRequestsResult,
     localIntakesResult,
     selectedLocalIntakeResult,
+    newsResult,
   ] = await Promise.all([
     backendRequest<ProfessorMeOut>("/api/v1/professors/me", {}, token),
     currentTab === "overview"
@@ -677,6 +679,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
           token,
         )
       : Promise.resolve({ ok: true as const, status: 200, data: null as ProfessorLocalIntakeDetailOut | null }),
+    backendRequest<ClientNewsOut[]>("/api/v1/professors/me/news", {}, token),
   ]);
 
   if (!profileResult.ok) {
@@ -684,6 +687,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
   }
 
   const profile = profileResult.data;
+  const professorNews = newsResult.ok ? newsResult.data : [];
   const fullName = `${profile.first_name} ${profile.last_name}`.trim();
   const canViewAllSchoolSessions = Boolean(
     profile.permissions.can_view_all_school_sessions
@@ -959,6 +963,20 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
 
       {currentTab === "overview" ? (
         <section className="teacher-section-stack">
+          {professorNews.length > 0 ? (
+            <ActionCard title={language === "en" ? "School news" : "Actualités de l’école"} subtitle={language === "en" ? "Information for professors" : "Informations destinées aux professeurs"}>
+              <div className="client-news-list">
+                {professorNews.map((article) => (
+                  <article className={`client-news-card ${article.is_pinned ? "is-pinned" : ""}`} key={article.id}>
+                    <h2>{article.title}</h2>
+                    {article.summary ? <p className="client-news-summary">{article.summary}</p> : null}
+                    <div className="client-news-body">{article.body}</div>
+                    {article.link_url ? <a className="mode-link client-news-link" href={article.link_url} target="_blank" rel="noreferrer">{article.link_label || (language === "en" ? "Learn more" : "En savoir plus")}</a> : null}
+                  </article>
+                ))}
+              </div>
+            </ActionCard>
+          ) : null}
           {pendingLocalIntakes.length > 0 ? (
             <ActionCard
               title="Confirmations Bar-le-Duc"

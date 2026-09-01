@@ -1184,11 +1184,23 @@ export type AdminClientNewsOut = {
   link_label_en: string | null;
   status: "DRAFT" | "PUBLISHED";
   is_pinned: boolean;
+  audience_codes: ClientNewsAudienceCode[];
   published_at: string | null;
   expires_at: string | null;
   created_at: string;
   updated_at: string;
 };
+
+export type ClientNewsAudienceCode =
+  | "ALL_CLIENTS"
+  | "PARENTS_CHILD_5_12"
+  | "PARENTS_TEEN"
+  | "PARENTS_EARLY_MUSIC"
+  | "PARENTS_INITIATION"
+  | "ADULT_STUDENTS"
+  | "CHILD_ONLINE_ONLY"
+  | "ADULT_ONLINE_ONLY"
+  | "PROFESSORS";
 
 export type ClientContentLessonOut = {
   id: string;
