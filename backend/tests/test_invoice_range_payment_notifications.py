@@ -338,7 +338,7 @@ class InvoiceRangePaymentNotificationTests(unittest.TestCase):
 
             def scalars(self, *_args: object, **_kwargs: object) -> _FakeScalarResult:
                 self.scalar_calls += 1
-                rows_by_call = {1: [charge], 2: [target_note], 3: []}
+                rows_by_call = {1: [charge], 2: [target_note], 3: [], 4: []}
                 return _FakeScalarResult(rows_by_call[self.scalar_calls])
 
             def get(self, *_args: object, **_kwargs: object) -> object:
@@ -376,6 +376,51 @@ class InvoiceRangePaymentNotificationTests(unittest.TestCase):
         self.assertEqual(persisted_metadata["total_to_pay_by_currency"], {"EUR": "1300.00"})
         self.assertEqual(persisted_metadata["late_deposit_source_invoice_number"], "PA26-0100")
         self.assertEqual(persisted_metadata["invoice_status"], "ISSUED")
+
+    def test_paid_deposit_matches_legacy_annual_invoice_through_manual_student_rows(self) -> None:
+        client_id, student_id, charge_id, extra_id, payment_id = (uuid4() for _ in range(5))
+        source_note = ClientNoteEntry(id=uuid4(), user_id=client_id, entry_type="AUTO", message="",
+            created_at=datetime(2026, 8, 30, tzinfo=timezone.utc))
+        source_metadata = {"invoice_number":"PA26-0413","invoice_status":"PAID",
+            "included_payment_keys":[f"MANUAL:{charge_id}"]}
+        target_metadata = {"kind":"INVOICE_RANGE","invoice_number":"PA26-0649",
+            "start_date":"2026-05-01","end_date":"2027-06-30","issued_date":"2026-08-17",
+            "due_date":"2026-09-01","layout":"NORMAL","billing_entity":"PIANO_ACADEMIE",
+            "totals_by_currency":{"EUR":"4465.00"},
+            "total_to_pay_by_currency":{"EUR":"200.00"},"invoice_status":"ISSUED",
+            "included_payment_keys":[f"MANUAL:{extra_id}"]}
+        target_note = ClientNoteEntry(id=uuid4(),user_id=client_id,entry_type="AUTO",
+            message=admin_clients._build_invoice_range_note_message(target_metadata),
+            created_at=datetime(2026,8,17,tzinfo=timezone.utc))
+        def transaction(row_id: object, student: object, total: str) -> ClientManualTransaction:
+            return ClientManualTransaction(id=row_id,user_id=client_id,student_user_id=student,
+                transaction_type="CHARGE",status="COMPLETED",label="line",occurred_at=datetime.now(timezone.utc),
+                amount_excl_vat=Decimal(total),vat_rate=Decimal("0"),vat_amount=Decimal("0"),
+                total_incl_vat=Decimal(total),currency="EUR")
+        charge = transaction(charge_id,student_id,"200")
+        charge.category = "PRE_REGISTRATION_DEPOSIT"
+        extra = transaction(extra_id,student_id,"25")
+        payment = transaction(payment_id,student_id,"-200")
+        payment.transaction_type = "PAYMENT"
+
+        class Db:
+            def __init__(self) -> None: self.calls=0; self.added=[]
+            def scalars(self,*_a:object,**_k:object)->_FakeScalarResult:
+                self.calls += 1
+                return _FakeScalarResult({1:[charge],2:[target_note],3:[extra],4:[]}[self.calls])
+            def get(self,*_a:object,**_k:object)->object: return payment
+            def add(self,value:object)->None: self.added.append(value)
+        db=Db()
+        with patch.object(admin_clients,"_synchronize_invoice_range_reconciled_payment_metadata") as sync:
+            sync.side_effect=lambda *_a,**kw:{**kw["metadata"],"total_to_pay_by_currency":{"EUR":"0.00"}}
+            result=admin_clients._propagate_paid_deposit_to_issued_long_period_invoice(db,owner_client_id=client_id,
+                source_note=source_note,source_metadata=source_metadata,payment_transaction_id=payment_id)  # type: ignore[arg-type]
+        self.assertEqual(db.calls, 4)
+        self.assertEqual(result,target_note.id)
+        persisted=admin_clients._parse_invoice_range_note_entry(target_note)
+        assert persisted is not None
+        self.assertEqual(persisted["reconciled_manual_payment_ids"],[str(payment_id)])
+        self.assertEqual(persisted["invoice_status"],"PAID")
 
 
 if __name__ == "__main__":

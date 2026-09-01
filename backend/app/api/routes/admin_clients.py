@@ -4089,7 +4089,7 @@ def _propagate_paid_deposit_to_issued_long_period_invoice(
         .order_by(ClientNoteEntry.created_at.desc(), ClientNoteEntry.id.desc())
         .with_for_update()
     ).all()
-    candidates: list[tuple[ClientNoteEntry, dict[str, object]]] = []
+    dated_candidates: list[tuple[ClientNoteEntry, dict[str, object]]] = []
     for candidate_note in notes:
         candidate_metadata = _parse_invoice_range_note_entry(candidate_note)
         if candidate_metadata is None:
@@ -4105,6 +4105,27 @@ def _propagate_paid_deposit_to_issued_long_period_invoice(
             continue
         if (end_date - start_date).days < 180:
             continue
+        dated_candidates.append((candidate_note, candidate_metadata))
+
+    # Older annual invoices did not always persist ``student_user_id``. Load
+    # their manual invoice rows as additional identity evidence before matching
+    # the deposit. Without this, an already-paid deposit remains isolated on its
+    # own invoice even when the annual invoice contains charges for one student.
+    candidate_manual_ids = {
+        transaction_id
+        for _note, metadata in dated_candidates
+        for payment_key in _normalize_invoice_range_payment_keys(metadata.get("included_payment_keys"))
+        for transaction_id in [_manual_transaction_id_from_payment_key(payment_key)]
+        if transaction_id is not None and transaction_id not in manual_transactions_by_id
+    }
+    if candidate_manual_ids:
+        candidate_transactions = db.scalars(
+            select(ClientManualTransaction).where(ClientManualTransaction.id.in_(candidate_manual_ids))
+        ).all()
+        manual_transactions_by_id.update({row.id: row for row in candidate_transactions})
+
+    candidates: list[tuple[ClientNoteEntry, dict[str, object]]] = []
+    for candidate_note, candidate_metadata in dated_candidates:
         candidate_student_ids = _invoice_range_student_ids_for_late_deposit_reconciliation(
             candidate_metadata,
             manual_transactions_by_id=manual_transactions_by_id,
