@@ -5111,14 +5111,21 @@ def confirm_client_payment(
             subscription.last_payment_at = _utcnow()
             changed = True
         subscription.last_successful_charge_at = subscription.last_payment_at
-        if subscription.status in {
+        statuses_reactivated_by_paid_checkout = {
             SubscriptionStatus.PENDING,
             SubscriptionStatus.PAUSED,
             SubscriptionStatus.ACTIVE,
             SubscriptionStatus.PAYMENT_ALERT,
             SubscriptionStatus.PRE_TERMINATION,
             SubscriptionStatus.TERMINATED,
-        }:
+        }
+        # A one-off PACK checkout can briefly be observed as cancelled/failed
+        # before the provider exposes its final paid state. A later successful
+        # confirmation must restore the purchased credit instead of leaving a
+        # paid trial unusable. Recurring/admin-cancelled contracts stay excluded.
+        if plan.kind == PlanKind.PACK:
+            statuses_reactivated_by_paid_checkout.add(SubscriptionStatus.CANCELLED)
+        if subscription.status in statuses_reactivated_by_paid_checkout:
             if subscription.status != SubscriptionStatus.ACTIVE and status_before != SubscriptionStatus.PAUSED:
                 subscription.status = SubscriptionStatus.ACTIVE
                 changed = True
