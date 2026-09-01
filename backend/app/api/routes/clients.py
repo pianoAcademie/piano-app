@@ -1576,14 +1576,16 @@ def _active_formula_options_for_course_type(
 ) -> list[ClientSessionFormulaOptionOut]:
     if not allowed_plan_kinds:
         return []
-    target_keys = {
-        normalized
-        for normalized in (
-            _normalize_course_access_key(course_type_name),
-            _normalize_course_access_key(course_type_service_code),
-        )
-        if normalized
-    }
+    # ``ACTIVITY`` is the historical catch-all service code used by many
+    # unrelated activities. Treating it as an entitlement key made adult
+    # subscriptions and incompatible trial packs appear for Eveil musical.
+    # Keep the normalized-name fallback for legacy duplicate course types,
+    # but never infer access from this generic service code alone.
+    generic_service_keys = {"activity"}
+    target_keys = {_normalize_course_access_key(course_type_name)}
+    normalized_target_service = _normalize_course_access_key(course_type_service_code)
+    if normalized_target_service and normalized_target_service not in generic_service_keys:
+        target_keys.add(normalized_target_service)
 
     try:
         candidate_rows = db.execute(
@@ -1628,14 +1630,11 @@ def _active_formula_options_for_course_type(
             and plan.kind == PlanKind.PACK
             and grant_credit_type_id == credit_type_id
         )
-        entitlement_keys = {
-            normalized
-            for normalized in (
-                _normalize_course_access_key(entitlement_name),
-                _normalize_course_access_key(entitlement_service_code),
-            )
-            if normalized
-        }
+        entitlement_keys = {_normalize_course_access_key(entitlement_name)}
+        normalized_entitlement_service = _normalize_course_access_key(entitlement_service_code)
+        if normalized_entitlement_service and normalized_entitlement_service not in generic_service_keys:
+            entitlement_keys.add(normalized_entitlement_service)
+        entitlement_keys.discard("")
         matches_normalized_activity = bool(entitlement_keys & target_keys) and entitlement_mode == course_type_mode
         if not (matches_exact_entitlement or matches_credit_type or matches_normalized_activity):
             continue
@@ -1697,6 +1696,18 @@ def _eligible_formula_options_for_member(
             continue
         eligible.append(option)
     return eligible
+
+
+def _direct_payment_amount_for_member(
+    direct_payment_amount: Decimal | None,
+    *,
+    formula_options: list[ClientSessionFormulaOptionOut],
+) -> Decimal | None:
+    """Require the explicit trial contract whenever a trial is available."""
+
+    if any(option.is_trial_offer for option in formula_options):
+        return None
+    return direct_payment_amount
 
 
 def _session_purchase_catalog(
@@ -4708,6 +4719,16 @@ def get_client_session_reservation_options(
             if not _session_trial_allowed(session_obj, member.client_kind):
                 member_formula_options = [option for option in member_formula_options if not option.is_trial_offer]
 
+            # A first trial must use the explicit trial formula so that the
+            # participant, unique-trial rule and activity-specific price are
+            # carried through checkout. Offering the regular unit price next
+            # to it allowed users to bypass that contract and displayed €32
+            # instead of the configured Eveil trial price (€25).
+            member_direct_payment_amount = _direct_payment_amount_for_member(
+                direct_payment_amount,
+                formula_options=member_formula_options,
+            )
+
             selected_subscription = _select_eligible_subscription(
                 db,
                 user_id=member.id,
@@ -4812,7 +4833,7 @@ def get_client_session_reservation_options(
                 )
                 continue
 
-            if direct_payment_amount is not None and member_formula_options:
+            if member_direct_payment_amount is not None and member_formula_options:
                 member_options.append(
                     ClientSessionReservationMemberOptionOut(
                         member_id=member.id,
@@ -4828,7 +4849,7 @@ def get_client_session_reservation_options(
                             else "Aucun credit disponible. Vous pouvez acheter une formule compatible ou payer cette reservation a l unite."
                         ),
                         reason_code="ACTIVE_PACK_INCOMPATIBLE" if has_active_incompatible_pack else None,
-                        direct_payment_amount_ttc=direct_payment_amount,
+                        direct_payment_amount_ttc=member_direct_payment_amount,
                         direct_payment_currency=direct_payment_currency,
                         formula_options=member_formula_options,
                     )
@@ -4856,7 +4877,7 @@ def get_client_session_reservation_options(
                 )
                 continue
 
-            if direct_payment_amount is not None:
+            if member_direct_payment_amount is not None:
                 member_options.append(
                     ClientSessionReservationMemberOptionOut(
                         member_id=member.id,
@@ -4871,7 +4892,7 @@ def get_client_session_reservation_options(
                             else "Aucun credit disponible. Cette reservation peut etre payee a l unite."
                         ),
                         reason_code="ACTIVE_PACK_INCOMPATIBLE" if has_active_incompatible_pack else None,
-                        direct_payment_amount_ttc=direct_payment_amount,
+                        direct_payment_amount_ttc=member_direct_payment_amount,
                         direct_payment_currency=direct_payment_currency,
                     )
                 )

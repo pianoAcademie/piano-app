@@ -297,6 +297,45 @@ class FormulaCompatibilityTests(unittest.TestCase):
         self.assertEqual(len(options), 1)
         self.assertEqual(options[0].formula_code, "FORM-STUDIO-10")
 
+    def test_formula_options_do_not_match_unrelated_generic_activity_codes(self) -> None:
+        adult_plan = SimpleNamespace(
+            id=uuid4(),
+            code="MONTHLY_ADULT_ONSITE",
+            kind=PlanKind.SUBSCRIPTION,
+            is_trial_offer=False,
+            name="Abonnement mensuel adultes",
+            description=None,
+            options_json=[],
+            payment_methods_json=["CARD_ONLINE"],
+            monthly_price_value=125,
+            monthly_price_excl_vat=None,
+            currency_code="EUR",
+        )
+        fake_db = _FakeSession(
+            execute_rows=[
+                (
+                    adult_plan,
+                    uuid4(),
+                    "Cours collectifs ado/adultes",
+                    "ACTIVITY",
+                    DeliveryMode.ONSITE,
+                    None,
+                )
+            ],
+        )
+
+        options = _active_formula_options_for_course_type(
+            fake_db,
+            course_type_id=uuid4(),
+            course_type_name="Eveil musical",
+            course_type_service_code="ACTIVITY",
+            course_type_mode=DeliveryMode.ONSITE,
+            credit_type_id=None,
+            allowed_plan_kinds={PlanKind.SUBSCRIPTION},
+        )
+
+        self.assertEqual(options, [])
+
     def test_formula_options_include_exact_entitlement_match(self) -> None:
         plan = SimpleNamespace(
             id=uuid4(),
@@ -347,6 +386,7 @@ class FormulaCompatibilityTests(unittest.TestCase):
             execute_rows=[(plan, uuid4(), "Reservation studio de repetition", "STUDIO", DeliveryMode.ONSITE, credit_type_id)],
         )
         session_obj = SimpleNamespace(
+            location_id=None,
             visibility_scope="EXTERNAL",
             booking_scope="EXTERNAL",
             is_private=False,
@@ -364,11 +404,12 @@ class FormulaCompatibilityTests(unittest.TestCase):
             allows_student_bookings=True,
         )
 
-        formula_options, direct_payment_amount, direct_payment_currency, session_booking_scopes = _session_purchase_catalog(
-            fake_db,
-            session_obj=session_obj,
-            course_type=course_type,
-        )
+        with patch("app.api.routes.clients.resolve_catalog_activity_price", return_value=None):
+            formula_options, direct_payment_amount, direct_payment_currency, session_booking_scopes = _session_purchase_catalog(
+                fake_db,
+                session_obj=session_obj,
+                course_type=course_type,
+            )
 
         self.assertEqual(len(formula_options), 1)
         self.assertEqual(formula_options[0].formula_code, "FORM-STUDIO-1")
@@ -379,6 +420,7 @@ class FormulaCompatibilityTests(unittest.TestCase):
     def test_session_purchase_catalog_keeps_explicit_per_session_price_for_short_slot(self) -> None:
         fake_db = _FakeSession(scalar_values=["EUR"], execute_rows=[])
         session_obj = SimpleNamespace(
+            location_id=None,
             visibility_scope="EXTERNAL",
             booking_scope="EXTERNAL",
             is_private=False,
@@ -397,17 +439,19 @@ class FormulaCompatibilityTests(unittest.TestCase):
             allows_student_bookings=True,
         )
 
-        _, direct_payment_amount, _, _ = _session_purchase_catalog(
-            fake_db,
-            session_obj=session_obj,
-            course_type=course_type,
-        )
+        with patch("app.api.routes.clients.resolve_catalog_activity_price", return_value=None):
+            _, direct_payment_amount, _, _ = _session_purchase_catalog(
+                fake_db,
+                session_obj=session_obj,
+                course_type=course_type,
+            )
 
         self.assertEqual(direct_payment_amount, Decimal("45.00"))
 
     def test_session_purchase_catalog_applies_duration_to_explicit_hourly_price(self) -> None:
         fake_db = _FakeSession(scalar_values=["EUR"], execute_rows=[])
         session_obj = SimpleNamespace(
+            location_id=None,
             visibility_scope="EXTERNAL",
             booking_scope="EXTERNAL",
             is_private=False,
@@ -426,11 +470,12 @@ class FormulaCompatibilityTests(unittest.TestCase):
             allows_student_bookings=True,
         )
 
-        _, direct_payment_amount, _, _ = _session_purchase_catalog(
-            fake_db,
-            session_obj=session_obj,
-            course_type=course_type,
-        )
+        with patch("app.api.routes.clients.resolve_catalog_activity_price", return_value=None):
+            _, direct_payment_amount, _, _ = _session_purchase_catalog(
+                fake_db,
+                session_obj=session_obj,
+                course_type=course_type,
+            )
 
         self.assertEqual(direct_payment_amount, Decimal("22.50"))
 
@@ -453,6 +498,7 @@ class FormulaCompatibilityTests(unittest.TestCase):
             execute_rows=[(trial_plan, course_type_id, "Cours collectif", "COURSE", DeliveryMode.ONSITE, None)],
         )
         session_obj = SimpleNamespace(
+            location_id=None,
             visibility_scope="EXTERNAL",
             booking_scope="EXTERNAL",
             is_private=False,
@@ -472,11 +518,12 @@ class FormulaCompatibilityTests(unittest.TestCase):
             trial_course_price_ttc=Decimal("27.50"),
         )
 
-        formula_options, _, _, _ = _session_purchase_catalog(
-            fake_db,
-            session_obj=session_obj,
-            course_type=course_type,
-        )
+        with patch("app.api.routes.clients.resolve_catalog_activity_price", return_value=None):
+            formula_options, _, _, _ = _session_purchase_catalog(
+                fake_db,
+                session_obj=session_obj,
+                course_type=course_type,
+            )
 
         self.assertEqual(len(formula_options), 1)
         self.assertTrue(formula_options[0].is_trial_offer)
@@ -501,6 +548,7 @@ class FormulaCompatibilityTests(unittest.TestCase):
             execute_rows=[(trial_plan, course_type_id, "Cours collectif", "COURSE", DeliveryMode.ONSITE, None)],
         )
         session_obj = SimpleNamespace(
+            location_id=None,
             visibility_scope="EXTERNAL",
             booking_scope="EXTERNAL",
             is_private=False,
@@ -520,11 +568,12 @@ class FormulaCompatibilityTests(unittest.TestCase):
             trial_course_price_ttc=Decimal("20.00"),
         )
 
-        formula_options, _, _, _ = _session_purchase_catalog(
-            fake_db,
-            session_obj=session_obj,
-            course_type=course_type,
-        )
+        with patch("app.api.routes.clients.resolve_catalog_activity_price", return_value=None):
+            formula_options, _, _, _ = _session_purchase_catalog(
+                fake_db,
+                session_obj=session_obj,
+                course_type=course_type,
+            )
 
         self.assertEqual(formula_options, [])
 

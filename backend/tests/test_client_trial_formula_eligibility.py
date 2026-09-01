@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 import sys
@@ -11,6 +12,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.api.routes.clients import (
     _active_formula_options_for_course_type,
+    _direct_payment_amount_for_member,
     _eligible_formula_options_for_member,
     _is_piano_trial_formula_option,
     get_public_session_trial_offers,
@@ -56,6 +58,23 @@ class ClientTrialFormulaEligibilityTests(unittest.TestCase):
     def test_detects_only_explicit_trial_formula(self) -> None:
         self.assertTrue(_is_piano_trial_formula_option(self.trial))
         self.assertFalse(_is_piano_trial_formula_option(self.pack))
+
+    def test_first_trial_hides_regular_unit_price(self) -> None:
+        self.assertIsNone(
+            _direct_payment_amount_for_member(
+                Decimal("32.00"),
+                formula_options=[self.trial],
+            )
+        )
+
+    def test_regular_unit_price_remains_after_trial_is_unavailable(self) -> None:
+        self.assertEqual(
+            _direct_payment_amount_for_member(
+                Decimal("32.00"),
+                formula_options=[self.pack],
+            ),
+            Decimal("32.00"),
+        )
 
     def test_unpaid_pending_purchase_is_not_an_available_trial_credit(self) -> None:
         self.assertNotIn(SubscriptionStatus.PENDING, TRIAL_CREDIT_STATUSES)
