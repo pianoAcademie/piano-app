@@ -163,20 +163,11 @@ jobs:
             sudo python3 infra/nginx/install-redacted-logging.py
             services=\$(docker compose config --services)
 
-            docker compose down --remove-orphans || true
-
-            docker ps -a --format '{{.ID}} {{.Names}}' | awk '
-              \$2 ~ /^([0-9a-f]+_)?piano-app-(db|redis|backend|frontend|notifications-immediate-worker|notifications-scheduled-worker|notifications-feedback-worker)-1$/ { print \$1 }
-              \$2 ~ /^([0-9a-f]+_)?piano-app-backend-run-[0-9a-z]+$/ { print \$1 }
-            ' | xargs -r docker rm -f
-
             if echo \"\$services\" | grep -qx redis; then
-              docker compose up -d --build db redis
+              docker compose up -d db redis
             else
-              docker compose up -d --build db
+              docker compose up -d db
             fi
-
-            docker compose run --rm -T --build backend alembic upgrade head
 
             worker_targets=''
             for svc in notifications-immediate-worker notifications-scheduled-worker notifications-feedback-worker; do
@@ -185,8 +176,10 @@ jobs:
               fi
             done
 
-            docker compose rm -sf backend frontend \$worker_targets || true
-            docker compose up -d --build backend \$worker_targets
+            # Build while the current containers continue serving traffic.
+            docker compose build backend \$worker_targets
+            docker compose run --rm -T backend alembic upgrade head
+            docker compose up -d --no-deps backend \$worker_targets
 
             for i in \$(seq 1 60); do
               backend_id=\$(docker compose ps -q backend | tail -n 1)
