@@ -8675,6 +8675,27 @@ def _quote_line_schedule_key(line: QuoteLine, duplicate_activity_ids: set[str] |
     return str(line.activity_id)
 
 
+def _quote_transform_schedule_key_candidates(
+    selected_schedule_key: str | None,
+    *,
+    activity_id: UUID,
+    quote_service_lines: list[QuoteLine],
+    duplicate_activity_ids: set[str] | None = None,
+) -> list[str]:
+    candidates: list[str] = []
+
+    def _append(raw: object) -> None:
+        value = str(raw or "").strip()
+        if value and value not in candidates:
+            candidates.append(value)
+
+    _append(selected_schedule_key)
+    for line in quote_service_lines:
+        _append(_quote_line_schedule_key(line, duplicate_activity_ids))
+    _append(activity_id)
+    return candidates
+
+
 def _planning_session_limit_from_quote_line(line: QuoteLine, *, allow_session_quantity: bool = False) -> int | None:
     meta = _json_object(line.meta)
     template = _json_object(meta.get("typeform_template"))
@@ -11310,50 +11331,95 @@ def _execute_quote_followup_transformation(
         if selected_session is None:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Creneau selectionne introuvable")
 
+        quote_service_lines = (
+            service_lines_by_schedule_key.get(schedule_key)
+            or service_lines_by_activity_id.get(str(activity_id))
+            or []
+        )
+        schedule_key_candidates = _quote_transform_schedule_key_candidates(
+            schedule_key,
+            activity_id=activity_id,
+            quote_service_lines=quote_service_lines,
+            duplicate_activity_ids=duplicate_service_activity_ids,
+        )
+
         selected_session_zone = _safe_zoneinfo(getattr(selected_session, "timezone", None))
         selected_session_start_local = selected_session.start_at_utc.astimezone(selected_session_zone)
         selected_series_key = str(getattr(selected_session, "recurrence_group_id", None) or selected_session.id)
         selected_weekday = selected_session_start_local.weekday()
 
-        expected_dates = _expected_activity_dates_from_snapshot(
-            quote,
-            activity_id=activity_id,
-            schedule_key=schedule_key,
-            calendar_snapshot=calendar_snapshot_for_transform,
+        def _expected_dates_for_candidates(
+            *,
+            expected_series_key: str | None = None,
+            prefer_blocks: bool = False,
+        ) -> list[date]:
+            for candidate_schedule_key in schedule_key_candidates:
+                candidate_dates = _expected_activity_dates_from_snapshot(
+                    quote,
+                    activity_id=activity_id,
+                    schedule_key=candidate_schedule_key,
+                    calendar_snapshot=calendar_snapshot_for_transform,
+                    expected_series_key=expected_series_key,
+                    expected_weekday=selected_weekday,
+                    prefer_blocks=prefer_blocks,
+                )
+                if candidate_dates:
+                    return candidate_dates
+            return []
+
+        def _expected_time_window_for_candidates(
+            *,
+            expected_series_key: str | None = None,
+        ) -> tuple[str | None, str | None]:
+            for candidate_schedule_key in schedule_key_candidates:
+                start_time, end_time = _expected_activity_time_window_from_snapshot(
+                    quote,
+                    activity_id=activity_id,
+                    schedule_key=candidate_schedule_key,
+                    calendar_snapshot=calendar_snapshot_for_transform,
+                    expected_series_key=expected_series_key,
+                    expected_weekday=selected_weekday,
+                )
+                if start_time is not None or end_time is not None:
+                    return start_time, end_time
+            return None, None
+
+        expected_dates = _expected_dates_for_candidates(expected_series_key=selected_series_key)
+        if not expected_dates and selected_series_key:
+            expected_dates = _expected_dates_for_candidates()
+        student_start_time_local, student_end_time_local = _expected_time_window_for_candidates(
             expected_series_key=selected_series_key,
-            expected_weekday=selected_weekday,
         )
-        student_start_time_local, student_end_time_local = _expected_activity_time_window_from_snapshot(
-            quote,
-            activity_id=activity_id,
-            schedule_key=schedule_key,
-            calendar_snapshot=calendar_snapshot_for_transform,
-            expected_series_key=selected_series_key,
-            expected_weekday=selected_weekday,
-        )
+        if student_start_time_local is None and student_end_time_local is None and selected_series_key:
+            student_start_time_local, student_end_time_local = _expected_time_window_for_candidates()
         session_limit = session_limit_by_key.get(schedule_key) or session_limit_by_key.get(str(activity_id))
         if session_limit is not None and len(expected_dates) < session_limit:
-            block_dates = _expected_activity_dates_from_snapshot(
-                quote,
-                activity_id=activity_id,
-                schedule_key=schedule_key,
-                calendar_snapshot=calendar_snapshot_for_transform,
+            block_dates = _expected_dates_for_candidates(
                 expected_series_key=selected_series_key,
-                expected_weekday=selected_weekday,
                 prefer_blocks=True,
             )
+            if len(block_dates) < session_limit and selected_series_key:
+                fallback_block_dates = _expected_dates_for_candidates(prefer_blocks=True)
+                if len(fallback_block_dates) > len(block_dates):
+                    block_dates = fallback_block_dates
             if len(block_dates) > len(expected_dates):
                 expected_dates = block_dates
         # Count approved dates without the selected series filter only to explain
         # a mismatch. This must never bypass the strict series/date validation.
         approved_dates_count = None
         if session_limit is not None and not expected_dates:
-            approved_dates_count = len(_expected_activity_dates_from_snapshot(
-                quote,
-                activity_id=activity_id,
-                schedule_key=schedule_key,
-                calendar_snapshot=calendar_snapshot_for_transform,
-            ))
+            approved_dates_count = max(
+                (
+                    len(_expected_activity_dates_from_snapshot(
+                        quote,
+                        activity_id=activity_id,
+                        schedule_key=candidate_schedule_key,
+                        calendar_snapshot=calendar_snapshot_for_transform,
+                    ))
+                    for candidate_schedule_key in schedule_key_candidates
+                ),
+                default=0,
+            )
         expected_dates = _validated_quote_transform_expected_dates(
             expected_dates,
             session_limit=session_limit,
@@ -11422,12 +11488,11 @@ def _execute_quote_followup_transformation(
                     f"({displayed_dates}{hidden_suffix}). Regenerer ou corriger le planning avant integration."
                 ),
             )
-        quote_service_lines = (
-            service_lines_by_schedule_key.get(schedule_key)
-            or service_lines_by_activity_id.get(str(activity_id))
-            or []
-        )
-        quote_discount_lines = discount_lines_by_schedule_key.get(schedule_key, [])
+        quote_discount_lines: list[QuoteLine] = []
+        for candidate_schedule_key in schedule_key_candidates:
+            quote_discount_lines = discount_lines_by_schedule_key.get(candidate_schedule_key, [])
+            if quote_discount_lines:
+                break
         quote_pricing_lines = [*quote_service_lines, *quote_discount_lines]
         pricing_overrides: list[tuple[Decimal, Decimal, Decimal, Decimal, str] | None] = [None for _ in live_sessions]
         if quote_pricing_lines and live_sessions:
