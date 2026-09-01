@@ -11,6 +11,7 @@ from app.api.deps import get_db, require_admin_or_permissions, require_roles
 from app.models.client_news import ClientNewsArticle
 from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, DeliveryMode, SessionStatus
 from app.models.family import ClientFamilyLink
+from app.models.plan import ClientPlanSubscription, SubscriptionStatus
 from app.models.user import ClientKind, User, UserRole
 from app.schemas.client_news import (
     AdminClientNewsCreate,
@@ -66,6 +67,11 @@ _ACTIVE_BOOKING_STATUSES = (
     BookingStatus.NO_SHOW,
     BookingStatus.EXCUSED_ABSENCE,
 )
+_CURRENT_SUBSCRIPTION_STATUSES = (
+    SubscriptionStatus.ACTIVE,
+    SubscriptionStatus.PAYMENT_ALERT,
+    SubscriptionStatus.PRE_TERMINATION,
+)
 
 
 def _age_on_today(user: User, now: datetime) -> int | None:
@@ -106,11 +112,20 @@ def _client_audience_codes(db: Session, current_user: User, now: datetime) -> se
         select(Booking.user_id, CourseType, CourseSession)
         .join(CourseSession, CourseSession.id == Booking.session_id)
         .join(CourseType, CourseType.id == CourseSession.course_type_id)
+        .outerjoin(ClientPlanSubscription, ClientPlanSubscription.id == Booking.client_plan_subscription_id)
         .where(
             Booking.user_id.in_(subject_ids),
             Booking.status.in_(_ACTIVE_BOOKING_STATUSES),
             CourseSession.status != SessionStatus.CANCELLED,
             CourseSession.end_at_utc >= now,
+            or_(
+                Booking.client_plan_subscription_id.is_(None),
+                (
+                    ClientPlanSubscription.status.in_(_CURRENT_SUBSCRIPTION_STATUSES)
+                    & (ClientPlanSubscription.started_at <= now)
+                    & or_(ClientPlanSubscription.ends_at.is_(None), ClientPlanSubscription.ends_at >= now)
+                ),
+            ),
         )
     ).all()
     by_user: dict[UUID, list[tuple[CourseType, CourseSession]]] = {}
