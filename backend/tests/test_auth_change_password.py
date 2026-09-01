@@ -83,7 +83,7 @@ class AuthChangePasswordTests(unittest.TestCase):
         self.assertTrue(verify_password("new-password", self.user.hashed_password))
         self.assertFalse(verify_password("old-password", self.user.hashed_password))
         self.assertIsNotNone(self.user.updated_at)
-        self.assertEqual(len(self.db.executed), 1)
+        self.assertEqual(len(self.db.executed), 2)
         self.assertTrue(self.db.committed)
         self.assertFalse(self.db.rolled_back)
 

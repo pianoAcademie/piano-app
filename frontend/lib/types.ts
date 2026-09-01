@@ -1,6 +1,10 @@
 export type AuthLoginResponse = {
   access_token: string;
   token_type: string;
+  refresh_token: string;
+  access_token_expires_in_seconds: number;
+  refresh_token_expires_in_seconds: number;
+  role: "admin" | "prof" | "client";
 };
 
 export type LocalizedTextMap = Record<string, string>;

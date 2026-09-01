@@ -73,6 +73,18 @@ class PresenceHeartbeatOut(BaseModel):
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
+    refresh_token: str
+    access_token_expires_in_seconds: int
+    refresh_token_expires_in_seconds: int
+    role: Literal["admin", "prof", "client"]
+
+
+class RefreshSessionRequest(BaseModel):
+    refresh_token: str = Field(min_length=32, max_length=512)
+
+
+class LogoutSessionRequest(BaseModel):
+    refresh_token: str = Field(min_length=32, max_length=512)
 
 
 class ForgotPasswordRequest(BaseModel):

@@ -20,7 +20,7 @@ from app.core.config import settings
 from app.models.catalog import CourseSession, CourseType
 from app.models.client_group import ClientGroup, ClientGroupMembership
 from app.models.family import ClientFamilyLink
-from app.models.ops import AppSetting, PasswordResetToken
+from app.models.ops import AppSetting, AuthRefreshSession, PasswordResetToken
 from app.models.user import ClientKind, ClientStatus, User, UserPresence, UserPresenceHour, UserRole
 from app.schemas.auth import (
     ChangePasswordRequest,
@@ -29,9 +29,11 @@ from app.schemas.auth import (
     ForgotPasswordRequest,
     ForgotPasswordResponse,
     LoginRequest,
+    LogoutSessionRequest,
     PresenceHeartbeatOut,
     PresenceHeartbeatRequest,
     RegisterRequest,
+    RefreshSessionRequest,
     ResetPasswordRequest,
     ResetPasswordResponse,
     TokenResponse,
@@ -175,6 +177,64 @@ def _ensure_group_membership(db: Session, *, user_id: UUID, group_id: UUID) -> N
 
 def _hash_reset_token(raw_token: str) -> str:
     return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+
+
+def _hash_refresh_token(raw_token: str) -> str:
+    return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+
+
+def _access_token_expiry_minutes(role: UserRole) -> int:
+    if role == UserRole.ADMIN:
+        return settings.admin_access_token_expire_minutes
+    if role == UserRole.PROF:
+        return settings.professor_access_token_expire_minutes
+    return settings.client_access_token_expire_minutes
+
+
+def _token_response(
+    db: Session,
+    *,
+    user: User,
+    refresh_token: str | None = None,
+    refresh_session: AuthRefreshSession | None = None,
+) -> TokenResponse:
+    now = datetime.now(timezone.utc)
+    access_expiry_minutes = _access_token_expiry_minutes(user.role)
+    access_token = create_access_token(
+        subject=str(user.id),
+        role=user.role.value,
+        expires_delta=timedelta(minutes=access_expiry_minutes),
+    )
+
+    if refresh_token is None or refresh_session is None:
+        refresh_token = secrets.token_urlsafe(48)
+        refresh_session = AuthRefreshSession(
+            user_id=user.id,
+            token_hash=_hash_refresh_token(refresh_token),
+            expires_at=now + timedelta(days=settings.refresh_session_expire_days),
+        )
+        db.add(refresh_session)
+    else:
+        refresh_session.last_used_at = now
+        db.add(refresh_session)
+
+    try:
+        db.commit()
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error: {exc.__class__.__name__}",
+        ) from exc
+
+    refresh_seconds = max(1, int((refresh_session.expires_at - now).total_seconds()))
+    return TokenResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        access_token_expires_in_seconds=access_expiry_minutes * 60,
+        refresh_token_expires_in_seconds=refresh_seconds,
+        role=user.role.value,
+    )
 
 
 def _hash_rate_limit_identifier(raw_value: str) -> str:
@@ -549,19 +609,54 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
         db.rollback()
         logger.exception("Unable to record login time for user %s", user.id)
 
-    expires_minutes = (
-        settings.admin_access_token_expire_minutes
-        if user.role.value == "admin"
-        else settings.access_token_expire_minutes
+    return _token_response(db, user=user)
+
+
+@router.post("/refresh", response_model=TokenResponse)
+def refresh_session(payload: RefreshSessionRequest, db: Session = Depends(get_db)) -> TokenResponse:
+    raw_token = payload.refresh_token.strip()
+    now = datetime.now(timezone.utc)
+    refresh_row = db.scalar(
+        select(AuthRefreshSession)
+        .where(
+            AuthRefreshSession.token_hash == _hash_refresh_token(raw_token),
+            AuthRefreshSession.revoked_at.is_(None),
+            AuthRefreshSession.expires_at > now,
+        )
+        .with_for_update()
+    )
+    if refresh_row is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh session invalid or expired")
+
+    user = db.scalar(select(User).where(User.id == refresh_row.user_id))
+    if user is None or not user.is_active:
+        refresh_row.revoked_at = now
+        db.add(refresh_row)
+        db.commit()
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh session invalid or expired")
+
+    return _token_response(
+        db,
+        user=user,
+        refresh_token=raw_token,
+        refresh_session=refresh_row,
     )
 
-    access_token = create_access_token(
-        subject=str(user.id),
-        role=user.role.value,
-        expires_delta=timedelta(minutes=expires_minutes),
-    )
 
-    return TokenResponse(access_token=access_token)
+@router.post("/logout", response_model=ResetPasswordResponse)
+def logout_session(payload: LogoutSessionRequest, db: Session = Depends(get_db)) -> ResetPasswordResponse:
+    now = datetime.now(timezone.utc)
+    refresh_row = db.scalar(
+        select(AuthRefreshSession).where(
+            AuthRefreshSession.token_hash == _hash_refresh_token(payload.refresh_token.strip()),
+            AuthRefreshSession.revoked_at.is_(None),
+        )
+    )
+    if refresh_row is not None:
+        refresh_row.revoked_at = now
+        db.add(refresh_row)
+        db.commit()
+    return ResetPasswordResponse(message="LOGGED_OUT")
 
 
 @router.post("/presence", response_model=PresenceHeartbeatOut)
@@ -760,6 +855,14 @@ def reset_password(payload: ResetPasswordRequest, request: Request, db: Session 
         )
         .values(used_at=now)
     )
+    db.execute(
+        update(AuthRefreshSession)
+        .where(
+            AuthRefreshSession.user_id == user.id,
+            AuthRefreshSession.revoked_at.is_(None),
+        )
+        .values(revoked_at=now)
+    )
 
     try:
         db.commit()
@@ -812,6 +915,14 @@ def change_password(
             PasswordResetToken.used_at.is_(None),
         )
         .values(used_at=now)
+    )
+    db.execute(
+        update(AuthRefreshSession)
+        .where(
+            AuthRefreshSession.user_id == current_user.id,
+            AuthRefreshSession.revoked_at.is_(None),
+        )
+        .values(revoked_at=now)
     )
 
     try:

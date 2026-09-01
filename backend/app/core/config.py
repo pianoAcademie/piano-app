@@ -27,13 +27,26 @@ class Settings:
     gift_card_code_pepper: str = os.getenv("GIFT_CARD_CODE_PEPPER", "")
     typeform_webhook_secret: str = os.getenv("TYPEFORM_WEBHOOK_SECRET", "")
     brevo_webhook_secret: str = os.getenv("BREVO_WEBHOOK_SECRET", "")
-    access_token_expire_minutes: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
+    # Portal access tokens stay intentionally short-lived. Long-lived sessions
+    # are maintained through revocable refresh sessions instead of extending a
+    # bearer token indefinitely.
+    access_token_expire_minutes: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "120"))
+    client_access_token_expire_minutes: int = int(
+        os.getenv(
+            "CLIENT_ACCESS_TOKEN_EXPIRE_MINUTES",
+            os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "120"),
+        )
+    )
+    professor_access_token_expire_minutes: int = int(
+        os.getenv("PROFESSOR_ACCESS_TOKEN_EXPIRE_MINUTES", "480")
+    )
     admin_access_token_expire_minutes: int = int(
         os.getenv(
             "ADMIN_ACCESS_TOKEN_EXPIRE_MINUTES",
-            os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"),
+            "480",
         )
     )
+    refresh_session_expire_days: int = int(os.getenv("REFRESH_SESSION_EXPIRE_DAYS", "30"))
 
     # Logging
     log_level: str = os.getenv("LOG_LEVEL", "INFO").upper()

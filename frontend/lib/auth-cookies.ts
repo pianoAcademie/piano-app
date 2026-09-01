@@ -5,6 +5,7 @@ export const LEGACY_ACCESS_TOKEN_COOKIE = "access_token";
 export const ADMIN_ACCESS_TOKEN_COOKIE = "admin_access_token";
 export const ADMIN_IMPERSONATION_RETURN_TOKEN_COOKIE = "admin_impersonation_return_token";
 export const PORTAL_ACCESS_TOKEN_COOKIE = "portal_access_token";
+export const AUTH_REFRESH_TOKEN_COOKIE = "auth_refresh_token";
 export const PORTAL_RETURN_TO_COOKIE = "portal_return_to";
 
 const EIGHT_HOURS_IN_SECONDS = 60 * 60 * 8;
@@ -48,6 +49,7 @@ function cookieSameSite(name: string): "lax" | "none" {
   }
   if (
     name === PORTAL_ACCESS_TOKEN_COOKIE
+    || name === AUTH_REFRESH_TOKEN_COOKIE
     || name === LEGACY_ACCESS_TOKEN_COOKIE
     || name === PORTAL_RETURN_TO_COOKIE
     || name === ADMIN_IMPERSONATION_RETURN_TOKEN_COOKIE
@@ -191,8 +193,16 @@ export function setAdminToken(token: string, options: { maxAge?: number } = {}):
 }
 
 export function setPortalToken(token: string, options: { maxAge?: number } = {}): void {
-  const maxAge = options.maxAge ?? EIGHT_HOURS_IN_SECONDS;
+  const maxAge = options.maxAge ?? 60 * 60 * 2;
   setCookieValue(PORTAL_ACCESS_TOKEN_COOKIE, token, { path: "/", maxAge });
+}
+
+export function getAuthRefreshToken(): string | null {
+  return cookies().get(AUTH_REFRESH_TOKEN_COOKIE)?.value ?? null;
+}
+
+export function setAuthRefreshToken(token: string, maxAgeSeconds: number): void {
+  setCookieValue(AUTH_REFRESH_TOKEN_COOKIE, token, { path: "/", maxAge: maxAgeSeconds });
 }
 
 export function setLegacyToken(token: string, options: { maxAge?: number } = {}): void {
@@ -222,6 +232,10 @@ export function clearPortalToken(): void {
   clearCookieValue(PORTAL_ACCESS_TOKEN_COOKIE, { path: "/" });
 }
 
+export function clearAuthRefreshToken(): void {
+  clearCookieValue(AUTH_REFRESH_TOKEN_COOKIE, { path: "/" });
+}
+
 export function clearLegacyToken(): void {
   clearCookieValue(LEGACY_ACCESS_TOKEN_COOKIE, { path: "/" });
 }
@@ -230,6 +244,7 @@ export function clearAllAuthTokens(): void {
   clearAdminToken();
   clearAdminImpersonationReturnToken();
   clearPortalToken();
+  clearAuthRefreshToken();
   clearLegacyToken();
 }
 

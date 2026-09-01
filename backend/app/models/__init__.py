@@ -59,6 +59,7 @@ from app.models.catalog import (
 )
 from app.models.ops import (
     AppSetting,
+    AuthRefreshSession,
     CommunicationChannel,
     CommunicationDeliveryStatus,
     CommunicationLog,
@@ -178,6 +179,7 @@ __all__ = [
     "CommunicationSenderCategory",
     "CreditType",
     "ClientFamilyLink",
+    "AuthRefreshSession",
     "GiftCard",
     "GiftCardEvent",
     "ClientAutoInvoiceOccurrence",

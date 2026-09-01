@@ -12,6 +12,7 @@ import {
   clearAllAuthTokens,
   clearPortalReturnTo,
   clearPortalToken,
+  getAuthRefreshToken,
   getAdminImpersonationReturnToken,
   getAdminToken,
   getAnyToken,
@@ -20,6 +21,7 @@ import {
   getPortalReturnTo,
   setAdminImpersonationReturnToken,
   setAdminToken,
+  setAuthRefreshToken,
   setPortalReturnTo,
   setPortalToken,
 } from "./auth-cookies";
@@ -144,6 +146,10 @@ function setAdminSessionToken(token: string, maxAgeSeconds?: number): void {
 
 function setPortalSessionToken(token: string, maxAgeSeconds?: number): void {
   setPortalToken(token, { maxAge: maxAgeSeconds });
+}
+
+function setRefreshSessionToken(response: AuthLoginResponse): void {
+  setAuthRefreshToken(response.refresh_token, response.refresh_token_expires_in_seconds);
 }
 
 function clearToken(): void {
@@ -1422,13 +1428,14 @@ export async function loginAction(formData: FormData): Promise<void> {
 
   clearAllAuthTokens();
   if (me.role === "admin") {
-    setAdminSessionToken(result.data.access_token);
+    setAdminSessionToken(result.data.access_token, result.data.access_token_expires_in_seconds);
   } else {
-    setPortalSessionToken(result.data.access_token);
+    setPortalSessionToken(result.data.access_token, result.data.access_token_expires_in_seconds);
     if (me.role === "prof" && hasAnyAdminAccess(me)) {
-      setAdminSessionToken(result.data.access_token);
+      setAdminSessionToken(result.data.access_token, result.data.access_token_expires_in_seconds);
     }
   }
+  setRefreshSessionToken(result.data);
 
   if (me.role === "admin") {
     redirect("/admin?ok_code=login_admin_success");
@@ -1590,7 +1597,8 @@ export async function registerAction(formData: FormData): Promise<void> {
   }
 
   clearAllAuthTokens();
-  setPortalSessionToken(loginResult.data.access_token);
+  setPortalSessionToken(loginResult.data.access_token, loginResult.data.access_token_expires_in_seconds);
+  setRefreshSessionToken(loginResult.data);
   if (purchaseContext) {
     redirect(
       appendQueryMessage(
@@ -1764,6 +1772,13 @@ export async function deleteClientAccountAction(formData: FormData): Promise<voi
 }
 
 export async function logoutAction(): Promise<void> {
+  const refreshToken = getAuthRefreshToken();
+  if (refreshToken) {
+    await backendRequest<{ message: string }>("/api/v1/auth/logout", {
+      method: "POST",
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    }, undefined, 5_000);
+  }
   clearToken();
   redirect("/login?ok_code=logged_out");
 }
