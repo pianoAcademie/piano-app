@@ -1,0 +1,86 @@
+name: Restore Prod Paul-Henri Enrollment
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "Set to true to apply the reviewed restoration. false is dry-run only."
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    env:
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_PORT: ${{ secrets.VPS_PORT }}
+      VPS_PATH: ${{ secrets.VPS_PATH }}
+      VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate required secrets
+        run: |
+          set -euo pipefail
+          test -n "${VPS_HOST}" || { echo "Missing VPS_HOST"; exit 1; }
+          test -n "${VPS_USER}" || { echo "Missing VPS_USER"; exit 1; }
+          test -n "${VPS_PATH}" || { echo "Missing VPS_PATH"; exit 1; }
+          if [ -z "${{ secrets.VPS_SSH_KEY }}" ] && [ -z "${{ secrets.SSH_PRIVATE_KEY }}" ]; then
+            echo "Missing SSH key secret"
+            exit 1
+          fi
+
+      - name: Setup SSH
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          SSH_KEY_CONTENT="${{ secrets.VPS_SSH_KEY }}"
+          if [ -z "${SSH_KEY_CONTENT}" ]; then SSH_KEY_CONTENT="${{ secrets.SSH_PRIVATE_KEY }}"; fi
+          printf '%s\n' "${SSH_KEY_CONTENT}" | tr -d '\r' > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          : > ~/.ssh/known_hosts
+          ssh-keyscan -p "${VPS_PORT:-22}" -H "${VPS_HOST}" >> ~/.ssh/known_hosts 2>/dev/null || true
+          if [ -n "${VPS_KNOWN_HOSTS}" ]; then printf '%s\n' "${VPS_KNOWN_HOSTS}" >> ~/.ssh/known_hosts; fi
+          test -s ~/.ssh/known_hosts || { echo "known_hosts is empty"; exit 1; }
+
+      - name: Upload targeted repair
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_ed25519 -p "${VPS_PORT:-22}" "${VPS_USER}@${VPS_HOST}" "mkdir -p '${VPS_PATH}/backend/scripts'"
+          scp -i ~/.ssh/id_ed25519 -P "${VPS_PORT:-22}" \
+            backend/scripts/restore_prod_paul_henri_lignot_enrollment.py \
+            "${VPS_USER}@${VPS_HOST}:${VPS_PATH}/backend/scripts/restore_prod_paul_henri_lignot_enrollment.py"
+
+      - name: Production dry-run
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_ed25519 -p "${VPS_PORT:-22}" "${VPS_USER}@${VPS_HOST}" "
+            set -euo pipefail
+            cd '${VPS_PATH}'
+            export COMPOSE_PROJECT_NAME='piano-app'
+            docker compose cp backend/scripts/restore_prod_paul_henri_lignot_enrollment.py backend:/app/scripts/restore_prod_paul_henri_lignot_enrollment.py
+            docker compose exec -T backend python scripts/restore_prod_paul_henri_lignot_enrollment.py
+          "
+
+      - name: Apply restoration
+        if: ${{ inputs.apply == 'true' }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_ed25519 -p "${VPS_PORT:-22}" "${VPS_USER}@${VPS_HOST}" "
+            set -euo pipefail
+            cd '${VPS_PATH}'
+            export COMPOSE_PROJECT_NAME='piano-app'
+            docker compose exec -T backend python scripts/restore_prod_paul_henri_lignot_enrollment.py --apply
+          "
