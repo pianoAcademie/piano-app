@@ -19,6 +19,7 @@ from app.models.catalog import (
 )
 from app.models.payout import ProfessorPayGridBracket, ProfessorPayGridPeriod, ProfessorPayGridRule
 from app.models.plan import Plan, PlanCreditGrant, PlanEntitlement
+from app.models.quote import PricingActivityPrice, PricingCatalog
 
 
 SCRIPT_PREFIX = "child-group-trial-20260902"
@@ -148,6 +149,55 @@ def run(*, apply: bool) -> None:
             )
             added_credit_grant = 1
 
+        published_catalog = db.scalar(
+            select(PricingCatalog)
+            .where(
+                PricingCatalog.is_active.is_(True),
+                PricingCatalog.lifecycle_status == "PUBLISHED",
+                PricingCatalog.published_at.is_not(None),
+                PricingCatalog.effective_from <= now,
+            )
+            .order_by(PricingCatalog.is_default.desc(), PricingCatalog.effective_from.desc())
+            .limit(1)
+        )
+        if published_catalog is None:
+            raise RuntimeError("No active published pricing catalog found")
+        external_price = db.scalar(
+            select(PricingActivityPrice)
+            .where(
+                PricingActivityPrice.catalog_id == published_catalog.id,
+                PricingActivityPrice.activity_id == target.id,
+                PricingActivityPrice.location_id.is_(None),
+                PricingActivityPrice.student_category.is_(None),
+                PricingActivityPrice.pricing_unit == "per_session",
+                PricingActivityPrice.price_channel == "EXTERNAL_UNIT",
+            )
+            .order_by(PricingActivityPrice.updated_at.desc())
+            .limit(1)
+        )
+        added_external_price = 0
+        if external_price is None:
+            external_price = PricingActivityPrice(
+                catalog_id=published_catalog.id,
+                activity_id=target.id,
+                location_id=None,
+                student_category=None,
+                pricing_unit="per_session",
+                price_channel="EXTERNAL_UNIT",
+                unit_price_ttc=TRIAL_PRICE,
+                currency="EUR",
+                is_active=True,
+                updated_at=now,
+            )
+            db.add(external_price)
+            added_external_price = 1
+        else:
+            external_price.unit_price_ttc = TRIAL_PRICE
+            external_price.currency = "EUR"
+            external_price.is_active = True
+            external_price.updated_at = now
+            db.add(external_price)
+
         copied_pay_rules = 0
         copied_pay_brackets = 0
         periods = db.scalars(
@@ -233,7 +283,8 @@ def run(*, apply: bool) -> None:
             f"[{SCRIPT_PREFIX}] mode={'apply' if apply else 'dry-run'}|activity_id={target.id}|"
             f"changed_activity={changed_activity}|added_planning={added_planning}|"
             f"removed_planning={removed_planning}|added_entitlement={added_entitlement}|"
-            f"added_credit_grant={added_credit_grant}|copied_pay_rules={copied_pay_rules}|"
+            f"added_credit_grant={added_credit_grant}|added_external_price={added_external_price}|"
+            f"copied_pay_rules={copied_pay_rules}|"
             f"copied_pay_brackets={copied_pay_brackets}|updated_future_sessions={updated_future_sessions}|"
             f"skipped_future_sessions_with_bookings={skipped_future_sessions_with_bookings}"
         )
