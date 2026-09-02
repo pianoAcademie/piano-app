@@ -7,6 +7,10 @@ import {
   locationAllowedForClientSites,
   parseFavoriteLocationIds,
 } from "../lib/client-booking-filters.ts";
+import {
+  isChildOnlyBookingSession,
+  preferredReservationMemberId,
+} from "../lib/client-session-selection.ts";
 
 const paris = { id: "paris", code: "RICHELIEU", name: "Rue de Richelieu", city: "Paris", is_online: false };
 const barLeDuc = { id: "bld", code: "BAR_LE_DUC", name: "Bar-le-Duc", city: "Bar-le-Duc", is_online: false };
@@ -65,4 +69,25 @@ test("booking categories separate piano, studio and online music theory", () => 
 
 test("favorite location ids are trimmed and deduplicated", () => {
   assert.deepEqual(parseFavoriteLocationIds("paris, assas,paris,,"), ["paris", "assas"]);
+});
+
+test("child-only checkout selects the sole eligible family member", () => {
+  const members = [
+    { member_id: "parent", action_code: "UNAVAILABLE" },
+    { member_id: "child", action_code: "BUY_FORMULA" },
+  ];
+
+  assert.equal(preferredReservationMemberId(members, ""), "child");
+  assert.equal(preferredReservationMemberId(members, "parent"), "parent");
+});
+
+test("child-only sessions preserve child account creation context", () => {
+  assert.equal(
+    isChildOnlyBookingSession({ child_bookings_enabled: true, adult_bookings_enabled: false }),
+    true,
+  );
+  assert.equal(
+    isChildOnlyBookingSession({ child_bookings_enabled: true, adult_bookings_enabled: true }),
+    false,
+  );
 });

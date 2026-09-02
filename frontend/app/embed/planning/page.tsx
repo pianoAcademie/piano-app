@@ -4,6 +4,7 @@ import { reservePublicPlanningSessionAction } from "../../../lib/actions";
 import PortalBrandLockup from "../../../components/portal-brand-lockup";
 import { getPortalToken } from "../../../lib/auth-cookies";
 import { backendRequest } from "../../../lib/backend";
+import { isChildOnlyBookingSession } from "../../../lib/client-session-selection";
 import { localeForUiLanguage, normalizeUiLanguage, resolveAuthErrorMessage, resolveAuthOkMessage, type UiLanguage, uiText } from "../../../lib/ui-i18n";
 import type { ClientBookingOut, ClientSessionFormulaOptionOut, CourseTypeOut, LocationOut, SessionOut } from "../../../lib/types";
 
@@ -554,9 +555,10 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
     date: weekStartKey,
     language,
   });
-  const loginHref = `/login?mode=login&return_to=${encodeURIComponent(selectedSessionReturnTo)}${language === "en" ? "&lang=en" : ""}`;
+  const childRegistrationQuery = isChildOnlyBookingSession(selectedSession) ? "&registration_subject_type=child" : "";
+  const loginHref = `/login?mode=login&return_to=${encodeURIComponent(selectedSessionReturnTo)}${childRegistrationQuery}${language === "en" ? "&lang=en" : ""}`;
   const sessionCheckoutHref = selectedSession ? buildSessionCheckoutHref(selectedSession.id, selectedSessionReturnTo, language) : `/buy/session/checkout${language === "en" ? "?lang=en" : ""}`;
-  const sessionCheckoutLoginHref = `/login?mode=login&return_to=${encodeURIComponent(sessionCheckoutHref)}${language === "en" ? "&lang=en" : ""}`;
+  const sessionCheckoutLoginHref = `/login?mode=login&return_to=${encodeURIComponent(sessionCheckoutHref)}${childRegistrationQuery}${language === "en" ? "&lang=en" : ""}`;
   const selectedSessionRequiresCheckout =
     selectedSession !== null
     && !selectedSessionIsFull

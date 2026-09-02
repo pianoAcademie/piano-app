@@ -5,6 +5,7 @@ import PortalBrandLockup from "../../../../components/portal-brand-lockup";
 import { startFormulaPurchaseLinkAction, submitPublicSessionCheckoutAction } from "../../../../lib/actions";
 import { getPortalToken } from "../../../../lib/auth-cookies";
 import { backendRequest } from "../../../../lib/backend";
+import { preferredReservationMemberId } from "../../../../lib/client-session-selection";
 import { localeForUiLanguage, normalizeUiLanguage, resolveAuthErrorMessage, resolveAuthOkMessage, translateBackendMessage, type UiLanguage, uiText } from "../../../../lib/ui-i18n";
 import type {
   ClientSessionPurchaseCatalogOut,
@@ -238,7 +239,7 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
   );
   const purchaseCatalog = purchaseCatalogResult.ok ? purchaseCatalogResult.data : null;
   const members = reservationOptions.members;
-  const selectedMemberId = bookingUserId || (members.length === 1 ? members[0]?.member_id ?? "" : "");
+  const selectedMemberId = preferredReservationMemberId(members, bookingUserId);
   const selectedMember = members.find((option) => option.member_id === selectedMemberId) ?? null;
   const selectedMemberFormulaOptions =
     selectedMember != null
