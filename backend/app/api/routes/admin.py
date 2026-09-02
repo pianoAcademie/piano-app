@@ -3565,6 +3565,20 @@ def _planning_simulation_is_online_solfege(
     }
 
 
+def _planning_simulation_is_home_course(
+    *,
+    location_code: str | None = None,
+    location_name: str | None = None,
+) -> bool:
+    normalized_code = _planning_simulation_location_name_key(location_code)
+    normalized_name = _planning_simulation_location_name_key(location_name)
+    return (
+        normalized_code == "domicile"
+        or normalized_name == "domicile"
+        or normalized_name.endswith(" a domicile")
+    )
+
+
 @router.put(
     "/plannings/simulation/teacher-assignment",
     response_model=AdminPlanningSimulationTeacherAssignmentOut,
@@ -3655,6 +3669,8 @@ def get_planning_simulation(
     exclude_location_name: list[str] | None = Query(default=None),
     exclude_online_solfege: bool = Query(default=False),
     online_solfege_only: bool = Query(default=False),
+    exclude_home_course: bool = Query(default=False),
+    home_course_only: bool = Query(default=False),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin_or_permissions("can_view_planning_simulation")),
 ) -> AdminPlanningSimulationOut:
@@ -3662,6 +3678,11 @@ def get_planning_simulation(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Online solfege cannot be both excluded and selected exclusively",
+        )
+    if exclude_home_course and home_course_only:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Home courses cannot be both excluded and selected exclusively",
         )
     excluded_location_name_keys = {
         key
@@ -3725,6 +3746,7 @@ def get_planning_simulation(
     live_slot_keys_by_signature: dict[str, set[str]] = {}
     live_signatures_by_person_key: dict[str, set[str]] = {}
     quote_location_name_by_id: dict[UUID, str] = {}
+    quote_location_code_by_id: dict[UUID, str] = {}
     quote_course_type_by_id: dict[UUID, CourseType | None] = {}
 
     def ensure_slot(
@@ -3814,6 +3836,14 @@ def get_planning_simulation(
         if exclude_online_solfege and is_online_solfege:
             continue
         if online_solfege_only and not is_online_solfege:
+            continue
+        is_home_course = _planning_simulation_is_home_course(
+            location_code=location.code,
+            location_name=location.name,
+        )
+        if exclude_home_course and is_home_course:
+            continue
+        if home_course_only and not is_home_course:
             continue
         zone = _safe_zoneinfo(session_obj.timezone or location.timezone)
         local_start = session_obj.start_at_utc.astimezone(zone)
@@ -3969,9 +3999,11 @@ def get_planning_simulation(
             resolved_location_name = ""
             if block_location_id is not None:
                 if block_location_id not in quote_location_name_by_id:
-                    quote_location_name_by_id[block_location_id] = str(
-                        db.scalar(select(Location.name).where(Location.id == block_location_id).limit(1)) or ""
-                    ).strip()
+                    location_identity = db.execute(
+                        select(Location.name, Location.code).where(Location.id == block_location_id).limit(1)
+                    ).one_or_none()
+                    quote_location_name_by_id[block_location_id] = str(location_identity[0] if location_identity else "").strip()
+                    quote_location_code_by_id[block_location_id] = str(location_identity[1] if location_identity else "").strip()
                 resolved_location_name = quote_location_name_by_id.get(block_location_id, "")
             block_location_name = _planning_simulation_quote_location_name(
                 block,
@@ -3985,6 +4017,14 @@ def get_planning_simulation(
             if exclude_online_solfege and is_online_solfege:
                 continue
             if online_solfege_only and not is_online_solfege:
+                continue
+            is_home_course = _planning_simulation_is_home_course(
+                location_code=quote_location_code_by_id.get(block_location_id, "") if block_location_id else "",
+                location_name=block_location_name,
+            )
+            if exclude_home_course and is_home_course:
+                continue
+            if home_course_only and not is_home_course:
                 continue
             if _planning_simulation_location_name_key(block_location_name) in excluded_location_name_keys:
                 continue

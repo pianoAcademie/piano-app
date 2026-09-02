@@ -16,6 +16,7 @@ from app.api.routes.admin import (
     _planning_simulation_clean_location_label,
     _planning_simulation_live_slot_key,
     _planning_simulation_location_name_key,
+    _planning_simulation_is_home_course,
     _planning_simulation_is_online_solfege,
     _planning_simulation_quote_person_key,
     _planning_simulation_quote_capacity_key,
@@ -190,6 +191,11 @@ class AdminPlanningSimulationTests(unittest.TestCase):
                 SimpleNamespace(mode=DeliveryMode.ONSITE, code="SOLFEGE", name="Solfège en présentiel")
             )
         )
+
+    def test_planning_simulation_identifies_home_courses_from_location(self) -> None:
+        self.assertTrue(_planning_simulation_is_home_course(location_code="DOMICILE", location_name="Chez l'élève"))
+        self.assertTrue(_planning_simulation_is_home_course(location_name="Cours à domicile"))
+        self.assertFalse(_planning_simulation_is_home_course(location_code="RICHELIEU", location_name="Rue de Richelieu"))
         self.assertFalse(
             _planning_simulation_is_online_solfege(
                 SimpleNamespace(mode=DeliveryMode.ONLINE, code="PIANO_ONLINE", name="Piano en ligne")

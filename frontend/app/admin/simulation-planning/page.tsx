@@ -870,13 +870,16 @@ function TeacherAssignmentBoard({
   );
 }
 
-function OnlineSolfegeTeacherTable({
+function DedicatedTeacherTable({
   slots,
   professors,
   schoolYearLabel,
   returnTo,
   canEdit,
   language,
+  title,
+  description,
+  emptyMessage,
 }: {
   slots: AdminPlanningSimulationSlotOut[];
   professors: AdminProfessorOut[];
@@ -884,6 +887,9 @@ function OnlineSolfegeTeacherTable({
   returnTo: string;
   canEdit: boolean;
   language: UiLanguage;
+  title: string;
+  description: string;
+  emptyMessage: string;
 }): JSX.Element {
   const activeProfessors = professors.filter((professor) => professor.active);
   const orderedSlots = slots.slice().sort((first, second) => (
@@ -900,14 +906,8 @@ function OnlineSolfegeTeacherTable({
           <span className="simulation-teacher-needs-eyebrow">
             {text(language, "Tableau séparé", "Separate board")}
           </span>
-          <h3>{text(language, "Professeurs — solfège en ligne", "Teachers — online music theory")}</h3>
-          <p className="muted">
-            {text(
-              language,
-              "Une ligne par créneau proposé. Les horaires et durées restent indépendants des autres besoins professeurs.",
-              "One row per proposed slot. Times and durations remain independent from all other teacher requirements.",
-            )}
-          </p>
+          <h3>{title}</h3>
+          <p className="muted">{description}</p>
         </div>
         <dl>
           <div>
@@ -923,7 +923,7 @@ function OnlineSolfegeTeacherTable({
 
       {orderedSlots.length === 0 ? (
         <p className="muted">
-          {text(language, "Aucun créneau de solfège en ligne proposé pour cette saison.", "No online music theory slot is proposed for this season.")}
+          {emptyMessage}
         </p>
       ) : (
         <div className="table-wrap">
@@ -1306,6 +1306,7 @@ export default async function AdminSimulationPlanningPage({
   if (requestedView === "teacher_needs") {
     simulationQuery.append("exclude_location_name", TEACHER_NEEDS_EXCLUDED_LOCATION_NAME);
     simulationQuery.set("exclude_online_solfege", "true");
+    simulationQuery.set("exclude_home_course", "true");
   }
   const simulationPath = simulationQuery.size
     ? `/api/v1/admin/plannings/simulation?${simulationQuery.toString()}`
@@ -1316,7 +1317,12 @@ export default async function AdminSimulationPlanningPage({
   onlineSolfegeQuery.set("online_solfege_only", "true");
   const onlineSolfegePath = `/api/v1/admin/plannings/simulation?${onlineSolfegeQuery.toString()}`;
 
-  const [locationsResult, courseTypesResult, simulationResult, professorsResult, onlineSolfegeResult] = await Promise.all([
+  const homeCourseQuery = new URLSearchParams();
+  homeCourseQuery.set("school_year_label", requestedSchoolYear);
+  homeCourseQuery.set("home_course_only", "true");
+  const homeCoursePath = `/api/v1/admin/plannings/simulation?${homeCourseQuery.toString()}`;
+
+  const [locationsResult, courseTypesResult, simulationResult, professorsResult, onlineSolfegeResult, homeCourseResult] = await Promise.all([
     loadPlanningSimulationLocations(token),
     backendRequest<CourseTypeOut[]>("/api/v1/course-types?active=true", {}, token),
     backendRequest<AdminPlanningSimulationOut>(simulationPath, {}, token),
@@ -1325,6 +1331,9 @@ export default async function AdminSimulationPlanningPage({
       : Promise.resolve({ ok: true as const, data: [] as AdminProfessorOut[] }),
     requestedView === "teacher_needs"
       ? backendRequest<AdminPlanningSimulationOut>(onlineSolfegePath, {}, token)
+      : Promise.resolve({ ok: true as const, data: null as AdminPlanningSimulationOut | null }),
+    requestedView === "teacher_needs"
+      ? backendRequest<AdminPlanningSimulationOut>(homeCoursePath, {}, token)
       : Promise.resolve({ ok: true as const, data: null as AdminPlanningSimulationOut | null }),
   ]);
 
@@ -1354,6 +1363,8 @@ export default async function AdminSimulationPlanningPage({
   const professorsError = professorsResult.ok ? null : professorsResult.message;
   const onlineSolfegeSimulation = onlineSolfegeResult.ok ? onlineSolfegeResult.data : null;
   const onlineSolfegeError = onlineSolfegeResult.ok ? null : onlineSolfegeResult.message;
+  const homeCourseSimulation = homeCourseResult.ok ? homeCourseResult.data : null;
+  const homeCourseError = homeCourseResult.ok ? null : homeCourseResult.message;
   const okMessage = readParam(searchParams ?? {}, "ok").trim();
   const actionError = readParam(searchParams ?? {}, "error").trim();
 
@@ -1538,13 +1549,42 @@ export default async function AdminSimulationPlanningPage({
               {onlineSolfegeError}
             </section>
           ) : onlineSolfegeSimulation ? (
-            <OnlineSolfegeTeacherTable
+            <DedicatedTeacherTable
               slots={onlineSolfegeSimulation.slots}
               professors={professors}
               schoolYearLabel={effectiveSchoolYear}
               returnTo={assignmentReturnTo}
               canEdit={canEditSimulation && !professorsError}
               language={language}
+              title={text(language, "Professeurs — solfège en ligne", "Teachers — online music theory")}
+              description={text(
+                language,
+                "Une ligne par créneau proposé. Les horaires et durées restent indépendants des autres besoins professeurs.",
+                "One row per proposed slot. Times and durations remain independent from all other teacher requirements.",
+              )}
+              emptyMessage={text(language, "Aucun créneau de solfège en ligne proposé pour cette saison.", "No online music theory slot is proposed for this season.")}
+            />
+          ) : null}
+          {homeCourseError ? (
+            <section className="flash-err">
+              {text(language, "Impossible de charger le tableau des cours à domicile : ", "Unable to load the home-course board: ")}
+              {homeCourseError}
+            </section>
+          ) : homeCourseSimulation ? (
+            <DedicatedTeacherTable
+              slots={homeCourseSimulation.slots}
+              professors={professors}
+              schoolYearLabel={effectiveSchoolYear}
+              returnTo={assignmentReturnTo}
+              canEdit={canEditSimulation && !professorsError}
+              language={language}
+              title={text(language, "Professeurs — cours à domicile", "Teachers — home lessons")}
+              description={text(
+                language,
+                "Une ligne par créneau à domicile, avec son jour, son horaire et sa durée propres.",
+                "One row per home lesson slot, with its own day, time and duration.",
+              )}
+              emptyMessage={text(language, "Aucun créneau de cours à domicile proposé pour cette saison.", "No home lesson slot is proposed for this season.")}
             />
           ) : null}
         </>
