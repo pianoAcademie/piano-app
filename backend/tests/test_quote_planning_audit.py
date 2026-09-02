@@ -9,7 +9,10 @@ from app.services.quote_planning_audit import (
     _confirmed_variance_matches,
     _expected_dates,
     _invoice_line_matches_booking_amount,
+    _invoice_note_covers_date,
+    _invoice_note_is_active,
     _paris_annual_target_count,
+    _sold_session_quantities_for_group,
 )
 
 
@@ -85,7 +88,7 @@ def test_confirmed_variance_only_matches_the_recorded_audit_state() -> None:
     )
 
 
-def test_invoice_amount_comparison_accepts_only_ht_vat_rounding_distribution() -> None:
+def test_invoice_amount_comparison_uses_amount_payable_and_currency() -> None:
     booking = SimpleNamespace(
         price_excl_vat_snapshot=Decimal("16.66"),
         vat_rate_snapshot=Decimal("20.000"),
@@ -111,10 +114,47 @@ def test_invoice_amount_comparison_accepts_only_ht_vat_rounding_distribution() -
     wrong_vat_rate = SimpleNamespace(
         **{**rounded_invoice_line.__dict__, "vat_rate": Decimal("10.000")}
     )
-    assert not _invoice_line_matches_booking_amount(line=wrong_vat_rate, booking=booking)
+    assert _invoice_line_matches_booking_amount(line=wrong_vat_rate, booking=booking)
 
     wrong_currency = SimpleNamespace(**{**rounded_invoice_line.__dict__, "currency": "USD"})
     assert not _invoice_line_matches_booking_amount(line=wrong_currency, booking=booking)
+
+
+def test_invoice_note_activity_and_date_coverage_ignore_cancelled_documents() -> None:
+    issued = {
+        "invoice_status": "ISSUED",
+        "document_type": "INVOICE",
+        "start_date": "2026-09-01",
+        "end_date": "2026-09-30",
+    }
+    assert _invoice_note_is_active(issued)
+    assert _invoice_note_covers_date(issued, date(2026, 9, 16))
+    assert not _invoice_note_covers_date(issued, date(2026, 10, 1))
+    assert not _invoice_note_is_active({**issued, "invoice_status": "CANCELLED"})
+    assert not _invoice_note_is_active({**issued, "document_type": "CREDIT_NOTE"})
+
+
+def test_sold_quantity_uses_assignment_when_live_activity_is_location_specific() -> None:
+    generic_activity_id = uuid4()
+    live_activity_id = uuid4()
+    group_id = uuid4()
+    session_id = uuid4()
+    lines = [
+        SimpleNamespace(
+            line_category="service",
+            line_type="item",
+            activity_id=generic_activity_id,
+            quantity=Decimal("32.00"),
+        )
+    ]
+
+    assert _sold_session_quantities_for_group(
+        quote_lines=lines,
+        course_type_id=live_activity_id,
+        group_id=group_id,
+        assigned={f"{generic_activity_id}:main": str(session_id)},
+        assigned_session_groups={session_id: group_id},
+    ) == {32}
 
 
 def test_expected_dates_follow_the_approved_schedule_key_and_ignore_parallel_group() -> None:

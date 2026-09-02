@@ -17,12 +17,15 @@ from sqlalchemy import select
 
 from app.db.session import SessionLocal
 from app.models.catalog import Booking, CourseSession
+from app.models.client_record import ClientNoteEntry
 from app.services.quote_planning_audit import (
     ACTIVE_BOOKING_STATUSES,
     AuditCandidate,
     _audit_candidates,
     _execution,
     _json_list,
+    _invoice_note_is_active,
+    _invoice_note_metadata,
     _parse_uuid,
     _zone,
 )
@@ -40,12 +43,6 @@ def _parse_datetime(value: object) -> datetime | None:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
-
-
-def _month_end(value: date) -> date:
-    if value.month == 12:
-        return date(value.year, 12, 31)
-    return date(value.year, value.month + 1, 1) - timedelta(days=1)
 
 
 def _local_signature(session_obj: CourseSession) -> tuple[UUID, UUID, int, str, str]:
@@ -73,6 +70,43 @@ def _candidate_missing_invoice_dates(candidate: AuditCandidate) -> list[date]:
         for booking in candidate.bookings
         if not candidate.invoice_lines_by_booking_id.get(booking.id)
     )
+
+
+def _invoice_ranges_for_candidate(
+    db,
+    *,
+    candidate: AuditCandidate,
+    execution: dict[str, Any],
+) -> list[tuple[date, date, str]]:
+    note_ids = {
+        line.note_id
+        for lines in candidate.invoice_lines_by_booking_id.values()
+        for line in lines
+    }
+    note_ids.update(
+        parsed
+        for value in _json_list(execution.get("created_annual_invoice_note_ids"))
+        if (parsed := _parse_uuid(value)) is not None
+    )
+    if not note_ids:
+        return []
+    ranges: list[tuple[date, date, str]] = []
+    notes = db.scalars(
+        select(ClientNoteEntry)
+        .where(ClientNoteEntry.id.in_(note_ids))
+        .order_by(ClientNoteEntry.created_at.asc())
+    ).all()
+    for note in notes:
+        metadata = _invoice_note_metadata(note)
+        if not metadata or not _invoice_note_is_active(metadata):
+            continue
+        try:
+            start_date = date.fromisoformat(str(metadata.get("start_date") or "")[:10])
+            end_date = date.fromisoformat(str(metadata.get("end_date") or "")[:10])
+        except ValueError:
+            continue
+        ranges.append((start_date, end_date, str(metadata.get("invoice_number") or note.id)))
+    return ranges
 
 
 def _classification_row(
@@ -120,14 +154,24 @@ def _classification_row(
 
     monthly_card = str(execution.get("annual_invoice_skipped_reason") or "").strip().upper() == "MONTHLY_CARD_BILLING"
     missing_invoice_dates = _candidate_missing_invoice_dates(candidate)
-    if "MISSING_INVOICE_LINE" in remaining_codes and monthly_card:
-        current_month_end = _month_end(today)
-        if missing_invoice_dates and all(value > current_month_end for value in missing_invoice_dates):
+    invoice_ranges = _invoice_ranges_for_candidate(db, candidate=candidate, execution=execution)
+    covered_missing_invoice_dates = [
+        value
+        for value in missing_invoice_dates
+        if any(start_date <= value <= end_date for start_date, end_date, _ in invoice_ranges)
+    ]
+    if "MISSING_INVOICE_LINE" in remaining_codes and missing_invoice_dates:
+        if not covered_missing_invoice_dates:
             remaining_codes.remove("MISSING_INVOICE_LINE")
             false_codes.append("MISSING_INVOICE_LINE")
             evidence.append(
-                "facturation mensuelle : toutes les lignes sans facture concernent des mois futurs "
+                "aucune facture émise ne couvre les dates sans ligne : échéances futures hors période facturée "
                 f"({missing_invoice_dates[0].isoformat()} à {missing_invoice_dates[-1].isoformat()})"
+            )
+        elif len(covered_missing_invoice_dates) < len(missing_invoice_dates):
+            evidence.append(
+                f"{len(covered_missing_invoice_dates)} date(s) sans ligne sont pourtant couvertes par une facture ; "
+                f"{len(missing_invoice_dates) - len(covered_missing_invoice_dates)} relèvent de périodes futures"
             )
 
     if "BOOKING_COUNT_MISMATCH" in remaining_codes:
@@ -212,6 +256,7 @@ def _classification_row(
         "related_series_count": len(related_series_ids),
         "related_active_dates_count": len(related_dates),
         "missing_invoice_dates": [value.isoformat() for value in missing_invoice_dates],
+        "covered_missing_invoice_dates": [value.isoformat() for value in covered_missing_invoice_dates],
         "evidence": evidence,
     }
 

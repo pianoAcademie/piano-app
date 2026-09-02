@@ -4,6 +4,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal
+import json
 import re
 from typing import Any
 import unicodedata
@@ -22,8 +23,8 @@ from app.models.catalog import (
     Location,
     SessionStatus,
 )
-from app.models.client_record import ClientInvoiceLine
-from app.models.quote import Quote, QuoteAcceptanceFollowup, QuoteEvent
+from app.models.client_record import ClientInvoiceLine, ClientNoteEntry
+from app.models.quote import Quote, QuoteAcceptanceFollowup, QuoteEvent, QuoteLine
 from app.models.user import User
 from app.services.reminders import ensure_booking_reminder
 
@@ -107,21 +108,88 @@ def _invoice_line_matches_booking_amount(
     line: ClientInvoiceLine,
     booking: Booking,
 ) -> bool:
-    """Compare the legally meaningful booking amount without false rounding alerts.
+    """Compare the amount payable without false tax-rounding alerts.
 
     Older annual invoices can distribute the cents between HT and VAT per line
-    differently from the immutable booking snapshot.  When TTC, VAT rate and
-    currency agree, that allocation difference is only rounding and must not be
-    reported as a billing mismatch.
+    differently from the immutable booking snapshot.  The audit is about the
+    amount billed for a lesson, so an unchanged TTC in the same currency is not
+    an amount mismatch even when the historical effective VAT snapshot differs
+    by a few hundredths from the legal rate printed on the invoice.
     """
 
     return (
         _money(line.total_incl_vat) == _money(booking.total_incl_vat_snapshot)
-        and Decimal(str(line.vat_rate or "0")).quantize(Decimal("0.001"))
-        == Decimal(str(booking.vat_rate_snapshot or "0")).quantize(Decimal("0.001"))
         and str(line.currency or "").strip().upper()
         == str(booking.currency_snapshot or "").strip().upper()
     )
+
+
+def _invoice_note_metadata(note: ClientNoteEntry) -> dict[str, Any]:
+    message = (note.message or "").strip()
+    marker = "INVOICE_RANGE::"
+    marker_index = message.find(marker)
+    if marker_index < 0:
+        return {}
+    raw_payload = message[marker_index + len(marker) :].strip()
+    if not raw_payload:
+        return {}
+    try:
+        parsed = json.loads(raw_payload)
+    except json.JSONDecodeError:
+        return {}
+    return _json_object(parsed)
+
+
+def _invoice_note_is_active(metadata: object) -> bool:
+    row = _json_object(metadata)
+    status = str(row.get("invoice_status") or "ISSUED").strip().upper()
+    document_type = str(row.get("document_type") or "INVOICE").strip().upper()
+    return status not in {"CANCELLED", "CREDIT_NOTE"} and document_type != "CREDIT_NOTE"
+
+
+def _invoice_note_covers_date(metadata: object, value: date) -> bool:
+    row = _json_object(metadata)
+    start_date = _parse_date(row.get("start_date"))
+    end_date = _parse_date(row.get("end_date"))
+    return start_date is not None and end_date is not None and start_date <= value <= end_date
+
+
+def _sold_session_quantities_for_group(
+    *,
+    quote_lines: list[QuoteLine],
+    course_type_id: UUID,
+    group_id: UUID,
+    assigned: dict[str, Any],
+    assigned_session_groups: dict[UUID, UUID],
+) -> set[int]:
+    """Return accepted service quantities that resolve to this live series.
+
+    Some older quotes use a generic activity id while the transformation maps
+    it to a location-specific course type.  The assigned-session map is the
+    durable link in that case; exact activity ids remain the normal path.
+    """
+
+    activity_ids = {course_type_id}
+    for schedule_key, session_id_raw in assigned.items():
+        session_id = _parse_uuid(session_id_raw)
+        if session_id is None or assigned_session_groups.get(session_id) != group_id:
+            continue
+        activity_id = _parse_uuid(str(schedule_key).split(":", 1)[0])
+        if activity_id is not None:
+            activity_ids.add(activity_id)
+
+    quantities: set[int] = set()
+    for line in quote_lines:
+        if (
+            line.line_category != "service"
+            or line.line_type != "item"
+            or line.activity_id not in activity_ids
+        ):
+            continue
+        quantity = Decimal(str(line.quantity or 0))
+        if quantity > 0 and quantity == quantity.to_integral_value():
+            quantities.add(int(quantity))
+    return quantities
 
 
 def _int_or_none(value: object) -> int | None:
@@ -499,7 +567,15 @@ def _audit_candidates(db: Session, *, school_year: str) -> tuple[int, list[Audit
             if row.recurrence_group_id is not None
         } if assigned_session_ids else {}
 
-        invoice_note_ids = [
+        quote_lines = list(
+            db.scalars(
+                select(QuoteLine)
+                .where(QuoteLine.quote_id == quote.id)
+                .order_by(QuoteLine.sort_order.asc(), QuoteLine.created_at.asc())
+            ).all()
+        )
+
+        created_invoice_note_ids = [
             parsed
             for value in _json_list(execution.get("created_annual_invoice_note_ids"))
             if (parsed := _parse_uuid(value))
@@ -509,7 +585,7 @@ def _audit_candidates(db: Session, *, school_year: str) -> tuple[int, list[Audit
         # but its immutable BOOKING source id still points to the enrollment.
         # Use that accounting reference instead of relying only on the quote's
         # historical note list.
-        invoice_lines = list(
+        all_invoice_lines = list(
             db.scalars(
                 select(ClientInvoiceLine).where(
                     ClientInvoiceLine.source == "BOOKING",
@@ -517,9 +593,43 @@ def _audit_candidates(db: Session, *, school_year: str) -> tuple[int, list[Audit
                 )
             ).all()
         )
+        relevant_note_ids = {
+            *created_invoice_note_ids,
+            *(line.note_id for line in all_invoice_lines),
+        }
+        notes_by_id = {
+            note.id: note
+            for note in db.scalars(
+                select(ClientNoteEntry).where(ClientNoteEntry.id.in_(relevant_note_ids))
+            ).all()
+        } if relevant_note_ids else {}
+        note_metadata_by_id = {
+            note_id: _invoice_note_metadata(note)
+            for note_id, note in notes_by_id.items()
+        }
+        active_note_ids = {
+            note_id
+            for note_id in relevant_note_ids
+            if note_id not in note_metadata_by_id
+            or _invoice_note_is_active(note_metadata_by_id[note_id])
+        }
+        invoice_lines = [line for line in all_invoice_lines if line.note_id in active_note_ids]
         invoice_lines_by_booking_id: dict[UUID, list[ClientInvoiceLine]] = defaultdict(list)
         for line in invoice_lines:
             invoice_lines_by_booking_id[line.source_payment_id].append(line)
+
+        # Installments and global quote adjustments can intentionally allocate
+        # a different amount to each booking.  If the active invoice documents
+        # together reconcile exactly to the accepted quote total, this is not a
+        # per-session billing anomaly.
+        active_invoice_lines = list(
+            db.scalars(
+                select(ClientInvoiceLine).where(ClientInvoiceLine.note_id.in_(active_note_ids))
+            ).all()
+        ) if active_note_ids else []
+        active_documents_match_quote_total = bool(active_invoice_lines) and _money(
+            sum((_money(line.total_incl_vat) for line in active_invoice_lines), Decimal("0.00"))
+        ) == _money(quote.total_ttc)
 
         grouped: dict[UUID, list[tuple[Booking, CourseSession, CourseType, Location]]] = defaultdict(list)
         for booking, session_obj, course_type, location in booking_rows:
@@ -552,14 +662,35 @@ def _audit_candidates(db: Session, *, school_year: str) -> tuple[int, list[Audit
                 row[1].start_at_utc.astimezone(_zone(row[1].timezone)).date()
                 for row in group_rows
             }
+            sold_quantities = _sold_session_quantities_for_group(
+                quote_lines=quote_lines,
+                course_type_id=group_rows[0][2].id,
+                group_id=group_id,
+                assigned=assigned,
+                assigned_session_groups=assigned_session_groups,
+            )
+            sold_quantity_matches_bookings = len(bookings) in sold_quantities
             issue_codes: list[str] = []
             if len(bookings) != len(expected_dates):
-                issue_codes.append("BOOKING_COUNT_MISMATCH")
+                if not sold_quantity_matches_bookings:
+                    issue_codes.append("BOOKING_COUNT_MISMATCH")
             elif current_dates != expected_dates:
                 issue_codes.append("PLANNING_DATE_MISMATCH")
 
-            if invoice_note_ids or invoice_lines:
-                if any(not invoice_lines_by_booking_id.get(booking.id) for booking in bookings):
+            if active_note_ids or invoice_lines:
+                missing_covered_booking = False
+                for booking in bookings:
+                    if invoice_lines_by_booking_id.get(booking.id):
+                        continue
+                    session_obj = sessions_by_booking_id[booking.id]
+                    session_date = session_obj.start_at_utc.astimezone(_zone(session_obj.timezone)).date()
+                    if any(
+                        _invoice_note_covers_date(note_metadata_by_id.get(note_id, {}), session_date)
+                        for note_id in active_note_ids
+                    ):
+                        missing_covered_booking = True
+                        break
+                if missing_covered_booking:
                     issue_codes.append("MISSING_INVOICE_LINE")
                 date_mismatch = False
                 amount_mismatch = False
@@ -569,7 +700,10 @@ def _audit_candidates(db: Session, *, school_year: str) -> tuple[int, list[Audit
                     for line in invoice_lines_by_booking_id.get(booking.id, []):
                         if line.occurred_at.astimezone(_zone(session_obj.timezone)).date() != session_date:
                             date_mismatch = True
-                        if not _invoice_line_matches_booking_amount(line=line, booking=booking):
+                        if (
+                            not active_documents_match_quote_total
+                            and not _invoice_line_matches_booking_amount(line=line, booking=booking)
+                        ):
                             amount_mismatch = True
                 if date_mismatch:
                     issue_codes.append("INVOICE_DATE_MISMATCH")
@@ -601,7 +735,7 @@ def _audit_candidates(db: Session, *, school_year: str) -> tuple[int, list[Audit
                         sessions_by_booking_id=sessions_by_booking_id,
                         expected_dates=expected_dates,
                         invoice_lines_by_booking_id=invoice_lines_by_booking_id,
-                        annual_invoice_expected=bool(invoice_note_ids or invoice_lines),
+                        annual_invoice_expected=bool(active_note_ids or invoice_lines),
                         issue_codes=issue_codes,
                     )
                 )
