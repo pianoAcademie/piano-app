@@ -8439,6 +8439,12 @@ def _quote_intake_is_reenrollment(normalized: dict[str, object]) -> bool | None:
     return None
 
 
+def _initial_partition_status(*, intake_reenrollment: bool | None, student_created: bool) -> str:
+    """New students receive their first partition; re-enrolments keep the next one waiting."""
+    is_new_enrollment = not intake_reenrollment if intake_reenrollment is not None else student_created
+    return "TO_DELIVER" if is_new_enrollment else "STANDBY"
+
+
 def _quote_line_contains_pass_recup(lines: list[QuoteLine]) -> bool:
     for line in lines:
         meta = _json_object(line.meta)
@@ -11251,10 +11257,9 @@ def _execute_quote_followup_transformation(
         for row in db.scalars(select(ProductCategory).where(ProductCategory.id.in_(category_ids))).all()
     } if category_ids else {}
     intake_reenrollment = _quote_intake_is_reenrollment(_typeform_quote_normalized_payload(quote))
-    starts_partition_now = (
-        not intake_reenrollment
-        if intake_reenrollment is not None
-        else student.id in created_user_ids
+    initial_partition_status = _initial_partition_status(
+        intake_reenrollment=intake_reenrollment,
+        student_created=student.id in created_user_ids,
     )
     for line in quote_product_lines:
         product = products.get(line.product_id)
@@ -11271,9 +11276,8 @@ def _execute_quote_followup_transformation(
             student_id=student.id,
             product_id=product.id,
             title_snapshot=product.title,
-            status="IN_PROGRESS" if starts_partition_now else "STANDBY",
+            status=initial_partition_status,
             source_quote_line_id=line.id,
-            started_at=now if starts_partition_now else None,
         )
         db.add(assignment)
         db.flush()
