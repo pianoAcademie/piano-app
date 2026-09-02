@@ -105,10 +105,10 @@ class ApprovalMetadataTests(unittest.TestCase):
         current_fingerprint = quote_fingerprint(self.quote, self.lines)
         self.assertTrue(review_fingerprint_matches(self.quote, self.lines, current_fingerprint))
 
-    def test_selected_free_solfege_slot_keeps_pricing_review_current(self):
+    def test_selected_paid_solfege_slot_keeps_pricing_review_current(self):
         quote = deepcopy(self.quote)
-        free_block = quote.calendar_snapshot["blocks"][0]
-        free_block.update(
+        solfege_block = quote.calendar_snapshot["blocks"][0]
+        solfege_block.update(
             weekday=-1,
             weekday_label="A choisir",
             start_time="",
@@ -120,6 +120,11 @@ class ApprovalMetadataTests(unittest.TestCase):
             pending_slot_options=[{"weekday": 2, "start_time": "19:30", "end_time": "20:15"}],
         )
         quote.calendar_snapshot["solfege"] = {"required": True}
+        quote.calendar_snapshot["sessions_count"] = 31
+        quote.calendar_snapshot["generated_at"] = "2026-09-01T10:00:00Z"
+        paid_solfege_line = deepcopy(self.lines[0])
+        paid_solfege_line.unit_price_ttc = 8
+        paid_solfege_line.amount_ttc = 208
         paid_activity_id = uuid4()
         paid_line = SimpleNamespace(
             id=uuid4(),
@@ -135,7 +140,7 @@ class ApprovalMetadataTests(unittest.TestCase):
             duration_minutes=60,
             line_category="service",
         )
-        lines = [*self.lines, paid_line]
+        lines = [paid_solfege_line, paid_line]
         quote.calendar_snapshot["blocks"].append(
             {
                 "activity_id": str(paid_activity_id),
@@ -148,7 +153,7 @@ class ApprovalMetadataTests(unittest.TestCase):
         full_fingerprint = quote_fingerprint(quote, lines)
         pricing_fingerprint = pricing_review_fingerprint(quote, lines)
 
-        free_block.update(
+        solfege_block.update(
             weekday=2,
             weekday_label="Mercredi",
             start_time="19:30",
@@ -162,6 +167,16 @@ class ApprovalMetadataTests(unittest.TestCase):
             "start_time": "19:30",
             "end_time": "20:15",
         }
+        quote.calendar_snapshot["sessions"].append(
+            {
+                "activity_id": str(paid_solfege_line.activity_id),
+                "date": "2026-09-30",
+                "start_time": "19:30",
+                "end_time": "20:15",
+            }
+        )
+        quote.calendar_snapshot["sessions_count"] = 32
+        quote.calendar_snapshot["generated_at"] = "2026-09-02T10:00:00Z"
 
         self.assertNotEqual(full_fingerprint, quote_fingerprint(quote, lines))
         self.assertTrue(

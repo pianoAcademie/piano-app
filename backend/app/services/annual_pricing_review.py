@@ -66,52 +66,43 @@ def quote_fingerprint(quote, lines, *, calendar_snapshot=None):
         } for l in sorted(lines, key=lambda row: str(row.id))])
 
 
-SOLFEGE_SELECTION_FIELDS = {
-    "weekday",
-    "weekday_label",
-    "start_time",
-    "end_time",
-    "duration_minutes",
-    "location_id",
-    "location_label",
-    "modality",
-    "selection_pending",
-    "pending_slot_options",
-}
-
-
 def pricing_review_calendar(quote, lines):
-    """Ignore only the later scheduling choice for a free solfege line."""
+    """Ignore solfege scheduling while preserving every priced quote line.
+
+    A solfege slot can be selected after the annual pricing review, including
+    when solfege is billed separately.  Its activity, quantity and price remain
+    protected by the quote-line fingerprint; only its calendar materialization
+    is excluded here.
+    """
     calendar = deepcopy(quote.calendar_snapshot or {})
-    free_solfege_activity_ids = {
+    solfege_activity_ids = {
         str(line.activity_id)
         for line in lines
         if line.activity_id
         and line.line_type == "item"
         and line.line_category == "service"
-        and Decimal(str(line.amount_ttc or 0)) == 0
         and "solfege" in normalized(line.title)
     }
-    if not free_solfege_activity_ids:
+    if not solfege_activity_ids:
         return calendar
 
-    normalized_blocks: list[object] = []
-    for raw_block in calendar.get("blocks", []):
-        if not isinstance(raw_block, dict):
-            normalized_blocks.append(raw_block)
-            continue
-        block = dict(raw_block)
-        if str(block.get("activity_id") or "") in free_solfege_activity_ids:
-            for field in SOLFEGE_SELECTION_FIELDS:
-                block.pop(field, None)
-        normalized_blocks.append(block)
-    calendar["blocks"] = normalized_blocks
-
-    solfege = calendar.get("solfege")
-    if isinstance(solfege, dict):
-        normalized_solfege = dict(solfege)
-        normalized_solfege.pop("selected_slot", None)
-        calendar["solfege"] = normalized_solfege
+    calendar["blocks"] = [
+        raw_block
+        for raw_block in calendar.get("blocks", [])
+        if not isinstance(raw_block, dict)
+        or str(raw_block.get("activity_id") or "") not in solfege_activity_ids
+    ]
+    if isinstance(calendar.get("sessions"), list):
+        calendar["sessions"] = [
+            raw_session
+            for raw_session in calendar["sessions"]
+            if not isinstance(raw_session, dict)
+            or str(raw_session.get("activity_id") or "") not in solfege_activity_ids
+        ]
+        if "sessions_count" in calendar:
+            calendar["sessions_count"] = len(calendar["sessions"])
+    calendar.pop("solfege", None)
+    calendar.pop("generated_at", None)
     return calendar
 
 
