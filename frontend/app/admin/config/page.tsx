@@ -3874,6 +3874,10 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                       </div>
                     </header>
 
+                    {errorMessage ? (
+                      <p className="flash-err">{translateBackendMessage(language, errorMessage)}</p>
+                    ) : null}
+
                     <section className="card modal-card">
                       {activeLegalEntities.length === 0 ? (
                         <p className="flash-err">{t("admin.activity_modal.no_legal_entity_create")}</p>
@@ -4121,6 +4125,17 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                     />
                                   </div>
                                   <div className="grid cols-2 config-form-grid">
+                                    <label className="span-2">
+                                      {t("admin.activity_modal.trial_course_price_ttc")}
+                                      <input
+                                        type="number"
+                                        name="trial_course_price_ttc"
+                                        min={0}
+                                        step="0.01"
+                                        defaultValue="20.00"
+                                      />
+                                      <small className="muted">{t("admin.activity_modal.trial_course_price_help")}</small>
+                                    </label>
                                     <div className="flash-info span-2">
                                       <strong>{language === "en" ? "Prices managed in one place" : "Tarifs geres a un seul endroit"}</strong>
                                       <p className="muted">

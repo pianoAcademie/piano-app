@@ -9539,6 +9539,9 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
   if (trialCoursePriceRaw && trialCoursePrice === null) {
     redirect(appendQueryMessage(returnTo, "error", t("admin.activity_action.invalid_trial_course_price")));
   }
+  if (trialCourseEnabled && trialCoursePrice === null) {
+    redirect(appendQueryMessage(returnTo, "error", t("admin.activity_action.invalid_trial_course_price")));
+  }
   if (trialCourseEnabled && !allowsStudentBookings) {
     redirect(appendQueryMessage(returnTo, "error", t("admin.activity_action.trial_requires_students")));
   }
@@ -9586,7 +9589,7 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
     default_hourly_rate: defaultHourlyRateRaw ? defaultHourlyRate : null,
     default_course_rate_ttc: defaultCourseRateRaw ? defaultCourseRate : null,
     trial_course_enabled: trialCourseEnabled,
-    trial_course_price_ttc: trialCoursePriceRaw ? trialCoursePrice : null,
+    trial_course_price_ttc: trialCourseEnabled ? trialCoursePrice : null,
     email_reminder_hours_before_start: emailReminderHours,
     sms_reminder_hours_before_start: smsReminderHours,
     min_booking_notice_hours_override: minBookingNoticeHoursOverride,
