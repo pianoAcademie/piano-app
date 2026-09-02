@@ -1769,6 +1769,23 @@ export type TeacherStatementOut = {
   missing_sessions: TeacherStatementMissingSessionOut[];
 };
 
+export type AdminTeacherStatementSummaryOut = {
+  professor_id: string;
+  professor_name: string;
+  payor_legal_entity_name: string;
+  year: number;
+  month: number;
+  status: string;
+  attendance_complete: boolean;
+  currency: string;
+  courses_count: number;
+  total_hours: string;
+  totals_ht: string;
+  totals_vat: string;
+  totals_ttc: string;
+  amount_payable: string;
+};
+
 export type TeacherInvoiceLineOut = {
   id: string;
   course_type_id: string | null;

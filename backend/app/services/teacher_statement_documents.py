@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from html import escape
@@ -14,7 +15,7 @@ from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.lib.utils import ImageReader
-from reportlab.platypus import BaseDocTemplate, Frame, PageTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.platypus import BaseDocTemplate, Frame, PageTemplate, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from app.models.catalog import BookingStatus
 from app.services.i18n import normalize_language
@@ -29,6 +30,21 @@ PALE_BLUE = colors.HexColor("#F4F7FB")
 LINE = colors.HexColor("#D8DFEA")
 TEXT = colors.HexColor("#1B2638")
 MUTED = colors.HexColor("#607089")
+
+
+@dataclass(frozen=True)
+class TeacherStatementOverviewRow:
+    professor_name: str
+    payor_legal_entity_name: str
+    status: str
+    attendance_complete: bool
+    currency: str
+    courses_count: int
+    total_hours: Decimal
+    totals_ht: Decimal
+    totals_vat: Decimal
+    amount_payable: Decimal
+
 
 TEXTS = {
     "fr": {
@@ -227,6 +243,132 @@ def _identity_lines(identity: CompanyIdentity, language: str) -> list[str]:
     lines.append(escape(identity.company_address))
     lines.append(f"{_text(language, 'phone')}: {escape(identity.company_phone)} | Email: {escape(identity.company_email)}")
     return lines
+
+
+def _overview_status_label(status: str, language: str) -> str:
+    labels = {
+        "fr": {
+            "awaiting_attendance": "Présences à renseigner",
+            "to_verify": "À vérifier",
+            "in_dispute": "En litige",
+            "awaiting_admin_feedback": "Retour administration attendu",
+            "validated": "Validé",
+            "approved": "Approuvé",
+            "invoice_generated": "Facture générée",
+            "exported": "Exporté",
+            "closed": "Clôturé",
+        },
+        "en": {
+            "awaiting_attendance": "Attendance pending",
+            "to_verify": "To verify",
+            "in_dispute": "In dispute",
+            "awaiting_admin_feedback": "Awaiting admin feedback",
+            "validated": "Validated",
+            "approved": "Approved",
+            "invoice_generated": "Invoice generated",
+            "exported": "Exported",
+            "closed": "Closed",
+        },
+    }
+    normalized = (status or "").strip().lower()
+    return labels.get(language, labels["fr"]).get(normalized, normalized.replace("_", " ").title() or "-")
+
+
+def render_teacher_statements_overview_pdf(
+    *,
+    year: int,
+    month: int,
+    rows: list[TeacherStatementOverviewRow],
+    language: str | None = None,
+    generated_at: datetime | None = None,
+) -> bytes:
+    normalized_language = normalize_language(language)
+    generated = (generated_at or datetime.now(UTC)).astimezone(PARIS_TIMEZONE)
+    period_label = f"{MONTH_LABELS[normalized_language][month - 1]} {year}"
+    teacher_count = len({row.professor_name for row in rows})
+    title = "SYNTHÈSE DES RELEVÉS PROFESSEURS" if normalized_language == "fr" else "TEACHER STATEMENTS SUMMARY"
+    labels = (
+        ["Professeur", "Entité", "Cours", "Heures", "HT", "TVA", "À payer", "Présences", "Statut"]
+        if normalized_language == "fr"
+        else ["Teacher", "Entity", "Lessons", "Hours", "Net", "VAT", "Payable", "Attendance", "Status"]
+    )
+
+    output = BytesIO()
+    doc = SimpleDocTemplate(
+        output,
+        pagesize=landscape(A4),
+        rightMargin=9 * mm,
+        leftMargin=9 * mm,
+        topMargin=10 * mm,
+        bottomMargin=10 * mm,
+        title=f"{title} - {period_label}",
+        author="Piano Académie",
+    )
+    styles = getSampleStyleSheet()
+    styles.add(ParagraphStyle(name="OverviewSmall", parent=styles["BodyText"], fontSize=6.8, leading=8.2, textColor=TEXT))
+    styles.add(ParagraphStyle(name="OverviewRight", parent=styles["OverviewSmall"], alignment=TA_RIGHT))
+    styles.add(ParagraphStyle(name="OverviewHeader", parent=styles["OverviewSmall"], fontName="Helvetica-Bold", textColor=colors.white))
+
+    story: list[Any] = [
+        Paragraph(title, styles["Title"]),
+        Paragraph(
+            (
+                f"Période : {escape(period_label)} · Généré le {generated.strftime('%d/%m/%Y %H:%M')} · "
+                f"{teacher_count} professeur(s)"
+                if normalized_language == "fr"
+                else f"Period: {escape(period_label)} · Generated on {generated.strftime('%d/%m/%Y %H:%M')} · "
+                f"{teacher_count} teacher(s)"
+            ),
+            styles["BodyText"],
+        ),
+        Spacer(1, 4 * mm),
+    ]
+
+    data: list[list[Any]] = [[Paragraph(escape(label), styles["OverviewHeader"]) for label in labels]]
+    for row in rows:
+        attendance_label = (
+            ("Complètes" if row.attendance_complete else "À compléter")
+            if normalized_language == "fr"
+            else ("Complete" if row.attendance_complete else "To complete")
+        )
+        data.append(
+            [
+                Paragraph(escape(row.professor_name), styles["OverviewSmall"]),
+                Paragraph(escape(row.payor_legal_entity_name), styles["OverviewSmall"]),
+                Paragraph(str(row.courses_count), styles["OverviewRight"]),
+                Paragraph(_hours(row.total_hours, normalized_language), styles["OverviewRight"]),
+                Paragraph(_money(row.totals_ht, row.currency, normalized_language), styles["OverviewRight"]),
+                Paragraph(_money(row.totals_vat, row.currency, normalized_language), styles["OverviewRight"]),
+                Paragraph(f"<b>{escape(_money(row.amount_payable, row.currency, normalized_language))}</b>", styles["OverviewRight"]),
+                Paragraph(attendance_label, styles["OverviewSmall"]),
+                Paragraph(escape(_overview_status_label(row.status, normalized_language)), styles["OverviewSmall"]),
+            ]
+        )
+
+    table = Table(
+        data,
+        colWidths=[36 * mm, 39 * mm, 14 * mm, 21 * mm, 28 * mm, 25 * mm, 29 * mm, 28 * mm, 37 * mm],
+        repeatRows=1,
+    )
+    commands = [
+        ("BACKGROUND", (0, 0), (-1, 0), NAVY),
+        ("BOX", (0, 0), (-1, -1), 0.5, LINE),
+        ("INNERGRID", (0, 0), (-1, -1), 0.3, LINE),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 3),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]
+    for index, row in enumerate(rows, start=1):
+        if not row.attendance_complete:
+            commands.append(("BACKGROUND", (0, index), (-1, index), colors.HexColor("#FFF3D6")))
+        elif index % 2 == 0:
+            commands.append(("BACKGROUND", (0, index), (-1, index), PALE_BLUE))
+    table.setStyle(TableStyle(commands))
+    story.append(table)
+    doc.build(story)
+    return output.getvalue()
 
 
 def render_teacher_statement_pdf(

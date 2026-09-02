@@ -26,6 +26,7 @@ from app.models.teacher_invoicing import (
 )
 from app.models.user import User, UserRole
 from app.schemas.professor import (
+    AdminTeacherStatementSummaryOut,
     TeacherApproveStatementsOut,
     TeacherStatementDisputeLinesRequest,
     TeacherInvoiceLineOut,
@@ -44,7 +45,11 @@ from app.services.teacher_invoice_documents import (
     render_teacher_invoice_html,
     render_teacher_invoice_pdf_from_html,
 )
-from app.services.teacher_statement_documents import render_teacher_statement_pdf
+from app.services.teacher_statement_documents import (
+    TeacherStatementOverviewRow,
+    render_teacher_statement_pdf,
+    render_teacher_statements_overview_pdf,
+)
 from app.services.teacher_invoicing import (
     ComputedStatement,
     PARIS_TIMEZONE,
@@ -330,7 +335,15 @@ def _sync_monthly_statements(
             )
             db.add(row)
         else:
-            if row.status not in {"validated", "invoice_generated", "closed", "in_dispute", "awaiting_admin_feedback"}:
+            if row.status not in {
+                "validated",
+                "approved",
+                "invoice_generated",
+                "exported",
+                "closed",
+                "in_dispute",
+                "awaiting_admin_feedback",
+            }:
                 row.status = _statement_status_from_computed(computed)
             row.attendance_complete = computed.attendance_complete
             row.totals_snapshot = statement_to_snapshot_payload(computed)
@@ -398,6 +411,88 @@ def _statement_out(row: TeacherMonthlyStatement, computed: ComputedStatement) ->
             }
             for item in computed.missing_sessions
         ],
+    )
+
+
+def _computed_course_count(computed: ComputedStatement) -> int:
+    count = 0
+    for line in computed.lines:
+        raw_items = line.meta.get("session_items") if isinstance(line.meta, dict) else None
+        if isinstance(raw_items, list) and raw_items:
+            count += len(raw_items)
+        elif line.hours > 0:
+            count += 1
+    return count
+
+
+def _all_active_teacher_statement_rows(
+    db: Session,
+    *,
+    year: int,
+    month: int,
+) -> list[tuple[Professor, TeacherMonthlyStatement, ComputedStatement]]:
+    professors = db.scalars(
+        select(Professor)
+        .where(Professor.active.is_(True))
+        .order_by(Professor.last_name.asc(), Professor.first_name.asc())
+    ).all()
+    rows: list[tuple[Professor, TeacherMonthlyStatement, ComputedStatement]] = []
+    for professor in professors:
+        rows.extend(
+            (professor, statement, computed)
+            for statement, computed in _sync_monthly_statements(
+                db,
+                professor=professor,
+                year=year,
+                month=month,
+            )
+        )
+    rows.sort(
+        key=lambda item: (
+            (item[0].last_name or "").casefold(),
+            (item[0].first_name or "").casefold(),
+            item[2].payor_legal_entity_name.casefold(),
+        )
+    )
+    return rows
+
+
+def _admin_statement_summary_out(
+    professor: Professor,
+    statement: TeacherMonthlyStatement,
+    computed: ComputedStatement,
+) -> AdminTeacherStatementSummaryOut:
+    professor_name = f"{(professor.first_name or '').strip()} {(professor.last_name or '').strip()}".strip() or professor.email
+    return AdminTeacherStatementSummaryOut(
+        professor_id=professor.id,
+        professor_name=professor_name,
+        payor_legal_entity_name=computed.payor_legal_entity_name,
+        year=computed.year,
+        month=computed.month,
+        status=statement.status,
+        attendance_complete=computed.attendance_complete,
+        currency=computed.currency,
+        courses_count=_computed_course_count(computed),
+        total_hours=sum((line.hours for line in computed.lines), Decimal("0.00")),
+        totals_ht=computed.totals_ht,
+        totals_vat=computed.totals_vat,
+        totals_ttc=computed.totals_ttc,
+        amount_payable=computed.totals_ttc if computed.vat_applicable else computed.totals_ht,
+    )
+
+
+def _overview_document_row(summary: AdminTeacherStatementSummaryOut) -> TeacherStatementOverviewRow:
+    return TeacherStatementOverviewRow(
+        professor_name=summary.professor_name,
+        payor_legal_entity_name=summary.payor_legal_entity_name,
+        status=summary.status,
+        attendance_complete=summary.attendance_complete,
+        currency=summary.currency,
+        courses_count=summary.courses_count,
+        total_hours=summary.total_hours,
+        totals_ht=summary.totals_ht,
+        totals_vat=summary.totals_vat,
+        amount_payable=summary.amount_payable,
     )
 
 
@@ -940,6 +1035,58 @@ def _generate_invoices_for_period(
             for invoice in generated
         ],
         blocked_missing_sessions=[],
+    )
+
+
+@router.get("/admin/statements-summary/{year}/{month}", response_model=list[AdminTeacherStatementSummaryOut])
+def get_admin_teacher_statements_summary(
+    year: int,
+    month: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin_or_permissions("can_manage_invoices_and_accounts", "can_create_and_view_reports")),
+) -> list[AdminTeacherStatementSummaryOut]:
+    if year < 2000 or year > 2100 or month < 1 or month > 12:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Periode invalide")
+    rows = _all_active_teacher_statement_rows(db, year=year, month=month)
+    summaries = [
+        _admin_statement_summary_out(professor, statement, computed)
+        for professor, statement, computed in rows
+    ]
+    db.commit()
+    return summaries
+
+
+@router.get("/admin/statements-summary/{year}/{month}/export.pdf")
+def export_admin_teacher_statements_summary_pdf(
+    year: int,
+    month: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin_or_permissions("can_manage_invoices_and_accounts", "can_create_and_view_reports")),
+) -> Response:
+    if year < 2000 or year > 2100 or month < 1 or month > 12:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Periode invalide")
+    rows = _all_active_teacher_statement_rows(db, year=year, month=month)
+    summaries = [
+        _admin_statement_summary_out(professor, statement, computed)
+        for professor, statement, computed in rows
+    ]
+    if not summaries:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=_teacher_text("statement_not_found_period", current_user=current_user),
+        )
+    content = render_teacher_statements_overview_pdf(
+        year=year,
+        month=month,
+        rows=[_overview_document_row(summary) for summary in summaries],
+        language=_teacher_language(current_user),
+    )
+    db.commit()
+    file_name = f"releves_professeurs_{year}-{month:02d}.pdf"
+    return Response(
+        content=content,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
     )
 
 

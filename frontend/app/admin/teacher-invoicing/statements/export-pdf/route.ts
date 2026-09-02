@@ -19,8 +19,11 @@ export async function GET(request: NextRequest): Promise<Response> {
     );
   }
 
+  const upstreamPath = professorId === "all"
+    ? `/api/v1/teacher/admin/statements-summary/${year}/${month}/export.pdf`
+    : `/api/v1/teacher/admin/statements/${encodeURIComponent(professorId)}/${year}/${month}/export.pdf`;
   const upstream = await fetch(
-    `${backendUrl()}/api/v1/teacher/admin/statements/${encodeURIComponent(professorId)}/${year}/${month}/export.pdf`,
+    `${backendUrl()}${upstreamPath}`,
     {
       method: "GET",
       headers: { Authorization: `Bearer ${token}` },
@@ -41,7 +44,11 @@ export async function GET(request: NextRequest): Promise<Response> {
     status: 200,
     headers: {
       "content-type": upstream.headers.get("content-type") ?? "application/pdf",
-      "content-disposition": upstream.headers.get("content-disposition") ?? `attachment; filename="releve_heures_${year}_${month}.pdf"`,
+      "content-disposition": upstream.headers.get("content-disposition") ?? (
+        professorId === "all"
+          ? `attachment; filename="releves_professeurs_${year}-${month.padStart(2, "0")}.pdf"`
+          : `attachment; filename="releve_heures_${year}_${month}.pdf"`
+      ),
       "cache-control": "no-store",
     },
   });

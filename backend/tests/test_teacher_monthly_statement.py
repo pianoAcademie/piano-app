@@ -18,7 +18,11 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 from app.api.routes.teacher_invoicing import _render_statement_csv, _safe_filename_component, _session_attendance_csv_label
 from app.services.invoice_documents import CompanyIdentity
 from app.services.teacher_invoicing import ComputedStatement, ComputedStatementLine, month_bounds_utc
-from app.services.teacher_statement_documents import render_teacher_statement_pdf
+from app.services.teacher_statement_documents import (
+    TeacherStatementOverviewRow,
+    render_teacher_statement_pdf,
+    render_teacher_statements_overview_pdf,
+)
 
 
 class TeacherMonthlyStatementTests(unittest.TestCase):
@@ -181,6 +185,50 @@ class TeacherMonthlyStatementTests(unittest.TestCase):
         self.assertIn("Cours collectif enfants", extracted)
         self.assertIn("Alice Martin", extracted)
         self.assertIn("35,00 EUR", extracted)
+
+    def test_overview_pdf_contains_all_teacher_statement_rows(self) -> None:
+        content = render_teacher_statements_overview_pdf(
+            year=2026,
+            month=8,
+            rows=[
+                TeacherStatementOverviewRow(
+                    professor_name="Marie Dupont",
+                    payor_legal_entity_name="PIANO ACADEMIE",
+                    status="approved",
+                    attendance_complete=True,
+                    currency="EUR",
+                    courses_count=12,
+                    total_hours=Decimal("12.50"),
+                    totals_ht=Decimal("500.00"),
+                    totals_vat=Decimal("0.00"),
+                    amount_payable=Decimal("500.00"),
+                ),
+                TeacherStatementOverviewRow(
+                    professor_name="Paul Martin",
+                    payor_legal_entity_name="PIANO ACADEMIE",
+                    status="awaiting_attendance",
+                    attendance_complete=False,
+                    currency="EUR",
+                    courses_count=8,
+                    total_hours=Decimal("8.00"),
+                    totals_ht=Decimal("320.00"),
+                    totals_vat=Decimal("64.00"),
+                    amount_payable=Decimal("384.00"),
+                ),
+            ],
+            language="fr",
+            generated_at=datetime(2026, 9, 2, 8, 0, tzinfo=timezone.utc),
+        )
+
+        self.assertTrue(content.startswith(b"%PDF"))
+        self.assertGreater(len(content), 2500)
+        extracted = "\n".join(page.extract_text() or "" for page in PdfReader(BytesIO(content)).pages)
+        self.assertIn("SYNTHÈSE DES RELEVÉS PROFESSEURS", extracted)
+        self.assertIn("Marie Dupont", extracted)
+        self.assertIn("Paul Martin", extracted)
+        self.assertIn("Approuvé", extracted)
+        self.assertIn("Présences à renseigner", extracted)
+        self.assertIn("384,00 EUR", extracted)
 
 
 if __name__ == "__main__":

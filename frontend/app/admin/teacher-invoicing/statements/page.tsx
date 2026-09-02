@@ -5,10 +5,11 @@ import { redirect } from "next/navigation";
 import AdminTeacherInvoicingNav from "../../../../components/admin-teacher-invoicing-nav";
 import { hasAdminPermission } from "../../../../lib/admin-access";
 import { backendRequest } from "../../../../lib/backend";
-import type { AdminProfessorOut, TeacherStatementOut, UserOut } from "../../../../lib/types";
+import type { AdminProfessorOut, AdminTeacherStatementSummaryOut, TeacherStatementOut, UserOut } from "../../../../lib/types";
 import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../../lib/ui-i18n";
 
 type SearchParams = Record<string, string | string[] | undefined>;
+const ALL_PROFESSORS_VALUE = "all";
 
 type AttendanceRow = {
   student_name: string;
@@ -129,6 +130,50 @@ function currentPeriod(): string {
   return `${year}-${month}`;
 }
 
+function previousPeriod(): string {
+  const [year, month] = currentPeriod().split("-").map(Number);
+  const previous = new Date(Date.UTC(year, month - 2, 1));
+  return `${previous.getUTCFullYear()}-${String(previous.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+function formatSummaryMoney(
+  rows: AdminTeacherStatementSummaryOut[],
+  field: "totals_ht" | "amount_payable",
+  language: UiLanguage,
+): string {
+  const totals = new Map<string, number>();
+  rows.forEach((row) => {
+    const currency = row.currency || "EUR";
+    totals.set(currency, (totals.get(currency) ?? 0) + safeNumber(row[field]));
+  });
+  return [...totals.entries()]
+    .map(([currency, value]) => formatMoney(value, currency, language))
+    .join(" · ") || formatMoney(0, "EUR", language);
+}
+
+function statementStatusLabel(status: string, language: UiLanguage): string {
+  const normalized = status.trim().toLowerCase();
+  const keyByStatus: Record<string, string> = {
+    awaiting_attendance: "admin.teacher_invoicing.status_awaiting_attendance",
+    to_verify: "admin.teacher_invoicing.status_to_verify",
+    in_dispute: "admin.teacher_invoicing.status_in_dispute",
+    awaiting_admin_feedback: "admin.teacher_invoicing.status_awaiting_admin_feedback",
+    validated: "admin.teacher_invoicing.status_validated",
+    approved: "admin.teacher_invoicing.status_approved",
+    invoice_generated: "admin.teacher_invoicing.status_invoice_generated",
+    exported: "admin.teacher_invoicing.status_exported",
+    closed: "admin.teacher_invoicing.status_closed",
+  };
+  return keyByStatus[normalized] ? uiText(language, keyByStatus[normalized]) : status || "-";
+}
+
+function statementStatusTone(status: string): string {
+  const normalized = status.trim().toLowerCase();
+  if (["validated", "approved", "invoice_generated", "exported", "closed"].includes(normalized)) return "status-ok";
+  if (["in_dispute", "awaiting_admin_feedback"].includes(normalized)) return "status-error";
+  return "status-warn";
+}
+
 export default async function AdminTeacherInvoicingStatementsPage({
   searchParams,
 }: {
@@ -142,10 +187,10 @@ export default async function AdminTeacherInvoicingStatementsPage({
 
   const language = normalizeUiLanguage(meResult.data.preferred_language);
   const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
-  const professorId = readParam(searchParams, "professor_id").trim();
-  const requestedPeriod = readParam(searchParams, "period").trim() || currentPeriod();
+  const professorId = readParam(searchParams, "professor_id").trim() || ALL_PROFESSORS_VALUE;
+  const requestedPeriod = readParam(searchParams, "period").trim() || previousPeriod();
   const periodMatch = /^(20\d{2})-(0[1-9]|1[0-2])$/.exec(requestedPeriod);
-  const period = periodMatch ? requestedPeriod : currentPeriod();
+  const period = periodMatch ? requestedPeriod : previousPeriod();
   const year = Number(period.slice(0, 4));
   const month = Number(period.slice(5, 7));
 
@@ -153,11 +198,16 @@ export default async function AdminTeacherInvoicingStatementsPage({
   const professors = professorsResult.ok
     ? [...professorsResult.data].sort((a, b) => `${a.last_name} ${a.first_name}`.localeCompare(`${b.last_name} ${b.first_name}`))
     : [];
+  const allProfessorsSelected = professorId === ALL_PROFESSORS_VALUE;
   const selectedProfessor = professors.find((row) => row.id === professorId) ?? null;
-  const statementsResult = professorId
+  const statementsResult = !allProfessorsSelected && professorId
     ? await backendRequest<TeacherStatementOut[]>(`/api/v1/teacher/admin/statements/${professorId}/${year}/${month}`, {}, token)
     : null;
+  const summariesResult = allProfessorsSelected
+    ? await backendRequest<AdminTeacherStatementSummaryOut[]>(`/api/v1/teacher/admin/statements-summary/${year}/${month}`, {}, token)
+    : null;
   const statements = statementsResult?.ok ? statementsResult.data : [];
+  const summaries = summariesResult?.ok ? summariesResult.data : [];
   const sessions = flattenSessions(statements);
   const currency = statements[0]?.currency || "EUR";
   const totalHours = statements.reduce(
@@ -166,7 +216,11 @@ export default async function AdminTeacherInvoicingStatementsPage({
   );
   const totalHt = statements.reduce((sum, statement) => sum + safeNumber(statement.totals_ht), 0);
   const attendanceComplete = statements.length > 0 && statements.every((statement) => statement.attendance_complete);
-  const exportHref = professorId
+  const summaryTeacherCount = new Set(summaries.map((row) => row.professor_id)).size;
+  const summaryCoursesCount = summaries.reduce((sum, row) => sum + row.courses_count, 0);
+  const summaryHours = summaries.reduce((sum, row) => sum + safeNumber(row.total_hours), 0);
+  const summaryAttendanceComplete = summaries.length > 0 && summaries.every((row) => row.attendance_complete);
+  const exportHref = !allProfessorsSelected && professorId
     ? `/admin/teacher-invoicing/statements/export?professor_id=${encodeURIComponent(professorId)}&year=${year}&month=${month}`
     : "";
   const exportPdfHref = professorId
@@ -179,6 +233,7 @@ export default async function AdminTeacherInvoicingStatementsPage({
 
       {!professorsResult.ok ? <section className="flash-err">{t("admin.teacher_invoicing.backend_error")}: {professorsResult.message}</section> : null}
       {statementsResult && !statementsResult.ok ? <section className="flash-err">{t("admin.teacher_invoicing.backend_error")}: {statementsResult.message}</section> : null}
+      {summariesResult && !summariesResult.ok ? <section className="flash-err">{t("admin.teacher_invoicing.backend_error")}: {summariesResult.message}</section> : null}
 
       <section className="card">
         <h3>{t("admin.teacher_invoicing.monthly_statement_title")}</h3>
@@ -187,7 +242,7 @@ export default async function AdminTeacherInvoicingStatementsPage({
           <label>
             {t("admin.teacher_invoicing.teacher")}
             <select name="professor_id" defaultValue={professorId} required>
-              <option value="">{t("admin.teacher_invoicing.choose_teacher")}</option>
+              <option value={ALL_PROFESSORS_VALUE}>{t("admin.teacher_invoicing.all_teachers")}</option>
               {professors.map((professor) => (
                 <option key={professor.id} value={professor.id}>{professor.first_name} {professor.last_name}</option>
               ))}
@@ -202,11 +257,83 @@ export default async function AdminTeacherInvoicingStatementsPage({
         </form>
       </section>
 
-      {!professorId ? (
-        <section className="card"><p className="muted">{t("admin.teacher_invoicing.select_teacher_hint")}</p></section>
+      {allProfessorsSelected && summariesResult?.ok ? (
+        <>
+          <section className="card statement-period-hero">
+            <div className="row spread">
+              <div>
+                <p className="statement-title">{t("admin.teacher_invoicing.all_teachers")}</p>
+                <p className="muted">{t("admin.teacher_invoicing.period_value", { period })}</p>
+              </div>
+              {summaries.length > 0 ? <a className="mode-link" href={exportPdfHref}>{t("admin.teacher_invoicing.export_all_pdf")}</a> : null}
+            </div>
+          </section>
+
+          <section className="card statement-summary-card">
+            <h3>{t("admin.teacher_invoicing.summary")}</h3>
+            <div className="statement-summary-grid">
+              <div><small className="muted">{t("admin.teacher_invoicing.teachers_count")}</small><strong>{summaryTeacherCount}</strong></div>
+              <div><small className="muted">{t("admin.teacher_invoicing.courses_count")}</small><strong>{summaryCoursesCount}</strong></div>
+              <div><small className="muted">{t("admin.teacher_invoicing.total_hours")}</small><strong>{summaryHours.toFixed(2)} h</strong></div>
+              <div><small className="muted">{t("admin.teacher_invoicing.total_ht")}</small><strong>{formatSummaryMoney(summaries, "totals_ht", language)}</strong></div>
+              <div><small className="muted">{t("admin.teacher_invoicing.amount_payable")}</small><strong>{formatSummaryMoney(summaries, "amount_payable", language)}</strong></div>
+              <div>
+                <small className="muted">{t("admin.teacher_invoicing.attendance")}</small>
+                <strong className={`status-pill ${summaryAttendanceComplete ? "status-ok" : "status-warn"}`}>
+                  {summaryAttendanceComplete ? t("admin.teacher_invoicing.attendance_complete") : t("admin.teacher_invoicing.attendance_incomplete")}
+                </strong>
+              </div>
+            </div>
+          </section>
+
+          <section className="card table-wrap admin-table-card-wrap">
+            {summaries.length === 0 ? <p className="muted">{t("admin.teacher_invoicing.no_statements_period")}</p> : (
+              <table className="data-table admin-responsive-table">
+                <thead>
+                  <tr>
+                    <th>{t("admin.teacher_invoicing.teacher")}</th>
+                    <th>{t("admin.teacher_invoicing.payor_entity")}</th>
+                    <th>{t("admin.teacher_invoicing.courses_count")}</th>
+                    <th>{t("admin.teacher_invoicing.total_hours")}</th>
+                    <th>{t("admin.teacher_invoicing.total_ht")}</th>
+                    <th>{t("admin.teacher_invoicing.amount_payable")}</th>
+                    <th>{t("admin.teacher_invoicing.attendance")}</th>
+                    <th>{t("admin.teacher_invoicing.statement_status")}</th>
+                    <th>{t("admin.teacher_invoicing.quick_action")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {summaries.map((row) => (
+                    <tr key={`${row.professor_id}-${row.payor_legal_entity_name}`}>
+                      <td data-label={t("admin.teacher_invoicing.teacher")}><strong>{row.professor_name}</strong></td>
+                      <td data-label={t("admin.teacher_invoicing.payor_entity")}>{row.payor_legal_entity_name}</td>
+                      <td data-label={t("admin.teacher_invoicing.courses_count")}>{row.courses_count}</td>
+                      <td data-label={t("admin.teacher_invoicing.total_hours")}>{safeNumber(row.total_hours).toFixed(2)} h</td>
+                      <td data-label={t("admin.teacher_invoicing.total_ht")}>{formatMoney(safeNumber(row.totals_ht), row.currency, language)}</td>
+                      <td data-label={t("admin.teacher_invoicing.amount_payable")}>{formatMoney(safeNumber(row.amount_payable), row.currency, language)}</td>
+                      <td data-label={t("admin.teacher_invoicing.attendance")}>
+                        <span className={`status-pill ${row.attendance_complete ? "status-ok" : "status-warn"}`}>
+                          {row.attendance_complete ? t("admin.teacher_invoicing.attendance_complete") : t("admin.teacher_invoicing.attendance_incomplete")}
+                        </span>
+                      </td>
+                      <td data-label={t("admin.teacher_invoicing.statement_status")}>
+                        <span className={`status-pill ${statementStatusTone(row.status)}`}>{statementStatusLabel(row.status, language)}</span>
+                      </td>
+                      <td data-label={t("admin.teacher_invoicing.quick_action")}>
+                        <Link className="ghost" href={`/admin/teacher-invoicing/statements?professor_id=${encodeURIComponent(row.professor_id)}&period=${period}`}>
+                          {t("admin.teacher_invoicing.view_statement")}
+                        </Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </section>
+        </>
       ) : null}
 
-      {professorId && statementsResult?.ok ? (
+      {!allProfessorsSelected && professorId && statementsResult?.ok ? (
         <>
           <section className="card statement-period-hero">
             <div className="row spread">
@@ -214,7 +341,7 @@ export default async function AdminTeacherInvoicingStatementsPage({
                 <p className="statement-title">{selectedProfessor ? `${selectedProfessor.first_name} ${selectedProfessor.last_name}` : t("admin.teacher_invoicing.teacher")}</p>
                 <p className="muted">{t("admin.teacher_invoicing.period_value", { period })}</p>
               </div>
-              {sessions.length > 0 ? (
+              {statements.length > 0 ? (
                 <div className="row statement-export-actions">
                   <a className="mode-link" href={exportPdfHref}>{t("admin.teacher_invoicing.export_pdf")}</a>
                   <a className="ghost" href={exportHref}>{t("admin.teacher_invoicing.export_csv")}</a>

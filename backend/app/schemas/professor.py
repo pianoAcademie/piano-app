@@ -370,6 +370,23 @@ class TeacherStatementOut(BaseModel):
     missing_sessions: list[TeacherStatementMissingSessionOut] = Field(default_factory=list)
 
 
+class AdminTeacherStatementSummaryOut(BaseModel):
+    professor_id: UUID
+    professor_name: str
+    payor_legal_entity_name: str
+    year: int
+    month: int
+    status: str
+    attendance_complete: bool
+    currency: str
+    courses_count: int
+    total_hours: Decimal
+    totals_ht: Decimal
+    totals_vat: Decimal
+    totals_ttc: Decimal
+    amount_payable: Decimal
+
+
 class TeacherStatementDisputeRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
 
