@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       send_teacher_accounting_digest_now:
-        description: "Envoyer immédiatement le récapitulatif comptable des relevés professeurs approuvés"
+        description: "Envoyer immédiatement le récapitulatif comptable des relevés professeurs"
         required: false
         default: false
         type: boolean
@@ -287,7 +287,7 @@ jobs:
             done
           "
 
-      - name: Send approved teacher statement digest now
+      - name: Send teacher statement digest now
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.send_teacher_accounting_digest_now }}
         run: |
           set -euo pipefail

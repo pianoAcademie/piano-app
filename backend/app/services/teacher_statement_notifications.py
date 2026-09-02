@@ -56,17 +56,6 @@ EXCLUDED_TECHNICAL_PROFESSOR_EMAILS = frozenset(
 
 EVENT_BLOCKED_EMAIL_SENT = "teacher_statement_blocked_email_sent"
 EVENT_AVAILABLE_EMAIL_SENT = "teacher_statement_available_email_sent"
-ACCOUNTING_APPROVED_STATUSES = frozenset(
-    {
-        "validated",
-        "approved",
-        "invoice_generated",
-        "exported",
-        "closed",
-    }
-)
-
-
 @dataclass(frozen=True)
 class TeacherPeriodCandidate:
     professor: Professor
@@ -282,7 +271,10 @@ def _period_candidates(
     rows = db.execute(
         select(Professor, last_sessions.c.last_course_end_at_utc)
         .join(last_sessions, last_sessions.c.teacher_id == Professor.id)
-        .where(func.lower(func.trim(Professor.email)).notin_(EXCLUDED_TECHNICAL_PROFESSOR_EMAILS))
+        .where(
+            Professor.active.is_(True),
+            func.lower(func.trim(Professor.email)).notin_(EXCLUDED_TECHNICAL_PROFESSOR_EMAILS),
+        )
         .order_by(Professor.last_name.asc(), Professor.first_name.asc())
         .limit(limit)
     ).all()
@@ -570,6 +562,21 @@ def _invoice_status(db: Session, statement_id: UUID) -> str:
     return "Générée ou déposée"
 
 
+def _statement_status_label(status: str) -> str:
+    normalized = (status or "").strip().lower()
+    return {
+        "awaiting_attendance": "Présences à renseigner",
+        "to_verify": "À vérifier",
+        "in_dispute": "En litige",
+        "awaiting_admin_feedback": "Retour administration attendu",
+        "validated": "Validé",
+        "approved": "Approuvé",
+        "invoice_generated": "Facture générée",
+        "exported": "Exporté",
+        "closed": "Clôturé",
+    }.get(normalized, normalized.replace("_", " ").capitalize() or "-")
+
+
 def render_accounting_digest_pdf(
     *,
     year: int,
@@ -614,7 +621,7 @@ def render_accounting_digest_pdf(
                 Paragraph(escape(vat_display), styles["DigestRight"]),
                 Paragraph(f"<b>{_quantized_text(amount_payable)} {escape(computed.currency)}</b>", styles["DigestRight"]),
                 Paragraph("Complètes" if computed.attendance_complete else "À compléter", styles["DigestSmall"]),
-                Paragraph(escape(statement.status), styles["DigestSmall"]),
+                Paragraph(escape(_statement_status_label(statement.status)), styles["DigestSmall"]),
                 Paragraph(escape(invoice_status), styles["DigestSmall"]),
             ]
         )
@@ -642,7 +649,8 @@ def render_accounting_digest_pdf(
             table,
             Spacer(1, 4 * mm),
             Paragraph(
-                "Ce document contient uniquement les relevés approuvés dont les présences sont complètes. "
+                "Ce document contient tous les relevés des professeurs actifs ayant effectué des cours sur la période. "
+                "Les présences à compléter et les relevés restant à vérifier sont signalés dans le tableau. "
                 "Pour les professeurs sans TVA, le montant à payer est égal au HT. Pour les professeurs assujettis, "
                 "le montant à payer correspond au TTC.",
                 styles["BodyText"],
@@ -668,13 +676,6 @@ def _digest_fingerprint(rows: list[tuple[Professor, TeacherMonthlyStatement, Com
     ]
     raw = json.dumps(payload, sort_keys=True, ensure_ascii=True).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()
-
-
-def accounting_digest_statement_is_approved(
-    statement: TeacherMonthlyStatement,
-    computed: ComputedStatement,
-) -> bool:
-    return computed.attendance_complete and statement.status in ACCOUNTING_APPROVED_STATUSES
 
 
 def _accounting_digest_rows(
@@ -703,7 +704,6 @@ def _accounting_digest_rows(
                 _invoice_status(db, statement.id),
             )
             for statement, computed in synced
-            if accounting_digest_statement_is_approved(statement, computed)
         )
     rows.sort(
         key=lambda row: (
@@ -751,8 +751,9 @@ def _send_accounting_digest_if_due(
     subject_prefix = "Mise à jour – " if is_update else ""
     subject = f"{subject_prefix}Relevés des professeurs – {invoice_period_label(year=year, month=month, language='fr')}"
     body = (
-        "Bonjour,<br><br>Vous trouverez en pièce jointe le récapitulatif des relevés approuvés des professeurs. "
-        "Seuls les relevés dont les présences sont complètes et qui ont été approuvés sont inclus.<br><br>"
+        "Bonjour,<br><br>Vous trouverez en pièce jointe le récapitulatif de tous les relevés des professeurs actifs "
+        "ayant effectué des cours sur la période. Le document indique les présences à compléter et le statut de "
+        "chaque relevé.<br><br>"
         "Le montant à payer est égal au HT lorsque la TVA n'est pas applicable. Pour un professeur assujetti à la TVA, il correspond au TTC.<br><br>"
         "Bien cordialement,<br>Piano Académie"
     )
@@ -934,11 +935,7 @@ def run_teacher_statement_notification_job(
 
     previous_period = _previous_month(paris_now.date())
     if paris_now.day >= 1 and previous_period >= NOTIFICATION_ROLLOUT_START:
-        digest_rows = [
-            row
-            for row in rows_by_period.get((previous_period.year, previous_period.month), [])
-            if accounting_digest_statement_is_approved(row[1], row[2])
-        ]
+        digest_rows = list(rows_by_period.get((previous_period.year, previous_period.month), []))
         digest_rows.sort(key=lambda row: (row[0].last_name.casefold(), row[0].first_name.casefold(), row[2].payor_legal_entity_name.casefold()))
         try:
             accounting_sent = _send_accounting_digest_if_due(
@@ -967,7 +964,6 @@ def run_teacher_statement_notification_job(
 
 __all__ = [
     "TeacherStatementNotificationResult",
-    "accounting_digest_statement_is_approved",
     "add_french_business_days",
     "build_available_email",
     "build_blocked_email",

@@ -17,7 +17,6 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 from app.services.teacher_invoicing import ComputedMissingSession, ComputedStatement
 from app.services.teacher_statement_notifications import (
     TeacherPeriodCandidate,
-    accounting_digest_statement_is_approved,
     add_french_business_days,
     build_available_email,
     build_blocked_email,
@@ -79,16 +78,6 @@ def _computed(
 
 
 class TeacherStatementNotificationTests(unittest.TestCase):
-    def test_accounting_digest_accepts_only_complete_approved_statements(self) -> None:
-        professor = _professor()
-        complete = _computed(professor)
-        incomplete = _computed(professor, complete=False)
-
-        for status in ("validated", "approved", "invoice_generated", "exported", "closed"):
-            self.assertTrue(accounting_digest_statement_is_approved(SimpleNamespace(status=status), complete))
-        self.assertFalse(accounting_digest_statement_is_approved(SimpleNamespace(status="to_verify"), complete))
-        self.assertFalse(accounting_digest_statement_is_approved(SimpleNamespace(status="validated"), incomplete))
-
     def test_technical_apple_review_professor_is_excluded(self) -> None:
         professor = _professor()
         professor.email = " Apple-Review-Professor-20260814@piano-academie.com "
@@ -188,13 +177,14 @@ class TeacherStatementNotificationTests(unittest.TestCase):
         self.assertIn("Non applicable", extracted)
         self.assertIn("100.00 EUR", extracted)
         self.assertIn("120.00 EUR", extracted)
-        self.assertIn("uniquement les relevés approuvés", extracted)
+        self.assertIn("tous les relevés des professeurs actifs", extracted)
+        self.assertIn("À vérifier", extracted)
 
     @patch("app.services.teacher_statement_notifications._send_accounting_digest_if_due", return_value=1)
     @patch("app.services.teacher_statement_notifications._invoice_status", return_value="Attendue")
     @patch("app.services.teacher_statement_notifications.sync_teacher_monthly_statements")
     @patch("app.services.teacher_statement_notifications._period_candidates")
-    def test_scheduled_accounting_digest_contains_only_approved_statements(
+    def test_scheduled_accounting_digest_contains_all_statement_statuses(
         self,
         candidates_mock: MagicMock,
         sync_mock: MagicMock,
@@ -211,7 +201,7 @@ class TeacherStatementNotificationTests(unittest.TestCase):
         approved = SimpleNamespace(id=uuid4(), status="validated")
         pending = SimpleNamespace(id=uuid4(), status="to_verify")
         candidates_mock.return_value = [candidate]
-        sync_mock.return_value = [(approved, _computed(professor)), (pending, _computed(professor))]
+        sync_mock.return_value = [(approved, _computed(professor)), (pending, _computed(professor, complete=False))]
 
         result = run_teacher_statement_accounting_digest_job(
             MagicMock(),
@@ -221,7 +211,7 @@ class TeacherStatementNotificationTests(unittest.TestCase):
 
         self.assertEqual(result, 1)
         rows = send_digest_mock.call_args.kwargs["rows"]
-        self.assertEqual([row[1].id for row in rows], [approved.id])
+        self.assertEqual([row[1].id for row in rows], [approved.id, pending.id])
         self.assertTrue(send_digest_mock.call_args.kwargs["force"])
 
     @patch("app.services.teacher_statement_notifications._send_accounting_digest_if_due", return_value=0)

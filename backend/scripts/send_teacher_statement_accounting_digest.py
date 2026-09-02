@@ -14,7 +14,7 @@ from app.services.teacher_statement_notifications import run_teacher_statement_a
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Send the approved monthly teacher statement digest to accounting.")
+    parser = argparse.ArgumentParser(description="Send the monthly teacher statement digest to accounting.")
     parser.add_argument(
         "--force",
         action="store_true",
