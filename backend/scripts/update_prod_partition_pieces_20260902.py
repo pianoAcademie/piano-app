@@ -34,6 +34,22 @@ TARGET_PIECES: dict[int, tuple[str, ...]] = {
         "Symphonie n° 9 — A. Dvořák",
         "Lac des cygnes — P. I. Tchaïkovski",
     ),
+    3: (
+        "Valse op.18 — Chopin",
+        "Rigoletto — Verdi",
+        "Wedding March — Wagner",
+        "La Flûte enchantée — Mozart",
+        "Valse des fleurs — Tchaïkovski",
+        "Marche turque — Beethoven",
+    ),
+    7: (
+        "Le Petit Champ — L. Knipper",
+        "Poupée française — W. Gillock",
+        "La Cloche — J. Garcia",
+        "La Lettre à Élise — L. V. Beethoven",
+        "In Old Vienna — W. Gillock",
+        "Arabesque — F. Burgmuller",
+    ),
     8: (
         "Dans l’antre du roi de la montagne — E. Grieg",
         "Danse hongroise — J. Brahms",
@@ -55,6 +71,8 @@ TARGET_PIECES: dict[int, tuple[str, ...]] = {
 EXPECTED_PRODUCT_TITLES = {
     1: "partition degre 1",
     2: "partition degre 2 mon 1er piano",
+    3: "partition degre 3",
+    7: "partition degre 7",
     8: "partition degre 8",
     10: "partition degre 10",
 }
@@ -214,7 +232,7 @@ def _verify(db, targets: list[ProductTarget]) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Replace the piece lists for four production partitions.")
+    parser = argparse.ArgumentParser(description="Replace the verified piece lists for production partitions.")
     parser.add_argument("--apply", action="store_true", help="Commit the guarded update. Default is dry-run.")
     args = parser.parse_args()
 

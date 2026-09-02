@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       apply:
-        description: "Replace the verified piece lists for partitions 1, 2, 8 and 10"
+        description: "Replace the verified piece lists for configured partitions"
         required: true
         default: "false"
         type: choice
