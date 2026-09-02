@@ -5,7 +5,7 @@ import PortalBrandLockup from "../../../../components/portal-brand-lockup";
 import { startFormulaPurchaseLinkAction, submitPublicSessionCheckoutAction } from "../../../../lib/actions";
 import { getPortalToken } from "../../../../lib/auth-cookies";
 import { backendRequest } from "../../../../lib/backend";
-import { preferredReservationMemberId } from "../../../../lib/client-session-selection";
+import { eligibleReservationMembers, preferredReservationMemberId } from "../../../../lib/client-session-selection";
 import { localeForUiLanguage, normalizeUiLanguage, resolveAuthErrorMessage, resolveAuthOkMessage, translateBackendMessage, type UiLanguage, uiText } from "../../../../lib/ui-i18n";
 import type {
   ClientSessionPurchaseCatalogOut,
@@ -239,6 +239,7 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
   );
   const purchaseCatalog = purchaseCatalogResult.ok ? purchaseCatalogResult.data : null;
   const members = reservationOptions.members;
+  const eligibleMembers = eligibleReservationMembers(members);
   const selectedMemberId = preferredReservationMemberId(members, bookingUserId);
   const selectedMember = members.find((option) => option.member_id === selectedMemberId) ?? null;
   const selectedMemberFormulaOptions =
@@ -325,7 +326,7 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
             </article>
           </section>
 
-          {members.length > 1 ? (
+          {eligibleMembers.length > 1 ? (
             <section className="modal-card">
               <div className="client-session-member-picker">
                 <div className="client-session-member-picker-heading">
@@ -333,7 +334,7 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
                   <p>{t("public_session_checkout.member_help")}</p>
                 </div>
                 <div className="client-session-member-grid">
-                  {members.map((option) => {
+                  {eligibleMembers.map((option) => {
                     const isSelected = option.member_id === selectedMemberId;
                     return (
                       <Link

@@ -8,6 +8,7 @@ import {
   parseFavoriteLocationIds,
 } from "../lib/client-booking-filters.ts";
 import {
+  eligibleReservationMembers,
   isChildOnlyBookingSession,
   preferredReservationMemberId,
 } from "../lib/client-session-selection.ts";
@@ -78,7 +79,20 @@ test("child-only checkout selects the sole eligible family member", () => {
   ];
 
   assert.equal(preferredReservationMemberId(members, ""), "child");
-  assert.equal(preferredReservationMemberId(members, "parent"), "parent");
+  assert.equal(preferredReservationMemberId(members, "parent"), "child");
+  assert.deepEqual(eligibleReservationMembers(members).map((member) => member.member_id), ["child"]);
+});
+
+test("checkout keeps the picker only when several members can book", () => {
+  const members = [
+    { member_id: "child-1", action_code: "BUY_FORMULA" },
+    { member_id: "child-2", action_code: "PAY_UNIT" },
+    { member_id: "parent", action_code: "UNAVAILABLE" },
+  ];
+
+  assert.equal(preferredReservationMemberId(members, "child-2"), "child-2");
+  assert.equal(preferredReservationMemberId(members, ""), "");
+  assert.equal(eligibleReservationMembers(members).length, 2);
 });
 
 test("child-only sessions preserve child account creation context", () => {
