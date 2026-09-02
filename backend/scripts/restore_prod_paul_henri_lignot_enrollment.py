@@ -17,7 +17,7 @@ from app.models.catalog import Booking, BookingStatus, CourseSession, SessionSta
 from app.models.client_record import ClientNoteEntry
 from app.models.plan import ClientPlanSubscription, SubscriptionStatus
 from app.models.quote import Quote, QuoteAcceptanceFollowup, QuoteEvent
-from app.models.user import ClientStatus, User
+from app.models.user import ClientStatus, User, UserRole
 
 
 SCRIPT_PREFIX = "RESTORE_PROD_PAUL_HENRI_ENROLLMENT"
@@ -29,6 +29,7 @@ TARGET_INVOICE_NOTE_ID = UUID("88a335e1-0772-40dd-bf26-adc684b81a04")
 TARGET_BILLING_ID = UUID("4a1594ec-3009-4471-8e22-84b0cb0017d9")
 TARGET_TOTAL = Decimal("819.00")
 EXECUTION_KEY = "quote_to_enrollment_execution"
+TRANSFORMATION_KEY = "quote_to_enrollment"
 CAPACITY_STATUSES = (BookingStatus.BOOKED, BookingStatus.PENDING_PAYMENT)
 LEGACY_BOOKING_IDS = tuple(
     UUID(value)
@@ -161,7 +162,8 @@ def main() -> None:
 
         execution_raw = (followup.payload or {}).get(EXECUTION_KEY)
         execution = execution_raw if isinstance(execution_raw, dict) else {}
-        modern_execution = str(execution.get("status") or "").lower() == "executed"
+        execution_status = str(execution.get("status") or "").lower()
+        modern_execution = execution_status == "executed"
         if modern_execution and str(execution.get("student_client_id") or "") != str(TARGET_STUDENT_ID):
             print(f"[{SCRIPT_PREFIX}] abort=execution_student_mismatch")
             db.rollback()
@@ -190,6 +192,74 @@ def main() -> None:
         bookings = db.scalars(
             select(Booking).where(Booking.id.in_(booking_ids)).with_for_update()
         ).all()
+        replay_required = execution_status == "rolled_back" and not bookings
+        if replay_required:
+            transformation = (followup.payload or {}).get(TRANSFORMATION_KEY)
+            if not isinstance(transformation, dict) or not transformation:
+                print(f"[{SCRIPT_PREFIX}] abort=rolled_back_without_transformation_payload")
+                db.rollback()
+                return
+            print(
+                f"[{SCRIPT_PREFIX}] audit=quote_status={quote.status}|student_status={student.client_status.value}|"
+                f"integration_trace=rolled_back_replay|historical_bookings={len(booking_ids)}|"
+                f"historical_invoice_status={invoice_status}|action=replay_guarded_transformation"
+            )
+            if not args.apply:
+                db.rollback()
+                return
+
+            admin_user = db.scalar(
+                select(User)
+                .where(User.role == UserRole.ADMIN, User.email == "admin@piano-academie.com")
+                .with_for_update()
+            )
+            if admin_user is None:
+                print(f"[{SCRIPT_PREFIX}] abort=system_admin_not_found")
+                db.rollback()
+                return
+
+            prior_quote_status = str((execution.get("quote_snapshot") or {}).get("status") or "approved")
+            if prior_quote_status in {"cancelled", "rejected", "replaced"}:
+                prior_quote_status = "approved"
+            quote.status = prior_quote_status
+            quote.cancelled_at = None
+            quote.updated_at = now
+            from app.api.routes.quotes import _execute_quote_followup_transformation
+
+            new_execution = _execute_quote_followup_transformation(
+                db,
+                quote=quote,
+                followup=followup,
+                current_user=admin_user,
+            )
+            db.add(
+                QuoteEvent(
+                    quote_id=quote.id,
+                    event_type="enrollment_restored_admin_repair",
+                    actor_type="system_repair",
+                    actor_id=admin_user.id,
+                    payload={
+                        "notifications_sent": False,
+                        "restoration_mode": "replayed_rolled_back_transformation",
+                        "historical_invoice_number": TARGET_INVOICE_NUMBER,
+                        "historical_invoice_status": invoice_status,
+                        "created_booking_count": len(new_execution.get("created_booking_ids") or []),
+                        "created_subscription_count": len(new_execution.get("created_subscription_ids") or []),
+                        "created_invoice_count": len(new_execution.get("created_invoice_note_ids") or []),
+                    },
+                    created_at=now,
+                )
+            )
+            db.commit()
+            print(
+                f"[{SCRIPT_PREFIX}] applied=true|mode=replayed_rolled_back_transformation|"
+                f"bookings_created={len(new_execution.get('created_booking_ids') or [])}|"
+                f"subscriptions_created={len(new_execution.get('created_subscription_ids') or [])}|"
+                f"invoices_created={len(new_execution.get('created_invoice_note_ids') or [])}|"
+                "notifications_sent=false"
+            )
+            return
+
         if len(bookings) != len(set(booking_ids)) or any(row.user_id != TARGET_STUDENT_ID for row in bookings):
             print(f"[{SCRIPT_PREFIX}] abort=booking_set_mismatch")
             db.rollback()
