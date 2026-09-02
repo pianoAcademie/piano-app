@@ -2,6 +2,12 @@ name: Deploy VPS
 
 on:
   workflow_dispatch:
+    inputs:
+      send_teacher_accounting_digest_now:
+        description: "Envoyer immédiatement le récapitulatif comptable des relevés professeurs approuvés"
+        required: false
+        default: false
+        type: boolean
   push:
     branches:
       - main
@@ -279,6 +285,18 @@ jobs:
               running=\$(docker compose ps --services --status running | grep -x \"\$svc\" || true)
               [ -n \"\$running\" ] || { echo \"Service not running: \$svc\"; docker compose ps \"\$svc\"; exit 1; }
             done
+          "
+
+      - name: Send approved teacher statement digest now
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.send_teacher_accounting_digest_now }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_ed25519 -p "${VPS_PORT:-22}" "${VPS_USER}@${VPS_HOST}" "
+            set -euo pipefail
+            cd '${VPS_PATH}'
+            export COMPOSE_PROJECT_NAME='piano-app'
+            docker compose exec -T notifications-scheduled-worker \
+              python scripts/send_teacher_statement_accounting_digest.py --force
           "
 
       - name: Dump remote logs on failure

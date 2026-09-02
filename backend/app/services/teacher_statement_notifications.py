@@ -56,6 +56,15 @@ EXCLUDED_TECHNICAL_PROFESSOR_EMAILS = frozenset(
 
 EVENT_BLOCKED_EMAIL_SENT = "teacher_statement_blocked_email_sent"
 EVENT_AVAILABLE_EMAIL_SENT = "teacher_statement_available_email_sent"
+ACCOUNTING_APPROVED_STATUSES = frozenset(
+    {
+        "validated",
+        "approved",
+        "invoice_generated",
+        "exported",
+        "closed",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -229,7 +238,15 @@ def sync_teacher_monthly_statements(
             )
             db.add(row)
         else:
-            if row.status not in {"validated", "invoice_generated", "closed", "in_dispute", "awaiting_admin_feedback"}:
+            if row.status not in {
+                "validated",
+                "approved",
+                "invoice_generated",
+                "exported",
+                "closed",
+                "in_dispute",
+                "awaiting_admin_feedback",
+            }:
                 row.status = _statement_status_from_computed(computed)
             row.attendance_complete = computed.attendance_complete
             row.totals_snapshot = statement_to_snapshot_payload(computed)
@@ -625,7 +642,7 @@ def render_accounting_digest_pdf(
             table,
             Spacer(1, 4 * mm),
             Paragraph(
-                "Les relevés avec des présences à compléter sont bloqués et exclus des montants validés pour paiement. "
+                "Ce document contient uniquement les relevés approuvés dont les présences sont complètes. "
                 "Pour les professeurs sans TVA, le montant à payer est égal au HT. Pour les professeurs assujettis, "
                 "le montant à payer correspond au TTC.",
                 styles["BodyText"],
@@ -653,6 +670,51 @@ def _digest_fingerprint(rows: list[tuple[Professor, TeacherMonthlyStatement, Com
     return hashlib.sha256(raw).hexdigest()
 
 
+def accounting_digest_statement_is_approved(
+    statement: TeacherMonthlyStatement,
+    computed: ComputedStatement,
+) -> bool:
+    return computed.attendance_complete and statement.status in ACCOUNTING_APPROVED_STATUSES
+
+
+def _accounting_digest_rows(
+    db: Session,
+    *,
+    year: int,
+    month: int,
+    limit: int,
+) -> list[tuple[Professor, TeacherMonthlyStatement, ComputedStatement, str]]:
+    period = date(year, month, 1)
+    rows: list[tuple[Professor, TeacherMonthlyStatement, ComputedStatement, str]] = []
+    for candidate in _period_candidates(db, period=period, limit=limit):
+        if not teacher_statement_professor_is_eligible(candidate.professor):
+            continue
+        synced = sync_teacher_monthly_statements(
+            db,
+            professor=candidate.professor,
+            year=year,
+            month=month,
+        )
+        rows.extend(
+            (
+                candidate.professor,
+                statement,
+                computed,
+                _invoice_status(db, statement.id),
+            )
+            for statement, computed in synced
+            if accounting_digest_statement_is_approved(statement, computed)
+        )
+    rows.sort(
+        key=lambda row: (
+            row[0].last_name.casefold(),
+            row[0].first_name.casefold(),
+            row[2].payor_legal_entity_name.casefold(),
+        )
+    )
+    return rows
+
+
 def _send_accounting_digest_if_due(
     db: Session,
     *,
@@ -661,9 +723,10 @@ def _send_accounting_digest_if_due(
     year: int,
     month: int,
     dry_run: bool,
+    force: bool = False,
 ) -> int:
     paris_now = now.astimezone(PARIS_TIMEZONE)
-    if paris_now.hour < ACCOUNTING_SEND_HOUR or not rows:
+    if (paris_now.hour < ACCOUNTING_SEND_HOUR and not force) or not rows:
         return 0
     period_key = f"{year:04d}-{month:02d}"
     setting_key = f"{ACCOUNTING_DIGEST_SETTING_PREFIX}:{period_key}"
@@ -675,7 +738,10 @@ def _send_accounting_digest_if_due(
             previous = json.loads(setting.value)
         except (TypeError, ValueError):
             previous = {}
-    if previous.get("fingerprint") == fingerprint or previous.get("sent_on") == paris_now.date().isoformat():
+    if not force and (
+        previous.get("fingerprint") == fingerprint
+        or previous.get("sent_on") == paris_now.date().isoformat()
+    ):
         return 0
     if dry_run:
         return 1
@@ -685,8 +751,8 @@ def _send_accounting_digest_if_due(
     subject_prefix = "Mise à jour – " if is_update else ""
     subject = f"{subject_prefix}Relevés des professeurs – {invoice_period_label(year=year, month=month, language='fr')}"
     body = (
-        "Bonjour,<br><br>Vous trouverez en pièce jointe le récapitulatif des relevés des professeurs. "
-        "Les relevés comportant des présences non renseignées sont identifiés comme bloqués et ne doivent pas être validés pour paiement.<br><br>"
+        "Bonjour,<br><br>Vous trouverez en pièce jointe le récapitulatif des relevés approuvés des professeurs. "
+        "Seuls les relevés dont les présences sont complètes et qui ont été approuvés sont inclus.<br><br>"
         "Le montant à payer est égal au HT lorsque la TVA n'est pas applicable. Pour un professeur assujetti à la TVA, il correspond au TTC.<br><br>"
         "Bien cordialement,<br>Piano Académie"
     )
@@ -711,6 +777,35 @@ def _send_accounting_digest_if_due(
         setting.updated_at = now
         db.add(setting)
     return 1
+
+
+def run_teacher_statement_accounting_digest_job(
+    db: Session,
+    *,
+    now: datetime,
+    limit: int = 500,
+    dry_run: bool = False,
+    force: bool = False,
+) -> int:
+    paris_now = now.astimezone(PARIS_TIMEZONE)
+    previous_period = _previous_month(paris_now.date())
+    if previous_period < NOTIFICATION_ROLLOUT_START:
+        return 0
+    rows = _accounting_digest_rows(
+        db,
+        year=previous_period.year,
+        month=previous_period.month,
+        limit=limit,
+    )
+    return _send_accounting_digest_if_due(
+        db,
+        now=now,
+        rows=rows,
+        year=previous_period.year,
+        month=previous_period.month,
+        dry_run=dry_run,
+        force=force,
+    )
 
 
 def run_teacher_statement_notification_job(
@@ -839,7 +934,11 @@ def run_teacher_statement_notification_job(
 
     previous_period = _previous_month(paris_now.date())
     if paris_now.day >= 1 and previous_period >= NOTIFICATION_ROLLOUT_START:
-        digest_rows = rows_by_period.get((previous_period.year, previous_period.month), [])
+        digest_rows = [
+            row
+            for row in rows_by_period.get((previous_period.year, previous_period.month), [])
+            if accounting_digest_statement_is_approved(row[1], row[2])
+        ]
         digest_rows.sort(key=lambda row: (row[0].last_name.casefold(), row[0].first_name.casefold(), row[2].payor_legal_entity_name.casefold()))
         try:
             accounting_sent = _send_accounting_digest_if_due(
@@ -868,6 +967,7 @@ def run_teacher_statement_notification_job(
 
 __all__ = [
     "TeacherStatementNotificationResult",
+    "accounting_digest_statement_is_approved",
     "add_french_business_days",
     "build_available_email",
     "build_blocked_email",
@@ -876,6 +976,7 @@ __all__ = [
     "invoice_deadline",
     "is_french_business_day",
     "render_accounting_digest_pdf",
+    "run_teacher_statement_accounting_digest_job",
     "run_teacher_statement_notification_job",
     "set_teacher_statement_notifications_enabled",
     "teacher_statement_notifications_enabled",

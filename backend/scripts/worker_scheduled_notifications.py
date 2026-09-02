@@ -24,6 +24,7 @@ from app.services.professor_attendance_reminders import run_send_professor_atten
 from app.services.session_automation import run_auto_cancel_empty_sessions_job, run_expire_pending_payment_bookings_job
 from app.services.notifications.application.orchestrator import enqueue_notifications
 from app.services.subscription_payment_reminders import run_subscription_payment_action_reminder_job
+from app.services.teacher_statement_notifications import run_teacher_statement_accounting_digest_job
 from app.services.zendesk_contact_sync import (
     DEFAULT_LIMIT as ZENDESK_SYNC_LIMIT,
     run_zendesk_contact_sync_job,
@@ -44,6 +45,7 @@ def main() -> None:
     last_professor_digest_at: datetime | None = None
     last_professor_attendance_reminder_at: datetime | None = None
     last_subscription_payment_reminder_at: datetime | None = None
+    last_teacher_statement_accounting_digest_at: datetime | None = None
     while True:
         db = SessionLocal()
         try:
@@ -70,6 +72,12 @@ def main() -> None:
             ):
                 jobs.append(("subscription_payment_action_reminders", run_subscription_payment_action_reminder_job))
                 last_subscription_payment_reminder_at = cycle_now
+            if (
+                last_teacher_statement_accounting_digest_at is None
+                or cycle_now - last_teacher_statement_accounting_digest_at >= timedelta(hours=1)
+            ):
+                jobs.append(("teacher_statement_accounting_digest", run_teacher_statement_accounting_digest_job))
+                last_teacher_statement_accounting_digest_at = cycle_now
             if zendesk_credentials_complete() and zendesk_sync_due(db, now=cycle_now):
                 run_full_zendesk_sync = zendesk_full_sync_due(db, now=cycle_now)
                 jobs.append(
