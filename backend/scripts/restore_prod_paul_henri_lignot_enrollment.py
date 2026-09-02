@@ -138,12 +138,19 @@ def main() -> None:
             return
 
         invoice_meta = _invoice_metadata(invoice_note)
+        invoice_number = str(invoice_meta.get("invoice_number") or "")
+        invoice_status = str(invoice_meta.get("invoice_status") or "ISSUED").upper()
+        invoice_to_pay = _money((invoice_meta.get("total_to_pay_by_currency") or {}).get("EUR"))
         if (
-            str(invoice_meta.get("invoice_number") or "") != TARGET_INVOICE_NUMBER
-            or str(invoice_meta.get("invoice_status") or "ISSUED").upper() == "CANCELLED"
-            or _money((invoice_meta.get("total_to_pay_by_currency") or {}).get("EUR")) != TARGET_TOTAL
+            invoice_number != TARGET_INVOICE_NUMBER
+            or invoice_status == "CANCELLED"
+            or invoice_to_pay != TARGET_TOTAL
         ):
-            print(f"[{SCRIPT_PREFIX}] abort=annual_invoice_metadata_mismatch")
+            print(
+                f"[{SCRIPT_PREFIX}] abort=annual_invoice_metadata_mismatch|"
+                f"invoice_number={invoice_number or '-'}|invoice_status={invoice_status}|"
+                f"invoice_to_pay={invoice_to_pay}"
+            )
             db.rollback()
             return
         invoice_source_quote_id = str(invoice_meta.get("source_quote_id") or "")
