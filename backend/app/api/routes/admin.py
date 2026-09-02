@@ -3654,9 +3654,15 @@ def get_planning_simulation(
     activity_group: str | None = Query(default=None),
     exclude_location_name: list[str] | None = Query(default=None),
     exclude_online_solfege: bool = Query(default=False),
+    online_solfege_only: bool = Query(default=False),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin_or_permissions("can_view_planning_simulation")),
 ) -> AdminPlanningSimulationOut:
+    if exclude_online_solfege and online_solfege_only:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Online solfege cannot be both excluded and selected exclusively",
+        )
     excluded_location_name_keys = {
         key
         for value in (exclude_location_name or [])
@@ -3801,10 +3807,13 @@ def get_planning_simulation(
     for session_obj, course_type, location in session_rows:
         if _planning_simulation_location_name_key(location.name) in excluded_location_name_keys:
             continue
-        if exclude_online_solfege and _planning_simulation_is_online_solfege(
+        is_online_solfege = _planning_simulation_is_online_solfege(
             course_type,
             location_name=location.name,
-        ):
+        )
+        if exclude_online_solfege and is_online_solfege:
+            continue
+        if online_solfege_only and not is_online_solfege:
             continue
         zone = _safe_zoneinfo(session_obj.timezone or location.timezone)
         local_start = session_obj.start_at_utc.astimezone(zone)
@@ -3969,10 +3978,13 @@ def get_planning_simulation(
                 resolved_location_name=resolved_location_name,
                 course_type=block_course_type,
             )
-            if exclude_online_solfege and _planning_simulation_is_online_solfege(
+            is_online_solfege = _planning_simulation_is_online_solfege(
                 block_course_type,
                 location_name=block_location_name,
-            ):
+            )
+            if exclude_online_solfege and is_online_solfege:
+                continue
+            if online_solfege_only and not is_online_solfege:
                 continue
             if _planning_simulation_location_name_key(block_location_name) in excluded_location_name_keys:
                 continue

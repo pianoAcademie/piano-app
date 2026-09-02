@@ -870,6 +870,130 @@ function TeacherAssignmentBoard({
   );
 }
 
+function OnlineSolfegeTeacherTable({
+  slots,
+  professors,
+  schoolYearLabel,
+  returnTo,
+  canEdit,
+  language,
+}: {
+  slots: AdminPlanningSimulationSlotOut[];
+  professors: AdminProfessorOut[];
+  schoolYearLabel: string;
+  returnTo: string;
+  canEdit: boolean;
+  language: UiLanguage;
+}): JSX.Element {
+  const activeProfessors = professors.filter((professor) => professor.active);
+  const orderedSlots = slots.slice().sort((first, second) => (
+    first.weekday - second.weekday
+    || first.start_time.localeCompare(second.start_time)
+    || first.end_time.localeCompare(second.end_time)
+    || first.course_type_name.localeCompare(second.course_type_name, "fr")
+  ));
+
+  return (
+    <section className="card simulation-solfege-teacher-board">
+      <header className="simulation-solfege-teacher-head">
+        <div>
+          <span className="simulation-teacher-needs-eyebrow">
+            {text(language, "Tableau séparé", "Separate board")}
+          </span>
+          <h3>{text(language, "Professeurs — solfège en ligne", "Teachers — online music theory")}</h3>
+          <p className="muted">
+            {text(
+              language,
+              "Une ligne par créneau proposé. Les horaires et durées restent indépendants des autres besoins professeurs.",
+              "One row per proposed slot. Times and durations remain independent from all other teacher requirements.",
+            )}
+          </p>
+        </div>
+        <dl>
+          <div>
+            <dt>{text(language, "Créneaux", "Slots")}</dt>
+            <dd>{orderedSlots.length}</dd>
+          </div>
+          <div>
+            <dt>{text(language, "À pourvoir", "Unfilled")}</dt>
+            <dd>{orderedSlots.filter((slot) => !slot.teacher_assignment_label).length}</dd>
+          </div>
+        </dl>
+      </header>
+
+      {orderedSlots.length === 0 ? (
+        <p className="muted">
+          {text(language, "Aucun créneau de solfège en ligne proposé pour cette saison.", "No online music theory slot is proposed for this season.")}
+        </p>
+      ) : (
+        <div className="table-wrap">
+          <table className="simulation-solfege-teacher-table">
+            <thead>
+              <tr>
+                <th>{text(language, "Jour", "Day")}</th>
+                <th>{text(language, "Horaire", "Time")}</th>
+                <th>{text(language, "Durée", "Duration")}</th>
+                <th>{text(language, "Niveau / cours", "Level / course")}</th>
+                <th>{text(language, "Professeur", "Teacher")}</th>
+                <th>{text(language, "Statut", "Status")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {orderedSlots.map((slot) => {
+                const duration = slotTeachingMinutes(slot);
+                return (
+                  <tr className={slot.teacher_assignment_label ? "assigned" : "unfilled"} key={slot.slot_key}>
+                    <td data-label={text(language, "Jour", "Day")}><strong>{slot.weekday_label}</strong></td>
+                    <td data-label={text(language, "Horaire", "Time")}><time>{slot.start_time}–{slot.end_time}</time></td>
+                    <td data-label={text(language, "Durée", "Duration")}>{duration > 0 ? `${duration} min` : "-"}</td>
+                    <td data-label={text(language, "Niveau / cours", "Level / course")}>{slot.course_type_name}</td>
+                    <td data-label={text(language, "Professeur", "Teacher")}>
+                      {canEdit ? (
+                        <form action={adminUpdatePlanningSimulationTeacherAssignmentAction} className="simulation-solfege-teacher-form">
+                          <input type="hidden" name="school_year_label" value={schoolYearLabel} />
+                          <input type="hidden" name="slot_key" value={slot.slot_key} />
+                          <input type="hidden" name="position" value="1" />
+                          <input type="hidden" name="return_to" value={returnTo} />
+                          <input type="hidden" name="assignment_status" value="CONFIRMED" />
+                          <select
+                            name="professor_id"
+                            defaultValue={slot.teacher_assignment_professor_id || ""}
+                            aria-label={text(language, `Professeur du ${slot.weekday_label} à ${slot.start_time}`, `Teacher for ${slot.weekday_label} at ${slot.start_time}`)}
+                          >
+                            <option value="">{text(language, "— À pourvoir —", "— Unfilled —")}</option>
+                            {activeProfessors.map((professor) => (
+                              <option value={professor.id} key={professor.id}>{professor.first_name} {professor.last_name}</option>
+                            ))}
+                          </select>
+                          <button type="submit" name="operation" value="save">{text(language, "Enregistrer", "Save")}</button>
+                          {slot.teacher_assignment_label ? (
+                            <button className="ghost" type="submit" name="operation" value="clear">{text(language, "Retirer", "Clear")}</button>
+                          ) : null}
+                        </form>
+                      ) : (
+                        <strong>{slot.teacher_assignment_label || text(language, "À pourvoir", "Unfilled")}</strong>
+                      )}
+                    </td>
+                    <td data-label={text(language, "Statut", "Status")}>
+                      <span className={`simulation-assignment-status ${slot.teacher_assignment_status?.toLowerCase() || "unfilled"}`}>
+                        {slot.teacher_assignment_status === "CONFIRMED"
+                          ? text(language, "Confirmé", "Confirmed")
+                          : slot.teacher_assignment_label
+                            ? text(language, "Prévisionnel", "Provisional")
+                            : text(language, "À pourvoir", "Unfilled")}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function formatSeasonWindow(slot: AdminPlanningSimulationSlotOut, language: UiLanguage): string {
   const datesCount = slot.occurrence_count;
   const seasonSpan =
@@ -1187,13 +1311,21 @@ export default async function AdminSimulationPlanningPage({
     ? `/api/v1/admin/plannings/simulation?${simulationQuery.toString()}`
     : "/api/v1/admin/plannings/simulation";
 
-  const [locationsResult, courseTypesResult, simulationResult, professorsResult] = await Promise.all([
+  const onlineSolfegeQuery = new URLSearchParams();
+  onlineSolfegeQuery.set("school_year_label", requestedSchoolYear);
+  onlineSolfegeQuery.set("online_solfege_only", "true");
+  const onlineSolfegePath = `/api/v1/admin/plannings/simulation?${onlineSolfegeQuery.toString()}`;
+
+  const [locationsResult, courseTypesResult, simulationResult, professorsResult, onlineSolfegeResult] = await Promise.all([
     loadPlanningSimulationLocations(token),
     backendRequest<CourseTypeOut[]>("/api/v1/course-types?active=true", {}, token),
     backendRequest<AdminPlanningSimulationOut>(simulationPath, {}, token),
     requestedView === "teacher_needs" && canEditSimulation
       ? backendRequest<AdminProfessorOut[]>("/api/v1/admin/professors?active=true", {}, token)
       : Promise.resolve({ ok: true as const, data: [] as AdminProfessorOut[] }),
+    requestedView === "teacher_needs"
+      ? backendRequest<AdminPlanningSimulationOut>(onlineSolfegePath, {}, token)
+      : Promise.resolve({ ok: true as const, data: null as AdminPlanningSimulationOut | null }),
   ]);
 
   const permittedLocations = locationsResult.ok
@@ -1220,6 +1352,8 @@ export default async function AdminSimulationPlanningPage({
   const simulationError = simulationResult.ok ? null : simulationResult.message;
   const professors = professorsResult.ok ? professorsResult.data : [];
   const professorsError = professorsResult.ok ? null : professorsResult.message;
+  const onlineSolfegeSimulation = onlineSolfegeResult.ok ? onlineSolfegeResult.data : null;
+  const onlineSolfegeError = onlineSolfegeResult.ok ? null : onlineSolfegeResult.message;
   const okMessage = readParam(searchParams ?? {}, "ok").trim();
   const actionError = readParam(searchParams ?? {}, "error").trim();
 
@@ -1365,19 +1499,20 @@ export default async function AdminSimulationPlanningPage({
           {simulationError}
         </section>
       ) : requestedView === "teacher_needs" ? (
-        simulation.teacher_needs.days.length === 0 ? (
-          <section className="card">
-            <h3>{text(language, "Aucun besoin professeur visible", "No visible teacher requirement")}</h3>
-            <p className="muted">
-              {text(
-                language,
-                "Aucun cours n entre dans les filtres de cette saison. Elargissez le filtre lieu ou type de cours.",
-                "No course matches the current filters for this season. Broaden the location or course type filter.",
-              )}
-            </p>
-          </section>
-        ) : (
-          <>
+        <>
+          {simulation.teacher_needs.days.length === 0 ? (
+            <section className="card">
+              <h3>{text(language, "Aucun besoin professeur visible", "No visible teacher requirement")}</h3>
+              <p className="muted">
+                {text(
+                  language,
+                  "Aucun cours n entre dans les filtres de cette saison. Elargissez le filtre lieu ou type de cours.",
+                  "No course matches the current filters for this season. Broaden the location or course type filter.",
+                )}
+              </p>
+            </section>
+          ) : (
+            <>
             <TeacherNeedsDashboard
               needs={simulation.teacher_needs}
               slots={simulation.slots}
@@ -1395,8 +1530,24 @@ export default async function AdminSimulationPlanningPage({
               canEdit={canEditSimulation && !professorsError}
               language={language}
             />
-          </>
-        )
+            </>
+          )}
+          {onlineSolfegeError ? (
+            <section className="flash-err">
+              {text(language, "Impossible de charger le tableau de solfège en ligne : ", "Unable to load the online music theory board: ")}
+              {onlineSolfegeError}
+            </section>
+          ) : onlineSolfegeSimulation ? (
+            <OnlineSolfegeTeacherTable
+              slots={onlineSolfegeSimulation.slots}
+              professors={professors}
+              schoolYearLabel={effectiveSchoolYear}
+              returnTo={assignmentReturnTo}
+              canEdit={canEditSimulation && !professorsError}
+              language={language}
+            />
+          ) : null}
+        </>
       ) : (
         <>
           <section className="card simulation-planning-overview">
