@@ -77,12 +77,10 @@ jobs:
             set -euo pipefail
             cd '${VPS_PATH}'
             export COMPOSE_PROJECT_NAME='piano-app'
-            services=\$(docker compose config --services)
-            if echo \"\$services\" | grep -qx redis; then
-              docker compose up -d db redis backend
-            else
-              docker compose up -d db backend
-            fi
+            docker compose ps --status running --services | grep -qx backend || {
+              echo 'Production backend is not running; aborting without restarting it.'
+              exit 1
+            }
             docker compose cp backend/scripts/update_prod_partition_pieces_20260902.py \
               backend:/app/scripts/update_prod_partition_pieces_20260902.py
             docker compose exec -T backend python scripts/update_prod_partition_pieces_20260902.py

@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
+import sys
 import unicodedata
 from dataclasses import dataclass
 from uuid import UUID
 
 from sqlalchemy import text
+
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 from app.db.session import SessionLocal
 
