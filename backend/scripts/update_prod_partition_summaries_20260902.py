@@ -68,6 +68,20 @@ Sommaire :
 - Greensleeves""",
     ),
     ProductSummaryUpdate(
+        product_id=UUID("33b784ef-7143-4e47-bd0b-8545bdd47388"),
+        expected_title="Partition degré 6",
+        expected_previous_description="Avec son cahier de travail",
+        description="""Avec son cahier de travail.
+
+Sommaire :
+- Printemps — A. Vivaldi
+- Automne — A. Vivaldi
+- Musette — J. S. Bach
+- Brindisi — A. Verdi
+- Lascia ch’io pianga — G. F. Haendel
+- Valse n° 2 — D. Chostakovich""",
+    ),
+    ProductSummaryUpdate(
         product_id=UUID("b4cfca76-aa71-4f0d-a3b5-78ff83758379"),
         expected_title="Partitions Ados",
         expected_previous_description="Avec son cahier de travail",

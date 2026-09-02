@@ -58,6 +58,14 @@ TARGET_PIECES: dict[int, tuple[str, ...]] = {
         "Skip To My Lou — Chanson américaine",
         "Head, Shoulders, Knees and Feet — Chanson anglaise",
     ),
+    6: (
+        "Printemps — A. Vivaldi",
+        "Automne — A. Vivaldi",
+        "Musette — J. S. Bach",
+        "Brindisi — A. Verdi",
+        "Lascia ch’io pianga — G. F. Haendel",
+        "Valse n° 2 — D. Chostakovich",
+    ),
     7: (
         "Le Petit Champ — L. Knipper",
         "Poupée française — W. Gillock",
@@ -98,6 +106,7 @@ EXPECTED_PRODUCT_TITLES = {
     3: "partition degre 3",
     4: "partition degre 4 bami",
     5: "partition degre 5",
+    6: "partition degre 6",
     7: "partition degre 7",
     8: "partition degre 8",
     9: "partition degre 9",
