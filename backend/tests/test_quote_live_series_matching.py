@@ -21,8 +21,10 @@ from app.api.routes.quotes import (
     _quote_line_schedule_key,
     _quote_transform_schedule_key_candidates,
     _resolve_envelope_session_for_student_time,
+    _resolve_scheduled_quote_transform_assignment_session,
     _validated_quote_transform_expected_dates,
 )
+from app.models.catalog import SessionStatus
 
 
 class _FakeScalarResult:
@@ -74,6 +76,7 @@ def _session(
     start_at_utc: datetime,
     end_at_utc: datetime,
     recurrence_group_id=None,
+    status=SessionStatus.SCHEDULED,
 ):
     return SimpleNamespace(
         id=session_id,
@@ -83,6 +86,7 @@ def _session(
         end_at_utc=end_at_utc,
         recurrence_group_id=recurrence_group_id,
         timezone="Europe/Paris",
+        status=status,
     )
 
 
@@ -445,6 +449,132 @@ class QuoteLiveSeriesMatchingTests(unittest.TestCase):
             ),
             [f"{activity_id}:snapshot", f"{activity_id}:historical", str(activity_id)],
         )
+
+    def test_transform_schedule_key_candidates_include_solfege_snapshot_alias(self) -> None:
+        activity_id = uuid4()
+        line = SimpleNamespace(id=uuid4(), activity_id=activity_id, meta={})
+        snapshot_key = f"{activity_id}:online_solfege"
+
+        self.assertEqual(
+            _quote_transform_schedule_key_candidates(
+                str(activity_id),
+                activity_id=activity_id,
+                quote_service_lines=[line],
+                calendar_snapshot={
+                    "blocks": [
+                        {
+                            "activity_id": str(activity_id),
+                            "recommendation_key": snapshot_key,
+                        }
+                    ]
+                },
+            ),
+            [str(activity_id), snapshot_key],
+        )
+
+    def test_completed_occurrence_recovers_scheduled_representative_from_same_series(self) -> None:
+        course_type_id = uuid4()
+        location_id = uuid4()
+        recurrence_group_id = uuid4()
+        completed = _session(
+            session_id="completed",
+            course_type_id=course_type_id,
+            location_id=location_id,
+            start_at_utc=datetime(2026, 9, 2, 16, 0, tzinfo=timezone.utc),
+            end_at_utc=datetime(2026, 9, 2, 17, 0, tzinfo=timezone.utc),
+            recurrence_group_id=recurrence_group_id,
+            status=SessionStatus.COMPLETED,
+        )
+        scheduled = _session(
+            session_id="scheduled",
+            course_type_id=course_type_id,
+            location_id=location_id,
+            start_at_utc=datetime(2026, 9, 9, 16, 0, tzinfo=timezone.utc),
+            end_at_utc=datetime(2026, 9, 9, 17, 0, tzinfo=timezone.utc),
+            recurrence_group_id=recurrence_group_id,
+        )
+        wrong_time = _session(
+            session_id="wrong-time",
+            course_type_id=course_type_id,
+            location_id=location_id,
+            start_at_utc=datetime(2026, 9, 9, 17, 0, tzinfo=timezone.utc),
+            end_at_utc=datetime(2026, 9, 9, 18, 0, tzinfo=timezone.utc),
+            recurrence_group_id=recurrence_group_id,
+        )
+        db = _FakeSession([scheduled, wrong_time])
+
+        resolved = _resolve_scheduled_quote_transform_assignment_session(
+            db,
+            activity_id=course_type_id,
+            selected_session=completed,
+            series_assignment={},
+            expected_dates=[date(2026, 9, 2), date(2026, 9, 9)],
+        )
+
+        self.assertIsNotNone(resolved)
+        self.assertEqual(resolved.id, "scheduled")
+
+    def test_missing_occurrence_recovers_series_from_stable_assignment_metadata(self) -> None:
+        course_type_id = uuid4()
+        location_id = uuid4()
+        recurrence_group_id = uuid4()
+        scheduled = _session(
+            session_id="scheduled",
+            course_type_id=course_type_id,
+            location_id=location_id,
+            start_at_utc=datetime(2026, 9, 9, 16, 5, tzinfo=timezone.utc),
+            end_at_utc=datetime(2026, 9, 9, 16, 35, tzinfo=timezone.utc),
+            recurrence_group_id=recurrence_group_id,
+        )
+        db = _FakeSession([scheduled])
+
+        resolved = _resolve_scheduled_quote_transform_assignment_session(
+            db,
+            activity_id=course_type_id,
+            selected_session=None,
+            series_assignment={
+                "recurrenceGroupId": str(recurrence_group_id),
+                "courseTypeId": str(course_type_id),
+                "locationId": str(location_id),
+                "timezone": "Europe/Paris",
+                "localWeekday": 2,
+                "localStartTime": "18:05",
+                "localEndTime": "18:35",
+            },
+        )
+
+        self.assertIsNotNone(resolved)
+        self.assertEqual(resolved.id, "scheduled")
+
+    def test_scheduled_occurrence_with_wrong_activity_is_not_accepted(self) -> None:
+        course_type_id = uuid4()
+        wrong_course_type_id = uuid4()
+        location_id = uuid4()
+        selected = _session(
+            session_id="wrong-activity",
+            course_type_id=wrong_course_type_id,
+            location_id=location_id,
+            start_at_utc=datetime(2026, 9, 9, 16, 5, tzinfo=timezone.utc),
+            end_at_utc=datetime(2026, 9, 9, 16, 35, tzinfo=timezone.utc),
+        )
+        correct = _session(
+            session_id="correct-activity",
+            course_type_id=course_type_id,
+            location_id=location_id,
+            start_at_utc=datetime(2026, 9, 9, 16, 5, tzinfo=timezone.utc),
+            end_at_utc=datetime(2026, 9, 9, 16, 35, tzinfo=timezone.utc),
+        )
+        db = _FakeSession([correct])
+
+        resolved = _resolve_scheduled_quote_transform_assignment_session(
+            db,
+            activity_id=course_type_id,
+            selected_session=selected,
+            series_assignment={},
+        )
+
+        self.assertIsNotNone(resolved)
+        self.assertEqual(resolved.id, "correct-activity")
 
     def test_planning_session_limit_reads_top_level_or_template_meta(self) -> None:
         top_level_line = SimpleNamespace(

@@ -194,6 +194,13 @@ export type SessionMatchOption = {
   seriesSize?: number;
   usesSeriesAvailability?: boolean;
   hasFullSeriesSession?: boolean;
+  recurrenceGroupId: string | null;
+  courseTypeId: string;
+  locationId: string;
+  timezone: string;
+  localWeekday: number | null;
+  localStartTime: string | null;
+  localEndTime: string | null;
 };
 
 type SessionMatchDraft = SessionMatchOption & {
@@ -239,6 +246,18 @@ export type QuoteToEnrollmentBillingDraftRow = {
   effectiveDate?: string | null;
 };
 
+export type QuoteToEnrollmentSeriesAssignment = {
+  sessionId: string;
+  recurrenceGroupId: string | null;
+  courseTypeId: string;
+  locationId: string;
+  timezone: string;
+  localWeekday: number | null;
+  localStartTime: string | null;
+  localEndTime: string | null;
+  expectedQuantity: number;
+};
+
 export type QuoteToEnrollmentDraft = {
   version: 1;
   scenario: QuoteTransformScenario;
@@ -256,6 +275,7 @@ export type QuoteToEnrollmentDraft = {
   };
   scheduleResolution: {
     assignedSessionByActivityId: Record<string, string>;
+    seriesAssignmentsByActivityId: Record<string, QuoteToEnrollmentSeriesAssignment>;
   };
   billingResolution: {
     rows: QuoteToEnrollmentBillingDraftRow[];
@@ -289,6 +309,7 @@ export type QuoteQuickTransformProposedScheduleAssignment = {
   sessionLabel: string;
   seatsRemaining: number | null;
   warning: string | null;
+  seriesAssignment?: QuoteToEnrollmentSeriesAssignment | null;
 };
 
 export type QuoteQuickTransformPriceMatchSummary = {
@@ -965,7 +986,10 @@ function isoPartsInTimezone(
   if (Number.isNaN(parsed.getTime())) {
     return { dateKey: null, timeKey: null, weekday: null };
   }
-  const safeTimezone = (timezone || "").trim() || "UTC";
+  const safeTimezone = (timezone || "").trim();
+  if (!safeTimezone) {
+    return { dateKey: null, timeKey: null, weekday: null };
+  }
   try {
     const dateParts = new Intl.DateTimeFormat("en-CA", {
       timeZone: safeTimezone,
@@ -989,17 +1013,7 @@ function isoPartsInTimezone(
       weekday: dateKey ? weekdayFromDateKey(dateKey) : null,
     };
   } catch {
-    const year = String(parsed.getUTCFullYear());
-    const month = String(parsed.getUTCMonth() + 1).padStart(2, "0");
-    const day = String(parsed.getUTCDate()).padStart(2, "0");
-    const dateKey = `${year}-${month}-${day}`;
-    const hours = String(parsed.getUTCHours()).padStart(2, "0");
-    const minutes = String(parsed.getUTCMinutes()).padStart(2, "0");
-    return {
-      dateKey,
-      timeKey: `${hours}:${minutes}`,
-      weekday: weekdayFromDateKey(dateKey),
-    };
+    return { dateKey: null, timeKey: null, weekday: null };
   }
 }
 
@@ -1008,9 +1022,13 @@ function toLocalDateLabel(iso: string, timezone: string, locale = "fr-FR"): stri
   if (Number.isNaN(parsed.getTime())) {
     return locale.startsWith("en") ? "date unavailable" : "date inconnue";
   }
+  const safeTimezone = (timezone || "").trim();
+  if (!safeTimezone) {
+    return locale.startsWith("en") ? "missing timezone" : "fuseau horaire manquant";
+  }
   try {
     return parsed.toLocaleString(locale, {
-      timeZone: (timezone || "").trim() || "UTC",
+      timeZone: safeTimezone,
       weekday: "short",
       day: "2-digit",
       month: "2-digit",
@@ -1018,13 +1036,7 @@ function toLocalDateLabel(iso: string, timezone: string, locale = "fr-FR"): stri
       minute: "2-digit",
     });
   } catch {
-    return parsed.toLocaleString(locale, {
-      weekday: "short",
-      day: "2-digit",
-      month: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+    return locale.startsWith("en") ? "invalid timezone" : "fuseau horaire invalide";
   }
 }
 
@@ -1196,6 +1208,13 @@ function mockSessionOption(
     teacher: language === "en" ? "Demo teacher" : "Prof. Demo",
     status: "SCHEDULED",
     reasons: ["proposition de demonstration"],
+    recurrenceGroupId: null,
+    courseTypeId: activityId,
+    locationId: "mock-location",
+    timezone: "Europe/Paris",
+    localWeekday: 0,
+    localStartTime: "18:00",
+    localEndTime: "19:00",
   };
   if (variant === "full") {
     return [
@@ -1239,7 +1258,7 @@ function recurringSlotLabel(
   locale: string,
 ): string {
   const parsed = new Date(session.startAtUtc);
-  const safeTimezone = (session.timezone || "").trim() || "UTC";
+  const safeTimezone = (session.timezone || "").trim() || "Europe/Paris";
   const timeLabel = localParts.timeKey || toLocalDateLabel(session.startAtUtc, session.timezone, locale);
   if (Number.isNaN(parsed.getTime())) {
     return timeLabel;
@@ -1393,7 +1412,11 @@ export function buildSessionMatches(
 ): SessionMatchOption[] {
   const hint = hintsByActivityId.get(activityRow.scheduleKey) ?? hintsByActivityId.get(activityRow.activityId) ?? null;
   const selectionModeRef: { value: "exact_date_time" | "exact_date" | "nearest_date_time" | "nearest_date" | "all" } = { value: "all" };
-  const locationScopedSessions = sessions.filter((session) => isLocationCompatible(session, expectedLocationId, activityRow.locationName));
+  const locationScopedSessions = sessions.filter(
+    (session) => session.status.toUpperCase() === "SCHEDULED"
+      && Boolean(isoPartsInTimezone(session.startAtUtc, session.timezone).timeKey)
+      && isLocationCompatible(session, expectedLocationId, activityRow.locationName),
+  );
   const scopedSessions = (() => {
     if (!hint || !hint.startDate) {
       return locationScopedSessions;
@@ -1517,6 +1540,13 @@ export function buildSessionMatches(
         teacher: session.teacherDisplayName || uiText(language, "admin.quote_transform.to_define"),
         seatsRemaining: session.seatsRemaining,
         status: session.statusLabel,
+        recurrenceGroupId: session.recurrenceGroupId,
+        courseTypeId: session.courseTypeId,
+        locationId: session.locationId,
+        timezone: session.timezone,
+        localWeekday: localParts.weekday,
+        localStartTime: localParts.timeKey,
+        localEndTime: isoPartsInTimezone(session.endAtUtc, session.timezone).timeKey,
         score: scoreData.score,
         reasons: [
           ...scoreData.reasons,
@@ -1797,6 +1827,69 @@ export function deriveScheduleHints(calendarSnapshot: Record<string, unknown>): 
     hints.set(scheduleKey, existing);
   }
   return hints;
+}
+
+export function deriveScheduleSessionCounts(calendarSnapshot: Record<string, unknown>): Map<string, number> {
+  const counts = new Map<string, number>();
+  const keysByActivity = new Map<string, Set<string>>();
+  const blocksRaw = Array.isArray(calendarSnapshot.blocks) ? calendarSnapshot.blocks : [];
+  for (const raw of blocksRaw) {
+    const block = readObject(raw);
+    if (!block) {
+      continue;
+    }
+    const activityId = readString(block.activity_id);
+    if (!activityId) {
+      continue;
+    }
+    const count = snapshotSessionsCount(block);
+    if (count === null || count < 0) {
+      continue;
+    }
+    const scheduleKey = planningKeyFromSnapshotRow(block, activityId);
+    counts.set(scheduleKey, (counts.get(scheduleKey) || 0) + Math.round(count));
+    const activityKeys = keysByActivity.get(activityId) || new Set<string>();
+    activityKeys.add(scheduleKey);
+    keysByActivity.set(activityId, activityKeys);
+  }
+
+  const sessionDatesByKey = new Map<string, Set<string>>();
+  const sessionsRaw = Array.isArray(calendarSnapshot.sessions) ? calendarSnapshot.sessions : [];
+  for (const raw of sessionsRaw) {
+    const session = readObject(raw);
+    if (!session) {
+      continue;
+    }
+    const activityId = readString(session.activity_id);
+    const dateKey = readString(session.date) || readString(session.start_date);
+    if (!activityId || !dateKey) {
+      continue;
+    }
+    const scheduleKey = planningKeyFromSnapshotRow(session, activityId);
+    const dates = sessionDatesByKey.get(scheduleKey) || new Set<string>();
+    dates.add(dateKey);
+    sessionDatesByKey.set(scheduleKey, dates);
+    const activityKeys = keysByActivity.get(activityId) || new Set<string>();
+    activityKeys.add(scheduleKey);
+    keysByActivity.set(activityId, activityKeys);
+  }
+  for (const [scheduleKey, dates] of sessionDatesByKey.entries()) {
+    if (!counts.has(scheduleKey)) {
+      counts.set(scheduleKey, dates.size);
+    }
+  }
+
+  for (const [activityId, keys] of keysByActivity.entries()) {
+    if (keys.size !== 1 || counts.has(activityId)) {
+      continue;
+    }
+    const onlyKey = [...keys][0];
+    const count = counts.get(onlyKey);
+    if (count !== undefined) {
+      counts.set(activityId, count);
+    }
+  }
+  return counts;
 }
 
 export function deriveActivityLocationNameById(calendarSnapshot: Record<string, unknown>): Map<string, string> {
@@ -2083,6 +2176,17 @@ export function analyzeQuoteQuickTransformStatus(input: QuoteQuickTransformAnaly
         sessionLabel: `${recommended.label} · ${recommended.dateLabel}`,
         seatsRemaining: recommended.seatsRemaining,
         warning: null,
+        seriesAssignment: {
+          sessionId: recommended.sessionId,
+          recurrenceGroupId: recommended.recurrenceGroupId,
+          courseTypeId: recommended.courseTypeId,
+          locationId: recommended.locationId,
+          timezone: recommended.timezone,
+          localWeekday: recommended.localWeekday,
+          localStartTime: recommended.localStartTime,
+          localEndTime: recommended.localEndTime,
+          expectedQuantity: row.quantity,
+        },
       });
     } else {
       pushWarning(3, `${row.activityName}: plusieurs creneaux possibles, recommandation disponible.`);
@@ -2094,6 +2198,17 @@ export function analyzeQuoteQuickTransformStatus(input: QuoteQuickTransformAnaly
         sessionLabel: `${recommended.label} · ${recommended.dateLabel}`,
         seatsRemaining: recommended.seatsRemaining,
         warning: "Choix manuel requis",
+        seriesAssignment: {
+          sessionId: recommended.sessionId,
+          recurrenceGroupId: recommended.recurrenceGroupId,
+          courseTypeId: recommended.courseTypeId,
+          locationId: recommended.locationId,
+          timezone: recommended.timezone,
+          localWeekday: recommended.localWeekday,
+          localStartTime: recommended.localStartTime,
+          localEndTime: recommended.localEndTime,
+          expectedQuantity: row.quantity,
+        },
       });
     }
   }
@@ -2164,9 +2279,13 @@ export function analyzeQuoteQuickTransformStatus(input: QuoteQuickTransformAnaly
       return null;
     }
     const assignedSessionByActivityId: Record<string, string> = {};
+    const seriesAssignmentsByActivityId: Record<string, QuoteToEnrollmentSeriesAssignment> = {};
     for (const assignment of scheduleAssignments) {
       if (assignment.status === "auto_assigned" && assignment.sessionId) {
         assignedSessionByActivityId[assignment.activityId] = assignment.sessionId;
+        if (assignment.seriesAssignment) {
+          seriesAssignmentsByActivityId[assignment.activityId] = assignment.seriesAssignment;
+        }
       }
     }
     const draftRows = billingRows.map((row) => ({
@@ -2205,6 +2324,7 @@ export function analyzeQuoteQuickTransformStatus(input: QuoteQuickTransformAnaly
       },
       scheduleResolution: {
         assignedSessionByActivityId,
+        seriesAssignmentsByActivityId,
       },
       billingResolution: {
         rows: draftRows,
@@ -2465,6 +2585,36 @@ export function coerceQuoteToEnrollmentDraft(raw: unknown): QuoteToEnrollmentDra
     assignedSessionByActivityId[normalizedKey] = normalizedValue;
   }
 
+  const seriesAssignedRaw = readObject(scheduleResolutionRaw.seriesAssignmentsByActivityId) || {};
+  const seriesAssignmentsByActivityId: Record<string, QuoteToEnrollmentSeriesAssignment> = {};
+  for (const [key, value] of Object.entries(seriesAssignedRaw)) {
+    const normalizedKey = readString(key);
+    const row = readObject(value);
+    if (!normalizedKey || !row) {
+      continue;
+    }
+    const sessionId = readString(row.sessionId ?? row.session_id);
+    const courseTypeId = readString(row.courseTypeId ?? row.course_type_id);
+    const locationId = readString(row.locationId ?? row.location_id);
+    const timezone = readString(row.timezone);
+    if (!sessionId || !courseTypeId || !locationId || !timezone) {
+      continue;
+    }
+    const weekdayRaw = readNumber(row.localWeekday ?? row.local_weekday, Number.NaN);
+    const expectedQuantityRaw = readNumber(row.expectedQuantity ?? row.expected_quantity, 0);
+    seriesAssignmentsByActivityId[normalizedKey] = {
+      sessionId,
+      recurrenceGroupId: readString(row.recurrenceGroupId ?? row.recurrence_group_id) || null,
+      courseTypeId,
+      locationId,
+      timezone,
+      localWeekday: Number.isInteger(weekdayRaw) && weekdayRaw >= 0 && weekdayRaw <= 6 ? weekdayRaw : null,
+      localStartTime: readString(row.localStartTime ?? row.local_start_time) || null,
+      localEndTime: readString(row.localEndTime ?? row.local_end_time) || null,
+      expectedQuantity: Number.isFinite(expectedQuantityRaw) && expectedQuantityRaw > 0 ? expectedQuantityRaw : 0,
+    };
+  }
+
   const logsRaw = Array.isArray(root.logs) ? root.logs : [];
   const logs: QuoteToEnrollmentLogEntry[] = logsRaw
     .map((item) => readObject(item))
@@ -2492,6 +2642,7 @@ export function coerceQuoteToEnrollmentDraft(raw: unknown): QuoteToEnrollmentDra
     },
     scheduleResolution: {
       assignedSessionByActivityId,
+      seriesAssignmentsByActivityId,
     },
     billingResolution: {
       rows,

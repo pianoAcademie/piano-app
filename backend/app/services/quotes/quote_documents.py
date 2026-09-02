@@ -2448,7 +2448,7 @@ def _calendar_snapshot_with_line_recommendation_keys(
     )
     for line in ordered_lines:
         activity_id = str(getattr(line, "activity_id", None) or "").strip()
-        if not activity_id or _line_matches_solfege_activity(line):
+        if not activity_id:
             continue
         lines_by_activity_id.setdefault(activity_id, []).append(line)
     lines_by_recommendation_key = {

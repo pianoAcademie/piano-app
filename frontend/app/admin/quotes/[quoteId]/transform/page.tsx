@@ -326,6 +326,7 @@ export default async function AdminQuoteTransformPage({ params, searchParams }: 
     activityIds.map(async (activityId) => {
       const query = new URLSearchParams();
       query.set("course_type_id", activityId);
+      query.set("status", "SCHEDULED");
       const path = `/api/v1/admin/sessions?${query.toString()}`;
       const result = await backendRequest<AdminSessionOut[]>(path, {}, token);
       return {

@@ -116,6 +116,7 @@ from app.schemas.quote import (
     QuoteExpirationUpdateRequest,
     QuoteEventOut,
     QuoteFollowupOut,
+    QuoteFollowupFinalizeRequest,
     QuoteFollowupPaymentMethodRequest,
     QuoteFollowupSlotRequest,
     QuoteFollowupUpdateRequest,
@@ -8087,6 +8088,22 @@ def _safe_zoneinfo(value: str | None) -> ZoneInfo:
         return ZoneInfo("Europe/Paris")
 
 
+def _quote_transform_zoneinfo(value: str | None) -> ZoneInfo:
+    normalized = str(value or "").strip()
+    if not normalized:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Transformation bloquée : le fuseau horaire du créneau est absent.",
+        )
+    try:
+        return ZoneInfo(normalized)
+    except ZoneInfoNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Transformation bloquée : le fuseau horaire « {normalized} » est invalide.",
+        ) from exc
+
+
 def _normalized_email(value: object | None) -> str | None:
     raw = str(value or "").strip().lower()
     return raw or None
@@ -8696,6 +8713,7 @@ def _quote_transform_schedule_key_candidates(
     activity_id: UUID,
     quote_service_lines: list[QuoteLine],
     duplicate_activity_ids: set[str] | None = None,
+    calendar_snapshot: dict[str, object] | None = None,
 ) -> list[str]:
     candidates: list[str] = []
 
@@ -8707,6 +8725,17 @@ def _quote_transform_schedule_key_candidates(
     _append(selected_schedule_key)
     for line in quote_service_lines:
         _append(_quote_line_schedule_key(line, duplicate_activity_ids))
+    snapshot = _json_object(calendar_snapshot)
+    for collection_name in ("blocks", "sessions"):
+        for raw in _json_list(snapshot.get(collection_name)):
+            row = _json_object(raw)
+            if _parse_uuid_value(row.get("activity_id")) != activity_id:
+                continue
+            recommendation_key = str(row.get("recommendation_key") or "").strip()
+            _append(recommendation_key)
+            automatic_line = str(row.get("typeform_automatic_line") or "").strip()
+            if automatic_line:
+                _append(f"{activity_id}:{automatic_line}")
     _append(activity_id)
     return candidates
 
@@ -9010,6 +9039,104 @@ def _resolve_selected_solfege_live_session(
         ):
             return session_obj
     return None
+
+
+def _resolve_scheduled_quote_transform_assignment_session(
+    db: Session,
+    *,
+    activity_id: UUID,
+    selected_session: CourseSession | None,
+    series_assignment: dict[str, object] | None = None,
+    expected_dates: list[date] | None = None,
+    student_start_time_local: str | None = None,
+    student_end_time_local: str | None = None,
+) -> CourseSession | None:
+    assignment = _json_object(series_assignment)
+
+    def _assignment_value(camel: str, snake: str) -> object | None:
+        return assignment.get(camel) if assignment.get(camel) is not None else assignment.get(snake)
+
+    recurrence_group_id = _parse_uuid_value(_assignment_value("recurrenceGroupId", "recurrence_group_id"))
+    course_type_id = _parse_uuid_value(_assignment_value("courseTypeId", "course_type_id"))
+    location_id = _parse_uuid_value(_assignment_value("locationId", "location_id"))
+    timezone_name = str(assignment.get("timezone") or "").strip()
+    try:
+        weekday = int(_assignment_value("localWeekday", "local_weekday"))
+    except (TypeError, ValueError):
+        weekday = None
+    if weekday is not None and weekday not in range(7):
+        weekday = None
+    start_time = _parse_followup_student_time_local(
+        student_start_time_local or str(_assignment_value("localStartTime", "local_start_time") or "")
+    )
+    end_time = _parse_followup_student_time_local(
+        student_end_time_local or str(_assignment_value("localEndTime", "local_end_time") or "")
+    )
+
+    course_type_id = course_type_id or activity_id
+    if selected_session is not None:
+        recurrence_group_id = recurrence_group_id or selected_session.recurrence_group_id
+        location_id = location_id or selected_session.location_id
+        timezone_name = timezone_name or str(selected_session.timezone or "").strip()
+        selected_zone = _quote_transform_zoneinfo(selected_session.timezone)
+        selected_start_local = selected_session.start_at_utc.astimezone(selected_zone)
+        selected_end_local = selected_session.end_at_utc.astimezone(selected_zone)
+        weekday = selected_start_local.weekday() if weekday is None else weekday
+        start_time = start_time or selected_start_local.time().replace(second=0, microsecond=0)
+        end_time = end_time or selected_end_local.time().replace(second=0, microsecond=0)
+
+        selected_matches_assignment = (
+            selected_session.course_type_id == course_type_id
+            and selected_session.location_id == location_id
+            and str(selected_session.timezone or "").strip() == timezone_name
+            and selected_start_local.weekday() == weekday
+            and selected_start_local.time().replace(second=0, microsecond=0) == start_time
+            and selected_end_local.time().replace(second=0, microsecond=0) == end_time
+        )
+        if selected_session.status == SessionStatus.SCHEDULED and selected_matches_assignment:
+            return selected_session
+
+    if location_id is None or not timezone_name:
+        return None
+    assignment_zone = _quote_transform_zoneinfo(timezone_name)
+    expected_date_set = set(expected_dates or [])
+
+    stmt = select(CourseSession).where(
+        CourseSession.course_type_id == course_type_id,
+        CourseSession.location_id == location_id,
+        CourseSession.status == SessionStatus.SCHEDULED,
+    )
+    if expected_date_set:
+        lower = datetime.combine(min(expected_date_set), time.min, tzinfo=assignment_zone).astimezone(timezone.utc)
+        upper = datetime.combine(max(expected_date_set), time.max, tzinfo=assignment_zone).astimezone(timezone.utc)
+        stmt = stmt.where(CourseSession.start_at_utc >= lower, CourseSession.start_at_utc <= upper)
+    candidates = db.scalars(stmt.order_by(CourseSession.start_at_utc.asc()).with_for_update()).all()
+
+    def _matches_signature(candidate: CourseSession) -> bool:
+        candidate_timezone = str(candidate.timezone or "").strip()
+        if candidate_timezone != timezone_name:
+            return False
+        local_start = candidate.start_at_utc.astimezone(assignment_zone)
+        local_end = candidate.end_at_utc.astimezone(assignment_zone)
+        if weekday is not None and local_start.weekday() != weekday:
+            return False
+        if expected_date_set and local_start.date() not in expected_date_set:
+            return False
+        if start_time is not None and local_start.time().replace(second=0, microsecond=0) != start_time:
+            return False
+        if end_time is not None and local_end.time().replace(second=0, microsecond=0) != end_time:
+            return False
+        return True
+
+    signature_matches = [candidate for candidate in candidates if _matches_signature(candidate)]
+    if recurrence_group_id is not None:
+        same_group = [
+            candidate for candidate in signature_matches
+            if candidate.recurrence_group_id == recurrence_group_id
+        ]
+        if same_group:
+            return same_group[0]
+    return signature_matches[0] if signature_matches else None
 
 
 def _load_live_series_sessions(
@@ -11339,6 +11466,7 @@ def _execute_quote_followup_transformation(
 
     schedule_resolution = _json_object(transformation_payload.get("scheduleResolution"))
     assigned_session_by_activity = _json_object(schedule_resolution.get("assignedSessionByActivityId"))
+    series_assignments_by_activity = _json_object(schedule_resolution.get("seriesAssignmentsByActivityId"))
     activity_resolution = _json_object(transformation_payload.get("activityResolution"))
     off_planning_activity_ids = {
         str(item).strip()
@@ -11397,15 +11525,32 @@ def _execute_quote_followup_transformation(
         schedule_key = str(activity_id_str or "").strip()
         activity_id = _activity_id_from_schedule_key(schedule_key)
         session_id = _parse_uuid_value(session_id_raw)
-        if activity_id is None or session_id is None or schedule_key in off_planning_activity_ids or str(activity_id) in off_planning_activity_ids:
+        if activity_id is None or schedule_key in off_planning_activity_ids or str(activity_id) in off_planning_activity_ids:
             continue
+        series_assignment = _json_object(
+            series_assignments_by_activity.get(schedule_key)
+            or series_assignments_by_activity.get(str(activity_id))
+        )
         selected_session = db.scalar(
             select(CourseSession)
             .where(CourseSession.id == session_id)
             .with_for_update()
-        )
+        ) if session_id is not None else None
         if selected_session is None:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Creneau selectionne introuvable")
+            selected_session = _resolve_scheduled_quote_transform_assignment_session(
+                db,
+                activity_id=activity_id,
+                selected_session=None,
+                series_assignment=series_assignment,
+            )
+        if selected_session is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Créneau sélectionné introuvable et série impossible à rétablir. "
+                    "Revenez à l’étape 3 « Planning » et sélectionnez une série active."
+                ),
+            )
 
         quote_service_lines = (
             service_lines_by_schedule_key.get(schedule_key)
@@ -11417,9 +11562,10 @@ def _execute_quote_followup_transformation(
             activity_id=activity_id,
             quote_service_lines=quote_service_lines,
             duplicate_activity_ids=duplicate_service_activity_ids,
+            calendar_snapshot=calendar_snapshot_for_transform,
         )
 
-        selected_session_zone = _safe_zoneinfo(getattr(selected_session, "timezone", None))
+        selected_session_zone = _quote_transform_zoneinfo(getattr(selected_session, "timezone", None))
         selected_session_start_local = selected_session.start_at_utc.astimezone(selected_session_zone)
         selected_series_key = str(getattr(selected_session, "recurrence_group_id", None) or selected_session.id)
         selected_weekday = selected_session_start_local.weekday()
@@ -11469,6 +11615,24 @@ def _execute_quote_followup_transformation(
         if student_start_time_local is None and student_end_time_local is None and selected_series_key:
             student_start_time_local, student_end_time_local = _expected_time_window_for_candidates()
         session_limit = session_limit_by_key.get(schedule_key) or session_limit_by_key.get(str(activity_id))
+        metadata_quantity = series_assignment.get("expectedQuantity")
+        if metadata_quantity is None:
+            metadata_quantity = series_assignment.get("expected_quantity")
+        try:
+            metadata_quantity_decimal = Decimal(str(metadata_quantity))
+            metadata_quantity_int = int(metadata_quantity_decimal)
+            if metadata_quantity_decimal != Decimal(metadata_quantity_int):
+                metadata_quantity_int = 0
+        except (ArithmeticError, TypeError, ValueError):
+            metadata_quantity_int = 0
+        if session_limit is not None and metadata_quantity_int > 0 and metadata_quantity_int != session_limit:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Transformation bloquée : la quantité du brouillon ne correspond plus au devis accepté "
+                    f"({metadata_quantity_int} au lieu de {session_limit}). Rechargez la transformation."
+                ),
+            )
         if session_limit is not None and len(expected_dates) < session_limit:
             block_dates = _expected_dates_for_candidates(
                 expected_series_key=selected_series_key,
@@ -11502,7 +11666,24 @@ def _execute_quote_followup_transformation(
             approved_dates_count=approved_dates_count,
         )
         if selected_session.status != SessionStatus.SCHEDULED:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Le creneau selectionne n'est plus reservable")
+            replacement_session = _resolve_scheduled_quote_transform_assignment_session(
+                db,
+                activity_id=activity_id,
+                selected_session=selected_session,
+                series_assignment=series_assignment,
+                expected_dates=expected_dates,
+                student_start_time_local=student_start_time_local,
+                student_end_time_local=student_end_time_local,
+            )
+            if replacement_session is None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "Le créneau de référence n'est plus réservable et aucune occurrence planifiée "
+                        "de la même série n'a été retrouvée."
+                    ),
+                )
+            selected_session = replacement_session
 
         selected_session = _resolve_envelope_session_for_student_time(
             db,
@@ -12483,6 +12664,7 @@ def change_quote_followup_payment_method(
 @router.post("/quote-followups/{followup_id}/finalize", response_model=QuoteFollowupOut)
 def finalize_quote_followup(
     followup_id: UUID,
+    payload: QuoteFollowupFinalizeRequest | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> QuoteFollowupOut:
@@ -12491,9 +12673,47 @@ def finalize_quote_followup(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote follow-up not found")
 
     quote = _load_quote(db, row.quote_id, lock=True)
-    transformation_payload = _quote_transformation_payload(row)
     execution = _quote_transformation_execution(row)
     execution_status = str(execution.get("status") or "").strip().lower()
+    incoming_transformation = _json_object(payload.transformation) if payload is not None else {}
+    incoming_idempotency_key = str(
+        (payload.idempotency_key if payload is not None else None)
+        or incoming_transformation.get("idempotencyKey")
+        or ""
+    ).strip()
+    stored_transformation = _quote_transformation_payload(row)
+    stored_idempotency_key = str(stored_transformation.get("idempotencyKey") or "").strip()
+
+    if execution_status == "executed":
+        if incoming_transformation and incoming_idempotency_key != stored_idempotency_key:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Cette transformation a déjà été exécutée avec une autre version du brouillon. "
+                    "Rechargez le devis avant toute nouvelle action."
+                ),
+            )
+        db.refresh(row)
+        return _followup_out(row)
+
+    if incoming_transformation:
+        transformation_key = str(incoming_transformation.get("idempotencyKey") or "").strip()
+        if not incoming_idempotency_key or transformation_key != incoming_idempotency_key:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Clé d'idempotence absente ou incohérente pour la transformation.",
+            )
+        _set_quote_followup_payload(
+            row,
+            {
+                **_quote_followup_payload(row),
+                "quote_to_enrollment": incoming_transformation,
+            },
+        )
+        row.status = "partially_configured"
+        row.updated_at = _utcnow()
+
+    transformation_payload = _quote_transformation_payload(row)
 
     if not transformation_payload:
         row.status = "completed"
@@ -12504,10 +12724,6 @@ def finalize_quote_followup(
         row.updated_at = _utcnow()
         db.add(row)
         db.commit()
-        db.refresh(row)
-        return _followup_out(row)
-
-    if execution_status == "executed":
         db.refresh(row)
         return _followup_out(row)
 
@@ -12525,6 +12741,14 @@ def finalize_quote_followup(
         if row is None:
             raise
         quote = _load_quote(db, row.quote_id, lock=True)
+        if incoming_transformation:
+            _set_quote_followup_payload(
+                row,
+                {
+                    **_quote_followup_payload(row),
+                    "quote_to_enrollment": incoming_transformation,
+                },
+            )
         row.status = "partially_configured"
         row.updated_at = _utcnow()
         _set_quote_transformation_execution(
@@ -12543,6 +12767,19 @@ def finalize_quote_followup(
             integration_completed_at=None,
         )
         db.add_all([quote, row])
+        db.add(
+            QuoteEvent(
+                quote_id=quote.id,
+                event_type="quote_transformation_failed",
+                actor_type="admin",
+                actor_id=current_user.id,
+                payload={
+                    "error_message": exc.detail if isinstance(exc.detail, str) else str(exc.detail),
+                    "idempotency_key": incoming_idempotency_key or stored_idempotency_key or None,
+                },
+                created_at=_utcnow(),
+            )
+        )
         db.commit()
         raise
     except Exception as exc:
@@ -12551,6 +12788,14 @@ def finalize_quote_followup(
         if row is None:
             raise
         quote = _load_quote(db, row.quote_id, lock=True)
+        if incoming_transformation:
+            _set_quote_followup_payload(
+                row,
+                {
+                    **_quote_followup_payload(row),
+                    "quote_to_enrollment": incoming_transformation,
+                },
+            )
         row.status = "partially_configured"
         row.updated_at = _utcnow()
         _set_quote_transformation_execution(
@@ -12569,6 +12814,19 @@ def finalize_quote_followup(
             integration_completed_at=None,
         )
         db.add_all([quote, row])
+        db.add(
+            QuoteEvent(
+                quote_id=quote.id,
+                event_type="quote_transformation_failed",
+                actor_type="admin",
+                actor_id=current_user.id,
+                payload={
+                    "error_message": str(exc),
+                    "idempotency_key": incoming_idempotency_key or stored_idempotency_key or None,
+                },
+                created_at=_utcnow(),
+            )
+        )
         db.commit()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

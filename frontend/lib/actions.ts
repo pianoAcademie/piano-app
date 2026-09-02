@@ -18269,30 +18269,9 @@ export async function finalizeQuoteTransformationAction(formData: FormData): Pro
     redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_transform_action.critical_blocks_remaining")));
   }
 
-  const followupResult = await backendRequest<QuoteFollowupForTransformation>(
-    `/api/v1/quote-followups/${encodeURIComponent(followupId)}`,
-    {},
-    token,
-  );
-  if (!followupResult.ok) {
-    redirect(appendQueryMessage(returnTo, "error", followupResult.message));
-  }
-
-  const currentPayload = ensureRecord(followupResult.data.payload);
-  const existingTransformation = ensureRecord(currentPayload.quote_to_enrollment);
-  const existingExecution = ensureRecord(currentPayload.quote_to_enrollment_execution);
   const incomingIdempotencyKey = String(transformationRaw.idempotencyKey ?? "").trim();
-  const existingIdempotencyKey = String(existingTransformation.idempotencyKey ?? "").trim();
-  const existingFinalizedAt = String(existingTransformation.finalizedAt ?? "").trim();
-  const existingExecutionStatus = String(existingExecution.status ?? "").trim().toLowerCase();
-
-  if (
-    existingExecutionStatus === "executed"
-    && existingFinalizedAt
-    && incomingIdempotencyKey
-    && incomingIdempotencyKey === existingIdempotencyKey
-  ) {
-    redirect(appendQueryMessage(returnTo, "ok", uiText(language, "admin.quote_transform_action.transformation_already_executed_idempotent")));
+  if (!incomingIdempotencyKey) {
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_transform_action.invalid_transformation_payload")));
   }
 
   const finalizedAt = new Date().toISOString();
@@ -18300,29 +18279,16 @@ export async function finalizeQuoteTransformationAction(formData: FormData): Pro
     ...transformationRaw,
     finalizedAt,
   };
-  const nextPayload = {
-    ...currentPayload,
-    quote_to_enrollment: nextTransformation,
-  };
-
-  const patchResult = await backendRequest<QuoteFollowupForTransformation>(
-    `/api/v1/quote-followups/${encodeURIComponent(followupId)}`,
-    {
-      method: "PATCH",
-      body: JSON.stringify({
-        status: existingExecutionStatus === "executed" ? "completed" : "partially_configured",
-        payload: nextPayload,
-      }),
-    },
-    token,
-  );
-  if (!patchResult.ok) {
-    redirect(appendQueryMessage(returnTo, "error", patchResult.message));
-  }
 
   const finalizeResult = await backendRequest<QuoteFollowupForTransformation>(
     `/api/v1/quote-followups/${encodeURIComponent(followupId)}/finalize`,
-    { method: "POST" },
+    {
+      method: "POST",
+      body: JSON.stringify({
+        transformation: nextTransformation,
+        idempotency_key: incomingIdempotencyKey,
+      }),
+    },
     token,
   );
   if (!finalizeResult.ok) {

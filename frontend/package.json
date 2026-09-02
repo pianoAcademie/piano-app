@@ -5,6 +5,7 @@
   "scripts": {
     "test:annual-pricing-selection": "node --experimental-strip-types --test scripts/test-annual-pricing-selection.mjs",
     "test:quote-live-slots": "node --experimental-strip-types --test scripts/test-quote-live-slots.mjs",
+    "test:quote-transformation-hardening": "node --test scripts/test-quote-transformation-hardening.mjs",
     "dev": "next dev -p 3000",
     "build": "next build",
     "start": "next start -p 3000",

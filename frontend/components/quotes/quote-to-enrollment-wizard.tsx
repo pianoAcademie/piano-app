@@ -13,6 +13,7 @@ import {
   coerceQuoteToEnrollmentDraft,
   deriveActivityLocationIdById,
   deriveActivityLocationNameById,
+  deriveScheduleSessionCounts,
   deriveScheduleHints,
   displayName,
   evaluateFinancialStatus,
@@ -24,6 +25,7 @@ import {
   type BillingExtraRow,
   type QuoteTransformClientResolutionMode,
   type QuoteToEnrollmentDraft,
+  type QuoteToEnrollmentSeriesAssignment,
   type QuoteTransformActivityCatalog,
   type QuoteTransformClient,
   type QuoteTransformLegalEntity,
@@ -207,7 +209,7 @@ function defaultSessionAssignment(
   options: SessionMatchOption[],
   scenario: QuoteTransformScenario,
 ): string | null {
-  const firstUsable = options.find((option) => option.seatsRemaining > 0) || options[0];
+  const firstUsable = options.find((option) => option.status.toUpperCase() === "SCHEDULED" && option.seatsRemaining > 0);
   const shouldAutoAssign = scenario === "A" || options.length === 1;
   return shouldAutoAssign && firstUsable ? firstUsable.sessionId : null;
 }
@@ -468,6 +470,7 @@ export default function QuoteToEnrollmentWizard({
   );
 
   const scheduleHints = useMemo(() => deriveScheduleHints(calendarSnapshot), [calendarSnapshot]);
+  const scheduleSessionCounts = useMemo(() => deriveScheduleSessionCounts(calendarSnapshot), [calendarSnapshot]);
 
   const quotePlanningContextByScheduleKey = useMemo(() => {
     const output = new Map<string, QuotePlanningContext>();
@@ -798,6 +801,30 @@ export default function QuoteToEnrollmentWizard({
         continue;
       }
 
+      if (selectedOption.status.toUpperCase() !== "SCHEDULED") {
+        issues.push({
+          issueId: `step3-session-not-scheduled-${row.scheduleKey}`,
+          step: 3,
+          level: "blocked",
+          message: `${row.activityName} : le créneau sélectionné n'est plus planifié. Sélectionnez une série active.`,
+          canOverride: false,
+        });
+        continue;
+      }
+
+      const approvedSessionCount = scheduleSessionCounts.get(row.scheduleKey) ?? scheduleSessionCounts.get(row.activityId);
+      const billedSessionCount = Number.isFinite(row.quantity) ? Math.round(row.quantity) : 0;
+      if (billedSessionCount > 1 && approvedSessionCount !== undefined && approvedSessionCount !== billedSessionCount) {
+        issues.push({
+          issueId: `step3-session-count-mismatch-${row.scheduleKey}`,
+          step: 3,
+          level: "blocked",
+          message: `${row.activityName} : le planning approuvé contient ${approvedSessionCount} séance(s), mais ${billedSessionCount} sont facturées. Corrigez le devis ou le planning avant la transformation.`,
+          canOverride: false,
+        });
+        continue;
+      }
+
       if (selectedOption.seatsRemaining <= 0) {
         issues.push({
           issueId: `step3-session-full-${row.scheduleKey}`,
@@ -817,7 +844,7 @@ export default function QuoteToEnrollmentWizard({
       }
     }
     return issues;
-  }, [activityRows, offPlanningActivityIds, sessionOptionsByActivityId, assignedSessionByActivityId, language]);
+  }, [activityRows, offPlanningActivityIds, sessionOptionsByActivityId, assignedSessionByActivityId, scheduleSessionCounts, language]);
 
   const step3Status = useMemo(
     () => summarizeStatus(step3Issues.map((issue) => (issue.level === "blocked" ? "blocked" : "warning"))),
@@ -983,6 +1010,28 @@ export default function QuoteToEnrollmentWizard({
       },
     ];
 
+    const seriesAssignmentsByActivityId: Record<string, QuoteToEnrollmentSeriesAssignment> = {};
+    for (const row of activityRows) {
+      const selectedSessionId = assignedSessionByActivityId[row.scheduleKey] || "";
+      const option = (sessionOptionsByActivityId.get(row.scheduleKey) || []).find(
+        (candidate) => candidate.sessionId === selectedSessionId,
+      );
+      if (!option) {
+        continue;
+      }
+      seriesAssignmentsByActivityId[row.scheduleKey] = {
+        sessionId: option.sessionId,
+        recurrenceGroupId: option.recurrenceGroupId,
+        courseTypeId: option.courseTypeId,
+        locationId: option.locationId,
+        timezone: option.timezone,
+        localWeekday: option.localWeekday,
+        localStartTime: option.localStartTime,
+        localEndTime: option.localEndTime,
+        expectedQuantity: row.quantity,
+      };
+    }
+
     return {
       version: 1,
       scenario,
@@ -1000,6 +1049,7 @@ export default function QuoteToEnrollmentWizard({
       },
       scheduleResolution: {
         assignedSessionByActivityId,
+        seriesAssignmentsByActivityId,
       },
       billingResolution: {
         rows: draftRows,
@@ -1033,6 +1083,8 @@ export default function QuoteToEnrollmentWizard({
     alignedActivityIds,
     offPlanningActivityIds,
     assignedSessionByActivityId,
+    activityRows,
+    sessionOptionsByActivityId,
     acceptedBlockingIssueIds,
     scenario,
     quote.id,

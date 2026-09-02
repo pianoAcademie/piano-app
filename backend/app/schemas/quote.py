@@ -376,6 +376,11 @@ class QuoteFollowupUpdateRequest(BaseModel):
     payload: dict[str, object] | None = None
 
 
+class QuoteFollowupFinalizeRequest(BaseModel):
+    transformation: dict[str, object] | None = None
+    idempotency_key: str | None = Field(default=None, min_length=8, max_length=2000)
+
+
 class QuoteFollowupSlotRequest(BaseModel):
     slot: dict[str, object] = Field(default_factory=dict)
 
