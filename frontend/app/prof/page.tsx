@@ -1927,15 +1927,11 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                                   planningScope,
                                 })}
                               />
-                              <label>
-                                Partition
-                                <select name="product_id" required defaultValue="">
-                                  <option value="">Choisir une partition</option>
-                                  {repertoireCatalog.map((partition) => (
-                                    <option key={partition.product_id} value={partition.product_id}>{partition.title}</option>
-                                  ))}
-                                </select>
-                              </label>
+                              <RepertoireAssignmentFields
+                                catalog={repertoireCatalog}
+                                initialProductId={null}
+                                initialPieceId={null}
+                              />
                               <label>
                                 État
                                 <select name="status" defaultValue="IN_PROGRESS">

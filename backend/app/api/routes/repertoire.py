@@ -56,6 +56,7 @@ class AssignmentOut(BaseModel):
 class AssignmentCreate(BaseModel):
     product_id: UUID
     status: str = "STANDBY"
+    current_piece_id: UUID | None = None
 
 
 class AssignmentUpdate(BaseModel):
@@ -128,6 +129,23 @@ def _assignment_out(db: Session, row: StudentSheetMusic) -> AssignmentOut:
         pieces=[_piece_out(piece) for piece in piece_rows],
         updated_at=row.updated_at,
     )
+
+
+def _validated_piece_for_product(
+    db: Session,
+    *,
+    product_id: UUID,
+    piece_id: UUID | None,
+) -> SheetMusicPiece | None:
+    if piece_id is None:
+        return None
+    piece = db.get(SheetMusicPiece, piece_id)
+    if piece is None or not piece.active or piece.product_id != product_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Morceau invalide pour cette partition",
+        )
+    return piece
 
 
 @router.get("/repertoire/partitions", response_model=list[PartitionOut])
@@ -232,11 +250,17 @@ def admin_add_assignment(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Élève introuvable")
     if product is None or payload.status not in STATUSES:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Partition ou statut invalide")
+    piece = _validated_piece_for_product(
+        db,
+        product_id=product.id,
+        piece_id=payload.current_piece_id,
+    )
     row = StudentSheetMusic(
         student_id=student_id,
         product_id=product.id,
         title_snapshot=product.title,
         status=payload.status,
+        current_piece_id=piece.id if piece else None,
     )
     db.add(row)
     db.flush()
@@ -246,6 +270,7 @@ def admin_add_assignment(
             actor_user_id=actor.id,
             event_type="CREATED",
             new_status=row.status,
+            piece_id=piece.id if piece else None,
         )
     )
     db.commit()
@@ -412,11 +437,17 @@ def professor_add_assignment(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès refusé")
     if product is None or payload.status not in STATUSES:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Partition ou statut invalide")
+    piece = _validated_piece_for_product(
+        db,
+        product_id=product.id,
+        piece_id=payload.current_piece_id,
+    )
     row = StudentSheetMusic(
         student_id=student_id,
         product_id=product.id,
         title_snapshot=product.title,
         status=payload.status,
+        current_piece_id=piece.id if piece else None,
     )
     db.add(row)
     db.flush()
@@ -426,6 +457,7 @@ def professor_add_assignment(
             actor_user_id=actor.id,
             event_type="CREATED",
             new_status=row.status,
+            piece_id=piece.id if piece else None,
             note="Partition ajoutée depuis le suivi professeur",
         )
     )

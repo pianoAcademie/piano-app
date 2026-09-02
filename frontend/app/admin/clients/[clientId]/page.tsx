@@ -3627,12 +3627,11 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               <form action={adminAddRepertoireAction} className="row top-gap-sm">
                 <input type="hidden" name="student_id" value={client.id} />
                 <input type="hidden" name="return_to" value={`/admin/clients/${client.id}?tab=fiche`} />
-                <select name="product_id" required>
-                  <option value="">Choisir une partition</option>
-                  {repertoireCatalog.map((partition) => (
-                    <option key={partition.product_id} value={partition.product_id}>{partition.title}</option>
-                  ))}
-                </select>
+                <RepertoireAssignmentFields
+                  catalog={repertoireCatalog}
+                  initialProductId={null}
+                  initialPieceId={null}
+                />
                 <select name="status" defaultValue="STANDBY">
                   <option value="STANDBY">En attente</option>
                   <option value="IN_PROGRESS">En cours</option>

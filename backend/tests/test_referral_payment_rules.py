@@ -59,6 +59,26 @@ class _SequencedFakeDb(_FakeDb):
 
 
 class ReferralPaymentRuleTests(unittest.TestCase):
+    def test_quote_ids_accepts_quote_installment_references(self) -> None:
+        quote_id = uuid4()
+        payment_id = uuid4()
+        db = _FakeDb(
+            [
+                SimpleNamespace(
+                    id=payment_id,
+                    category="QUOTE_INSTALLMENT",
+                    reference=f"QUOTE_INSTALLMENT:{quote_id}:1",
+                )
+            ]
+        )
+
+        quote_ids = referrals.quote_ids_from_invoice_metadata(
+            db,
+            {"included_payment_keys": [f"MANUAL:{payment_id}"]},
+        )
+
+        self.assertEqual(quote_ids, {quote_id})
+
     def test_paid_total_counts_only_cashed_payment_statuses(self) -> None:
         payment_ids = [uuid4(), uuid4(), uuid4(), uuid4(), uuid4()]
         db = _FakeDb(

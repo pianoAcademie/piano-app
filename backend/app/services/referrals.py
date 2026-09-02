@@ -822,7 +822,7 @@ def quote_ids_from_invoice_metadata(db: Session, metadata: dict[str, object]) ->
     for row in rows:
         if (row.category or "").strip().upper() == "PRE_REGISTRATION_DEPOSIT":
             continue
-        match = re.match(r"^QUOTE:(?P<quote_id>[0-9a-fA-F-]{36}):", (row.reference or "").strip())
+        match = re.match(r"^(?:QUOTE|QUOTE_INSTALLMENT):(?P<quote_id>[0-9a-fA-F-]{36}):", (row.reference or "").strip())
         if match is None:
             continue
         try:

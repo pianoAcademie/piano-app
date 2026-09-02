@@ -2651,6 +2651,7 @@ export async function professorAddRepertoireAction(formData: FormData): Promise<
       body: JSON.stringify({
         product_id: productId,
         status: String(formData.get("status") ?? "IN_PROGRESS"),
+        current_piece_id: optionalField(formData, "current_piece_id"),
       }),
     },
     token,
@@ -2676,6 +2677,7 @@ export async function adminAddRepertoireAction(formData: FormData): Promise<void
       body: JSON.stringify({
         product_id: String(formData.get("product_id") ?? ""),
         status: String(formData.get("status") ?? "STANDBY"),
+        current_piece_id: optionalField(formData, "current_piece_id"),
       }),
     },
     token,

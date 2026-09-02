@@ -4,7 +4,7 @@ from uuid import uuid4
 
 from app.models.product_catalog import CatalogProduct
 from app.models.repertoire import SheetMusicPiece, StudentSheetMusic, StudentSheetMusicEvent
-from app.api.routes.repertoire import AssignmentUpdate, _update_assignment
+from app.api.routes.repertoire import AssignmentUpdate, _update_assignment, _validated_piece_for_product
 from app.services.repertoire_progression import (
     ensure_previous_partition_for_reenrollment,
     partition_degree,
@@ -177,3 +177,20 @@ def test_product_correction_accepts_a_piece_from_the_new_partition():
     assert assignment.product_id == corrected_product.id
     assert assignment.title_snapshot == "Partitions Ados"
     assert assignment.current_piece_id == selected_piece.id
+
+
+def test_new_assignment_piece_must_belong_to_selected_partition():
+    db = MagicMock()
+    product_id = uuid4()
+    selected_piece = SheetMusicPiece(
+        id=uuid4(),
+        product_id=product_id,
+        title="Dernière Danse",
+        position=7,
+        active=True,
+    )
+    db.get.return_value = selected_piece
+
+    result = _validated_piece_for_product(db, product_id=product_id, piece_id=selected_piece.id)
+
+    assert result is selected_piece
