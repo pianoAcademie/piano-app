@@ -70,6 +70,7 @@ import CopyIdButton from "../../components/client-ui/copy-id-button";
 import StatChip from "../../components/client-ui/stat-chip";
 import Toast from "../../components/client-ui/toast";
 import PortalBrandLockup from "../../components/portal-brand-lockup";
+import ClientBookingLocationPreferences from "../../components/client-booking-location-preferences";
 import CompactInvoiceRow from "../../components/ui-client/compact-invoice-row";
 import FilterChipsBar from "../../components/ui-client/filter-chips-bar";
 import KPIBlock from "../../components/ui-client/kpi-block";
@@ -80,6 +81,13 @@ import UpcomingLessonRow from "../../components/ui-client/upcoming-lesson-row";
 import UrgentPayCard from "../../components/ui-client/urgent-pay-card";
 import { localeForUiLanguage, normalizeUiLanguage, resolveAuthErrorMessage, resolveAuthOkMessage, translateBackendMessage, type UiLanguage, uiText } from "../../lib/ui-i18n";
 import { sanitizeExternalCourseContentHtml, sanitizeRichHtml } from "../../lib/sanitize-rich-html";
+import {
+  clientBookingCategoryForSession,
+  locationAllowedForClientSites,
+  parseClientBookingCategory,
+  parseFavoriteLocationIds,
+  type ClientBookingCategory,
+} from "../../lib/client-booking-filters";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -161,6 +169,7 @@ type MemberLite = {
   display_name: string;
   email: string | null;
   kind: string;
+  student_site: string | null;
 };
 
 const SESSION_ACCENT_COLORS = [
@@ -1370,6 +1379,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const selectedCoachId = readParam(searchParams, "coach_id");
   const selectedTimeBucket = parseTimeBucket(readParam(searchParams, "time_bucket"));
   const planningMode = readParam(searchParams, "planning_mode") === "book" ? "book" : "reservations";
+  const selectedBookingCategory = parseClientBookingCategory(readParam(searchParams, "booking_category"));
+  const favoriteLocationIdsParam = readParam(searchParams, "favorite_location_ids");
   const rawPlanningSlotFilter = parsePlanningSlotFilter(readParam(searchParams, "planning_slot_filter"));
   const planningSlotFilter =
     planningMode === "book" && rawPlanningSlotFilter === "ALL" ? "AVAILABLE" : rawPlanningSlotFilter;
@@ -1435,7 +1446,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   if (selectedCourseType) {
     sessionQuery.set("course_type_id", selectedCourseType);
   }
-  if (selectedLocation) {
+  if (selectedLocation && !(tab === "planning" && planningMode === "book")) {
     sessionQuery.set("location_id", selectedLocation);
   }
 
@@ -1603,7 +1614,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
         errors.push(`locations: ${locationsResult.message}`);
         return [] as LocationOut[];
       })();
-  const clientBookingLocations = locations.filter(isClientBookingLocation);
+  const allClientBookingLocations = locations.filter(isClientBookingLocation);
   const selectedLocationIsExcluded = Boolean(
     selectedLocation && locations.some((location) => location.id === selectedLocation && !isClientBookingLocation(location)),
   );
@@ -1778,7 +1789,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   }
 
   const memberMap = new Map<string, MemberLite>();
-  const addMember = (candidate: { id: string; first_name: string | null; last_name: string | null; email: string | null; client_kind: string }): void => {
+  const addMember = (candidate: { id: string; first_name: string | null; last_name: string | null; email: string | null; client_kind: string; student_site?: string | null }): void => {
     if (!candidate?.id) {
       return;
     }
@@ -1787,6 +1798,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       display_name: memberDisplayName(candidate, language),
       email: candidate.email,
       kind: candidate.client_kind,
+      student_site: candidate.student_site ?? null,
     });
   };
 
@@ -1796,6 +1808,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     last_name: me.last_name,
     email: me.email,
     client_kind: me.client_kind,
+    student_site: me.student_site,
   });
 
   if (family) {
@@ -2086,6 +2099,34 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     }
     activeEntitlementsByOwner.set(sub.owner_client_id, entitlementSet);
   }
+  const planningSiteMembers = bookingOwnerId !== FAMILY_BOOKING_OWNER
+    ? members.filter((member) => member.id === bookingOwnerId)
+    : (() => {
+        const membersWithActivePlans = members.filter((member) => activeSubscriptionByOwner.has(member.id));
+        return membersWithActivePlans.length > 0 ? membersWithActivePlans : members;
+      })();
+  const planningStudentSites = planningSiteMembers.map((member) => {
+    if (member.student_site) {
+      return member.student_site;
+    }
+    // Bar-le-Duc and online clients are explicitly tagged. For an active legacy
+    // subscription without a site, Paris is the safe historical default.
+    return activeSubscriptionByOwner.has(member.id) ? "PARIS" : null;
+  });
+  const eligibleClientBookingLocations = allClientBookingLocations.filter((location) =>
+    locationAllowedForClientSites(location, planningStudentSites),
+  );
+  const eligibleBookingLocationIds = new Set(eligibleClientBookingLocations.map((location) => location.id));
+  const eligiblePhysicalBookingLocations = eligibleClientBookingLocations.filter((location) => !location.is_online);
+  const eligiblePhysicalBookingLocationIds = new Set(eligiblePhysicalBookingLocations.map((location) => location.id));
+  const requestedFavoriteLocationIds = parseFavoriteLocationIds(favoriteLocationIdsParam).filter((locationId) =>
+    eligiblePhysicalBookingLocationIds.has(locationId),
+  );
+  const effectiveFavoriteLocationIds = new Set(
+    requestedFavoriteLocationIds.length > 0
+      ? requestedFavoriteLocationIds
+      : eligiblePhysicalBookingLocations.map((location) => location.id),
+  );
   const expiringSubscriptionsByOwner = new Map<string, typeof subscriptions>();
   for (const sub of subscriptions) {
     if (!isSubscriptionCoveredForPlanning(sub, now, isReadOnlyPreview) || !sub.payment_method_setup_required) {
@@ -2267,12 +2308,25 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     planning_mode: "book",
     agenda_view: "week",
     planning_slot_filter: "AVAILABLE",
+    booking_category: "PIANO",
     reservation_month: null,
     session_id: null,
     session_member_id: null,
   });
 
-  const filteredSessions = sessions.filter((session) => {
+  const siteScopedSessions = sessions.filter((session) => eligibleBookingLocationIds.has(session.location.id));
+  const bookingCategoryCounts = new Map<ClientBookingCategory, number>();
+  for (const session of siteScopedSessions) {
+    const category = clientBookingCategoryForSession(session);
+    bookingCategoryCounts.set(category, (bookingCategoryCounts.get(category) ?? 0) + 1);
+  }
+  const filteredSessions = siteScopedSessions.filter((session) => {
+    if (clientBookingCategoryForSession(session) !== selectedBookingCategory) {
+      return false;
+    }
+    if (!session.location.is_online && !effectiveFavoriteLocationIds.has(session.location.id)) {
+      return false;
+    }
     if (selectedCoachId && session.professor?.id !== selectedCoachId) {
       return false;
     }
@@ -3834,19 +3888,17 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                   <input type="hidden" name="tab" value="planning" />
                   <input type="hidden" name="planning_mode" value="book" />
                   <input type="hidden" name="agenda_view" value="week" />
+                  <input type="hidden" name="booking_category" value={selectedBookingCategory} />
+                  <input type="hidden" name="favorite_location_ids" value={Array.from(effectiveFavoriteLocationIds).join(",")} />
 
                   <div className="client-planning-hero">
-                    <label className="client-planning-pill client-planning-pill-location">
-                      <span><ClientNavigationIcon name="location" /> {t("client.planning")}</span>
-                      <AutoSubmitSelect
-                        name="location_id"
-                        defaultValue={selectedLocation}
-                        options={[
-                          { value: "", label: t("client.all_locations") },
-                          ...clientBookingLocations.map((location) => ({ value: location.id, label: location.name })),
-                        ]}
-                      />
-                    </label>
+                    <ClientBookingLocationPreferences
+                      accountId={me.id}
+                      language={language}
+                      locations={eligiblePhysicalBookingLocations.map((location) => ({ id: location.id, name: location.name }))}
+                      selectedLocationIds={Array.from(effectiveFavoriteLocationIds)}
+                      hasExplicitSelection={requestedFavoriteLocationIds.length > 0}
+                    />
 
                     <label className="client-planning-pill client-planning-pill-date">
                       <span><ClientNavigationIcon name="calendar" /> Date</span>
@@ -3870,6 +3922,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           coach_id: null,
                           time_bucket: null,
                           planning_slot_filter: null,
+                          booking_category: "PIANO",
                           timezone: me.timezone || DEFAULT_TIMEZONE,
                           agenda_view: "week",
                           agenda_date: todayKeyInTimezone(timezone),
@@ -4148,6 +4201,34 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                   <span className="badge">{agendaSessionCount}</span>
                 </div>
                 <p className="muted">{t("client.additional_booking_week_help")}</p>
+                <nav className="client-booking-category-switch" aria-label={t("client.booking_category_label")}>
+                  {([
+                    { key: "PIANO", icon: "♩", label: t("client.booking_category_piano"), help: t("client.booking_category_piano_help") },
+                    { key: "REHEARSAL_STUDIO", icon: "♫", label: t("client.booking_category_studio"), help: t("client.booking_category_studio_help") },
+                    { key: "ONLINE_SOLFEGE", icon: "⌁", label: t("client.booking_category_solfege"), help: t("client.booking_category_solfege_help") },
+                  ] as Array<{ key: ClientBookingCategory; icon: string; label: string; help: string }>).map((category) => (
+                    <a
+                      key={category.key}
+                      className={selectedBookingCategory === category.key ? "active" : ""}
+                      href={withUpdatedQuery(rawParams, {
+                        tab: "planning",
+                        planning_mode: "book",
+                        booking_category: category.key,
+                        location_id: null,
+                        course_type_id: null,
+                        session_id: null,
+                        session_member_id: null,
+                      })}
+                    >
+                      <span className="client-booking-category-icon" aria-hidden="true">{category.icon}</span>
+                      <span>
+                        <strong>{category.label}</strong>
+                        <small>{category.help}</small>
+                      </span>
+                      <span className="badge">{bookingCategoryCounts.get(category.key) ?? 0}</span>
+                    </a>
+                  ))}
+                </nav>
                 <form method="get" className="client-planning-quick-filter-form">
                   <input type="hidden" name="tab" value="planning" />
                   <input type="hidden" name="planning_mode" value="book" />
@@ -4159,6 +4240,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                   <input type="hidden" name="time_bucket" value={selectedTimeBucket} />
                   <input type="hidden" name="timezone" value={timezone} />
                   <input type="hidden" name="booking_owner_id" value={bookingOwnerId} />
+                  <input type="hidden" name="booking_category" value={selectedBookingCategory} />
+                  <input type="hidden" name="favorite_location_ids" value={Array.from(effectiveFavoriteLocationIds).join(",")} />
                   <label className="client-planning-quick-filter-label">
                     <span>{t("client.show")}</span>
                     <AutoSubmitSelect

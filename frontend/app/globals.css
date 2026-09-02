@@ -12162,6 +12162,16 @@ button.danger:focus-visible {
   }
 }
 
+@media (max-width: 600px) {
+  .client-planning-hero {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .client-planning-toolbar-actions {
+    grid-column: 1;
+  }
+}
+
 .product-edit-modal {
   width: min(980px, 96vw);
   max-height: 92vh;
@@ -14762,6 +14772,181 @@ button.danger:focus-visible {
 .client-planning-quick-filters {
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.client-booking-location-preferences {
+  position: relative;
+  min-width: 0;
+  align-self: stretch;
+  border: 1px solid #e2e8f1;
+  border-radius: 14px;
+  background: #ffffff;
+  padding: 8px 10px;
+}
+
+.client-booking-location-preferences > summary {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  list-style: none;
+  color: #283a51;
+}
+
+.client-booking-location-preferences > summary::-webkit-details-marker {
+  display: none;
+}
+
+.client-booking-location-preferences > summary::after {
+  content: "⌄";
+  margin-left: auto;
+  color: #78664f;
+}
+
+.client-booking-location-preferences[open] > summary::after {
+  transform: rotate(180deg);
+}
+
+.client-booking-location-preferences > summary small {
+  color: #78664f;
+  font-weight: 600;
+}
+
+.client-booking-location-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #eee5d8;
+}
+
+.client-booking-location-options label,
+.client-booking-location-options button {
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid #ded3c2;
+  border-radius: 999px;
+  background: #fffaf2;
+  color: #574735;
+  padding: 7px 11px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.client-booking-location-options label.selected {
+  border-color: #b98128;
+  background: #f8e5bd;
+  color: #4c3515;
+}
+
+.client-booking-location-options input {
+  accent-color: #a86b16;
+}
+
+.client-booking-location-options button {
+  background: #ffffff;
+}
+
+.client-booking-location-preferences > p {
+  margin: 8px 0 0;
+  color: #786b5d;
+  font-size: 12px;
+}
+
+.client-booking-category-switch {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 14px 0 10px;
+}
+
+.client-booking-category-switch > a {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #e2d7c6;
+  border-radius: 14px;
+  background: #fffdf9;
+  color: #4f4233;
+  padding: 11px 12px;
+  text-decoration: none;
+}
+
+.client-booking-category-switch > a:hover,
+.client-booking-category-switch > a.active {
+  border-color: #bd852e;
+  background: #f9e9c7;
+  color: #39270f;
+}
+
+.client-booking-category-switch > a > span:not(.badge) {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.client-booking-category-switch strong,
+.client-booking-category-switch small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.client-booking-category-switch small {
+  color: #7a6b58;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.client-booking-category-switch .client-booking-category-icon {
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #9a6418;
+  font-size: 20px;
+}
+
+@media (max-width: 760px) {
+  .client-booking-category-switch {
+    display: flex;
+    overflow-x: auto;
+    scroll-snap-type: x proximity;
+    padding-bottom: 3px;
+  }
+
+  .client-booking-category-switch > a {
+    flex: 0 0 min(82vw, 285px);
+    scroll-snap-align: start;
+  }
+
+  .client-booking-location-options {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .client-booking-location-options label,
+  .client-booking-location-options button {
+    justify-content: center;
+    text-align: center;
+  }
+
+  .client-booking-location-preferences[open] {
+    grid-column: 1 / -1;
+  }
+
+  .client-booking-location-preferences > summary strong {
+    white-space: nowrap;
+  }
 }
 
 .client-planning-reserved-list {

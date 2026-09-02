@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.catalog import BookingStatus, SessionStatus
 from app.models.plan import PlanKind, SubscriptionStatus
-from app.models.user import ClientKind
+from app.models.user import ClientKind, StudentSite
 from app.models.user import ClientStatus, UserRole
 from app.schemas.plan import ClientCreditAllocationOut
 
@@ -22,6 +22,7 @@ class UserOut(BaseModel):
     email: str
     role: UserRole
     client_kind: ClientKind
+    student_site: StudentSite | None = None
     first_name: str | None
     last_name: str | None
     address_line: str | None
@@ -98,6 +99,7 @@ class FamilyMemberOut(BaseModel):
     city: str | None
     address_country: str
     client_kind: ClientKind
+    student_site: StudentSite | None = None
     is_active: bool
 
 

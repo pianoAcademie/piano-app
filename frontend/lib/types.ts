@@ -14,6 +14,7 @@ export type UserOut = {
   email: string;
   role: "admin" | "prof" | "client";
   client_kind: "ADULT" | "CHILD" | string;
+  student_site: "PARIS" | "BAR_LE_DUC" | "ONLINE" | string | null;
   client_status: "ACTIVE" | "RESPONSABLE" | "INACTIVE" | "TRIAL" | "PENDING" | "ARCHIVED" | string;
   first_name: string | null;
   last_name: string | null;
@@ -983,6 +984,7 @@ export type FamilyMemberOut = {
   city: string | null;
   address_country: string;
   client_kind: "ADULT" | "CHILD" | string;
+  student_site: "PARIS" | "BAR_LE_DUC" | "ONLINE" | string | null;
   is_active: boolean;
 };
 

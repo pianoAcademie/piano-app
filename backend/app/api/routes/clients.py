@@ -361,6 +361,7 @@ def _member_out(user: User) -> FamilyMemberOut:
         city=user.city,
         address_country=user.address_country,
         client_kind=user.client_kind,
+        student_site=user.student_site,
         is_active=user.is_active,
     )
 

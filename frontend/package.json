@@ -29,7 +29,8 @@
     "mobile:verify:client": "node scripts/verify-mobile-release.mjs client",
     "mobile:verify:prof": "node scripts/verify-mobile-release.mjs prof",
     "test:security": "node --experimental-strip-types scripts/test-sanitize-rich-html.mjs",
-    "test:collaborator-agenda": "node --experimental-strip-types --test scripts/test-collaborator-agenda.mjs"
+    "test:collaborator-agenda": "node --experimental-strip-types --test scripts/test-collaborator-agenda.mjs",
+    "test:client-booking-filters": "node --experimental-strip-types --test scripts/test-client-booking-filters.mjs"
   },
   "dependencies": {
     "@capacitor/push-notifications": "8.0.0",
