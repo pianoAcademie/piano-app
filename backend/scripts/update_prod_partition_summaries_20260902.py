@@ -79,7 +79,8 @@ Sommaire :
 - Another Love — Tom Odell
 - Don’t Stop Me Now — Queen
 - Someone You Loved — Lewis Capaldi
-- The Winner Takes It All — ABBA""",
+- The Winner Takes It All — ABBA
+- Dernière Danse""",
     ),
 )
 

@@ -111,6 +111,7 @@ ADOS_PIECES = (
     "Don’t Stop Me Now — Queen",
     "Someone You Loved — Lewis Capaldi",
     "The Winner Takes It All — ABBA",
+    "Dernière Danse",
 )
 ADOS_EXPECTED_PRODUCT_TITLE = "partitions ados"
 
