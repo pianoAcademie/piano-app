@@ -2,10 +2,10 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import PortalBrandLockup from "../../../../components/portal-brand-lockup";
-import { startFormulaPurchaseLinkAction, submitPublicSessionCheckoutAction } from "../../../../lib/actions";
+import { createCheckoutChildAction, startFormulaPurchaseLinkAction, submitPublicSessionCheckoutAction } from "../../../../lib/actions";
 import { getPortalToken } from "../../../../lib/auth-cookies";
 import { backendRequest } from "../../../../lib/backend";
-import { eligibleReservationMembers, preferredReservationMemberId } from "../../../../lib/client-session-selection";
+import { eligibleReservationMembers, isChildOnlyBookingSession, preferredReservationMemberId } from "../../../../lib/client-session-selection";
 import { localeForUiLanguage, normalizeUiLanguage, resolveAuthErrorMessage, resolveAuthOkMessage, translateBackendMessage, type UiLanguage, uiText } from "../../../../lib/ui-i18n";
 import type {
   ClientSessionPurchaseCatalogOut,
@@ -240,6 +240,12 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
   const purchaseCatalog = purchaseCatalogResult.ok ? purchaseCatalogResult.data : null;
   const members = reservationOptions.members;
   const eligibleMembers = eligibleReservationMembers(members);
+  const childMembers = members.filter((option) => option.member_kind === "CHILD");
+  const canAddChild =
+    me.client_kind === "ADULT"
+    && isChildOnlyBookingSession(session)
+    && session.status === "SCHEDULED"
+    && reservationOptions.online_booking_enabled;
   const selectedMemberId = preferredReservationMemberId(members, bookingUserId);
   const selectedMember = members.find((option) => option.member_id === selectedMemberId) ?? null;
   const selectedMemberFormulaOptions =
@@ -358,6 +364,51 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
                   })}
                 </div>
               </div>
+            </section>
+          ) : null}
+
+          {canAddChild ? (
+            <section className="modal-card client-session-child-create">
+              <details open={childMembers.length === 0}>
+                <summary>
+                  {childMembers.length === 0
+                    ? t("public_session_checkout.child_missing_title")
+                    : t("public_session_checkout.child_add_another")}
+                </summary>
+                <div className="client-session-child-create-copy">
+                  <p>{t("public_session_checkout.child_missing_help")}</p>
+                  <form action={createCheckoutChildAction} className="grid public-buy-form client-session-child-create-form">
+                    <input type="hidden" name="session_id" value={session.id} />
+                    <input
+                      type="hidden"
+                      name="checkout_return_to"
+                      value={buildCheckoutHref(session.id, planningReturnTo, "", language)}
+                    />
+                    <label>
+                      {t("public_session_checkout.child_first_name")}
+                      <input type="text" name="child_first_name" autoComplete="given-name" maxLength={100} required />
+                    </label>
+                    <label>
+                      {t("public_session_checkout.child_last_name")}
+                      <input
+                        type="text"
+                        name="child_last_name"
+                        autoComplete="family-name"
+                        maxLength={100}
+                        defaultValue={me.last_name || ""}
+                        required
+                      />
+                    </label>
+                    <label>
+                      {t("public_session_checkout.child_birth_date")}
+                      <input type="date" name="child_birth_date" required />
+                    </label>
+                    <button type="submit" className="client-session-primary-button">
+                      {t("public_session_checkout.child_continue")}
+                    </button>
+                  </form>
+                </div>
+              </details>
             </section>
           ) : null}
 
@@ -484,9 +535,11 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
               </div>
             </>
           ) : (
-            <section className="flash-ok">
-              {t("public_session_checkout.choose_member_prompt")}
-            </section>
+            canAddChild && childMembers.length === 0 ? null : (
+              <section className="flash-ok">
+                {t("public_session_checkout.choose_member_prompt")}
+              </section>
+            )
           )}
 
           <div className="row">

@@ -2274,6 +2274,66 @@ export async function submitPublicSessionCheckoutAction(formData: FormData): Pro
   redirect(appendQueryMessage(successPlanningPath, "ok_code", "booking_confirmed"));
 }
 
+export async function createCheckoutChildAction(formData: FormData): Promise<void> {
+  const sessionId = String(formData.get("session_id") ?? "").trim();
+  const firstName = String(formData.get("child_first_name") ?? "").trim();
+  const lastName = String(formData.get("child_last_name") ?? "").trim();
+  const birthDate = String(formData.get("child_birth_date") ?? "").trim();
+  const checkoutReturnTo = safePublicBuyPath(
+    String(formData.get("checkout_return_to") ?? "").trim(),
+    sessionId ? `/buy/session/checkout?session_id=${encodeURIComponent(sessionId)}` : "/buy/session/checkout",
+  );
+  const language = publicActionLanguage(checkoutReturnTo);
+
+  if (!sessionId || !firstName || !lastName || !birthDate) {
+    redirect(appendQueryMessage(checkoutReturnTo, "error", uiText(language, "public_session_checkout.child_fields_required")));
+  }
+
+  const token = currentPortalToken();
+  if (!token) {
+    redirect(setQueryParam(
+      `/login?mode=login&return_to=${encodeURIComponent(checkoutReturnTo)}&error_code=booking_login_required`,
+      "lang",
+      language === "en" ? "en" : null,
+    ));
+  }
+
+  const result = await backendRequest<{ id: string }>(
+    "/api/v1/clients/me/family/children",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        first_name: firstName,
+        last_name: lastName,
+        birth_date: birthDate,
+        trial_session_id: sessionId,
+      }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    if (result.status === 401) {
+      clearToken();
+      redirect(setQueryParam(
+        `/login?mode=login&return_to=${encodeURIComponent(checkoutReturnTo)}&error_code=session_expired`,
+        "lang",
+        language === "en" ? "en" : null,
+      ));
+    }
+    redirect(appendQueryMessage(checkoutReturnTo, "error", result.message));
+  }
+
+  revalidatePath("/client");
+  revalidatePath("/dashboard");
+  redirect(
+    appendQueryMessage(
+      setQueryParam(checkoutReturnTo, "booking_user_id", result.data.id),
+      "ok",
+      uiText(language, "public_session_checkout.child_created"),
+    ),
+  );
+}
+
 export async function openClientPaymentCheckoutAction(formData: FormData): Promise<void> {
   const token = currentPortalToken();
   if (!token) {

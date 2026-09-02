@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 import re
 import unicodedata
-from uuid import UUID
+from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -93,6 +93,7 @@ from app.schemas.user import (
     ClientContentMemberAccessOut,
     ClientContentSectionOut,
     ClientFamilyOverviewOut,
+    ClientFamilyChildCreateRequest,
     ClientInvoiceOut,
     ClientPaymentConfirmOut,
     ClientMessageOut,
@@ -2366,6 +2367,92 @@ def _family_plan_mini_out(
 @router.get("/clients/me", response_model=UserOut)
 def get_client_me(current_user: User = Depends(require_roles(UserRole.CLIENT))) -> UserOut:
     return current_user
+
+
+def _new_family_child_email(db: Session) -> str:
+    email = f"child+{uuid4().hex[:16]}@piano-academie.invalid"
+    while db.scalar(select(User.id).where(User.email == email)) is not None:
+        email = f"child+{uuid4().hex[:16]}@piano-academie.invalid"
+    return email
+
+
+@router.post("/clients/me/family/children", response_model=FamilyMemberOut, status_code=status.HTTP_201_CREATED)
+def create_client_family_child(
+    payload: ClientFamilyChildCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.CLIENT)),
+) -> FamilyMemberOut:
+    if current_user.client_kind != ClientKind.ADULT:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only an adult account can add a child",
+        )
+
+    first_name = payload.first_name.strip()
+    last_name = payload.last_name.strip()
+    if not first_name or not last_name:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Child first name and last name are required",
+        )
+
+    child_status = ClientStatus.ACTIVE
+    if payload.trial_session_id is not None:
+        session_obj = db.scalar(
+            select(CourseSession).where(CourseSession.id == payload.trial_session_id)
+        )
+        if session_obj is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Trial session not found")
+        if not _session_client_kind_allowed(session_obj, ClientKind.CHILD):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="This session is not available for a child",
+            )
+        child_status = ClientStatus.TRIAL
+
+    parent_label = " ".join(
+        part for part in [(current_user.first_name or "").strip(), (current_user.last_name or "").strip()] if part
+    )
+    child = User(
+        email=_new_family_child_email(db),
+        hashed_password=current_user.hashed_password,
+        role=UserRole.CLIENT,
+        first_name=first_name,
+        last_name=last_name,
+        address_line=current_user.address_line,
+        postal_code=current_user.postal_code,
+        city=current_user.city,
+        address_country=current_user.address_country,
+        birth_date=payload.birth_date,
+        private_note=f"Responsable legal: {parent_label}" if parent_label else None,
+        residence_country=current_user.residence_country,
+        preferred_language=current_user.preferred_language,
+        preferred_currency=current_user.preferred_currency,
+        timezone=current_user.timezone,
+        client_kind=ClientKind.CHILD,
+        client_status=child_status,
+        is_active=True,
+        portal_contact_visible=False,
+        email_opt_in=False,
+        sms_opt_in=False,
+        lesson_reminder_email_opt_in=False,
+        lesson_reminder_sms_opt_in=False,
+        updated_at=_utcnow(),
+    )
+    db.add(child)
+    db.flush()
+    db.add(
+        ClientFamilyLink(
+            adult_user_id=current_user.id,
+            child_user_id=child.id,
+            relationship_label="parent",
+            is_billing_recipient=True,
+            updated_at=_utcnow(),
+        )
+    )
+    db.commit()
+    db.refresh(child)
+    return _member_out(child)
 
 
 @router.delete("/clients/me/account", response_model=ClientAccountDeletionOut)

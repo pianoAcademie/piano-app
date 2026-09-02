@@ -76,6 +76,13 @@ class ClientMeUpdateRequest(BaseModel):
     timezone: str | None = Field(default=None, min_length=2, max_length=100)
 
 
+class ClientFamilyChildCreateRequest(BaseModel):
+    first_name: str = Field(min_length=1, max_length=100)
+    last_name: str = Field(min_length=1, max_length=100)
+    birth_date: date
+    trial_session_id: UUID | None = None
+
+
 class ClientAccountDeletionRequest(BaseModel):
     current_password: str = Field(min_length=8, max_length=128)
     confirm_account_deletion: bool

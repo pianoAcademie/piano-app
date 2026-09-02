@@ -15157,6 +15157,47 @@ button.danger:focus-visible {
   border-color: rgba(255, 249, 239, 0.35);
 }
 
+.client-session-child-create details {
+  display: grid;
+  gap: 14px;
+}
+
+.client-session-child-create summary {
+  cursor: pointer;
+  color: #2f2417;
+  font-weight: 800;
+  list-style-position: inside;
+}
+
+.client-session-child-create-copy {
+  display: grid;
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.client-session-child-create-copy p {
+  margin: 0;
+  color: #5f5446;
+}
+
+.client-session-child-create-form {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.client-session-child-create-form label:last-of-type,
+.client-session-child-create-form button {
+  grid-column: 1 / -1;
+}
+
+.client-session-child-create-form input {
+  width: 100%;
+  min-height: 48px;
+  border: 1px solid #e0caa7;
+  border-radius: 14px;
+  background: rgba(255, 253, 249, 0.88);
+  padding: 10px 12px;
+}
+
 .client-session-inline-warning {
   display: grid;
   gap: 10px;
@@ -15402,6 +15443,15 @@ button.danger:focus-visible {
   .client-session-member-card {
     gap: 6px;
     padding: 10px 12px;
+  }
+
+  .client-session-child-create-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .client-session-child-create-form label,
+  .client-session-child-create-form button {
+    grid-column: 1;
   }
 
   .client-session-modal-state {
