@@ -1857,7 +1857,18 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                                     planningScope,
                                   })}
                                 />
-                                <strong>{assignment.title}</strong>
+                                <div>
+                                  <small className="muted">
+                                    {assignment.status === "IN_PROGRESS"
+                                      ? "Partition actuelle"
+                                      : assignment.status === "STANDBY"
+                                        ? "Prochaine partition"
+                                        : assignment.status === "TO_DELIVER"
+                                          ? "Partition à remettre"
+                                          : "Partition suivie"}
+                                  </small>
+                                  <strong>{assignment.title}</strong>
+                                </div>
                                 <label>
                                   État
                                   <select name="status" defaultValue={assignment.status}>
@@ -1885,6 +1896,9 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                                   <textarea name="internal_note" rows={2} defaultValue={assignment.internal_note ?? ""} />
                                 </label>
                                 <button type="submit" className="ghost">Enregistrer la progression</button>
+                                {assignment.status === "IN_PROGRESS" ? (
+                                  <small className="muted">En la passant à « Terminée », la prochaine partition démarrera automatiquement sur son premier morceau.</small>
+                                ) : null}
                               </form>
                             ))}
                           </details>

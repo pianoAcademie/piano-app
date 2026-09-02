@@ -3580,9 +3580,31 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                     <input type="hidden" name="assignment_id" value={assignment.id} />
                     <input type="hidden" name="return_to" value={`/admin/clients/${client.id}?tab=fiche`} />
                     <div className="row spread">
-                      <strong>{assignment.title}</strong>
+                      <div>
+                        <small className="muted">
+                          {assignment.status === "IN_PROGRESS"
+                            ? "Partition actuelle"
+                            : assignment.status === "STANDBY"
+                              ? "Prochaine partition"
+                              : assignment.status === "TO_DELIVER"
+                                ? "Partition à remettre"
+                                : "Partition suivie"}
+                        </small>
+                        <strong>{assignment.title}</strong>
+                      </div>
                       <span className="badge">{assignment.source === "DEVIS" ? "Issue du devis" : "Ajout manuel"}</span>
                     </div>
+                    <label>
+                      Partition suivie
+                      <select name="product_id" defaultValue={assignment.product_id ?? ""} required>
+                        {repertoireCatalog.map((partition) => (
+                          <option key={partition.product_id} value={partition.product_id}>{partition.title}</option>
+                        ))}
+                      </select>
+                    </label>
+                    {assignment.source === "DEVIS" ? (
+                      <small className="muted">Modifiable ici si la partition indiquée dans le devis était incorrecte. Le devis d’origine reste inchangé.</small>
+                    ) : null}
                     <label>
                       État
                       <select name="status" defaultValue={assignment.status}>

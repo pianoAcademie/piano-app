@@ -2670,6 +2670,7 @@ export async function adminUpdateRepertoireAction(formData: FormData): Promise<v
     {
       method: "PATCH",
       body: JSON.stringify({
+        product_id: optionalField(formData, "product_id"),
         status: String(formData.get("status") ?? ""),
         current_piece_id: optionalField(formData, "current_piece_id"),
         internal_note: optionalField(formData, "internal_note"),

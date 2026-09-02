@@ -161,6 +161,10 @@ from app.services.email_delivery import email_delivery_disabled_reason, send_ema
 from app.services.invoice_documents import build_company_identity_snapshot, normalize_billing_entity
 from app.services.messaging_templates import resolve_frontend_base_url
 from app.services.pricing import resolve_vat_rate
+from app.services.repertoire_progression import (
+    ensure_previous_partition_for_reenrollment,
+    start_next_partition_after_completion,
+)
 from app.services.notifications.application.orchestrator import enqueue_notifications, schedule_booking_created_notifications
 from app.services.notifications.application.recipients import resolve_admin_booking_notification_recipients
 from app.services.client_status import (
@@ -11290,6 +11294,19 @@ def _execute_quote_followup_transformation(
                 new_status=assignment.status,
             )
         )
+        if intake_reenrollment is True:
+            previous_assignment = ensure_previous_partition_for_reenrollment(
+                db,
+                student_id=student.id,
+                next_product=product,
+                actor_user_id=current_user.id,
+            )
+            if previous_assignment is not None and previous_assignment.status == "COMPLETED":
+                start_next_partition_after_completion(
+                    db,
+                    completed_assignment=previous_assignment,
+                    actor_user_id=current_user.id,
+                )
     subscription, plan = _resolve_followup_subscription(
         db,
         student=student,

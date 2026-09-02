@@ -5,7 +5,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
-from sqlalchemy import func, or_, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_admin_or_permissions, require_roles
@@ -13,6 +13,7 @@ from app.models.catalog import Booking, CourseSession, Professor
 from app.models.product_catalog import CatalogProduct, ProductCategory
 from app.models.repertoire import SheetMusicPiece, StudentSheetMusic, StudentSheetMusicEvent
 from app.models.user import User, UserRole
+from app.services.repertoire_progression import start_next_partition_after_completion
 
 router = APIRouter()
 STATUSES = {"STANDBY", "TO_DELIVER", "DELIVERED", "IN_PROGRESS", "COMPLETED"}
@@ -58,6 +59,7 @@ class AssignmentCreate(BaseModel):
 
 
 class AssignmentUpdate(BaseModel):
+    product_id: UUID | None = None
     status: str | None = None
     current_piece_id: UUID | None = None
     internal_note: str | None = Field(default=None, max_length=4000)
@@ -203,7 +205,16 @@ def admin_student_repertoire(
     rows = db.scalars(
         select(StudentSheetMusic)
         .where(StudentSheetMusic.student_id == student_id)
-        .order_by(StudentSheetMusic.created_at.desc())
+        .order_by(
+            case(
+                (StudentSheetMusic.status == "IN_PROGRESS", 0),
+                (StudentSheetMusic.status == "TO_DELIVER", 1),
+                (StudentSheetMusic.status == "DELIVERED", 2),
+                (StudentSheetMusic.status == "STANDBY", 3),
+                else_=4,
+            ),
+            StudentSheetMusic.created_at.desc(),
+        )
     ).all()
     return [_assignment_out(db, row) for row in rows]
 
@@ -265,14 +276,31 @@ def _update_assignment(
     row: StudentSheetMusic,
     payload: AssignmentUpdate,
     actor: User,
+    *,
+    allow_product_change: bool = False,
 ) -> AssignmentOut:
     old_status = row.status
+    correction_note: str | None = None
+    if "product_id" in payload.model_fields_set:
+        if not allow_product_change:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Correction réservée à l'administration")
+        if payload.product_id is None:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Partition requise")
+        product = _partition_product(db, payload.product_id)
+        if product is None:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Partition invalide")
+        if row.product_id != product.id:
+            previous_title = row.title_snapshot
+            row.product_id = product.id
+            row.title_snapshot = product.title
+            row.current_piece_id = None
+            correction_note = f"Correction de partition : {previous_title} → {product.title}"
     if payload.status is not None:
         if payload.status not in STATUSES:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Statut invalide")
         row.status = payload.status
 
-    if "current_piece_id" in payload.model_fields_set:
+    if "current_piece_id" in payload.model_fields_set and correction_note is None:
         if payload.current_piece_id is None:
             row.current_piece_id = None
         else:
@@ -295,6 +323,17 @@ def _update_assignment(
     if row.status == "COMPLETED" and row.completed_at is None:
         row.completed_at = now
     row.updated_at = now
+    if correction_note:
+        db.add(
+            StudentSheetMusicEvent(
+                assignment_id=row.id,
+                actor_user_id=actor.id,
+                event_type="PARTITION_CORRECTED",
+                old_status=old_status,
+                new_status=row.status,
+                note=correction_note,
+            )
+        )
     db.add(
         StudentSheetMusicEvent(
             assignment_id=row.id,
@@ -306,6 +345,13 @@ def _update_assignment(
             note=row.internal_note,
         )
     )
+    if old_status != "COMPLETED" and row.status == "COMPLETED":
+        start_next_partition_after_completion(
+            db,
+            completed_assignment=row,
+            actor_user_id=actor.id,
+            now=now,
+        )
     db.commit()
     db.refresh(row)
     return _assignment_out(db, row)
@@ -322,7 +368,7 @@ def admin_update_assignment(
     row = db.get(StudentSheetMusic, assignment_id)
     if row is None or row.student_id != student_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Suivi introuvable")
-    return _update_assignment(db, row, payload, actor)
+    return _update_assignment(db, row, payload, actor, allow_product_change=True)
 
 
 @router.patch("/professors/me/students/{student_id}/repertoire/{assignment_id}", response_model=AssignmentOut)

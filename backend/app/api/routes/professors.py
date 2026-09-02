@@ -285,7 +285,15 @@ def _session_students(
         assignments = db.scalars(
             select(StudentSheetMusic)
             .where(StudentSheetMusic.student_id == user.id, StudentSheetMusic.status != "COMPLETED")
-            .order_by(StudentSheetMusic.created_at.desc())
+            .order_by(
+                case(
+                    (StudentSheetMusic.status == "IN_PROGRESS", 0),
+                    (StudentSheetMusic.status == "TO_DELIVER", 1),
+                    (StudentSheetMusic.status == "DELIVERED", 2),
+                    else_=3,
+                ),
+                StudentSheetMusic.created_at.desc(),
+            )
         ).all()
         product_ids = [row.product_id for row in assignments if row.product_id]
         piece_rows = (
