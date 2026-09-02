@@ -179,6 +179,7 @@ jobs:
             # Build while the current containers continue serving traffic.
             docker compose build backend \$worker_targets
             docker compose run --rm -T backend alembic upgrade head
+            docker compose run --rm -T backend python scripts/check_auth_session_schema.py
             docker compose up -d --no-deps backend \$worker_targets
 
             for i in \$(seq 1 60); do

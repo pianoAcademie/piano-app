@@ -222,6 +222,7 @@ def _token_response(
         db.commit()
     except SQLAlchemyError as exc:
         db.rollback()
+        logger.exception("Unable to create or refresh auth session for user %s", user.id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Database error: {exc.__class__.__name__}",
