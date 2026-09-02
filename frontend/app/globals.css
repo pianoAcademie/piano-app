@@ -11047,6 +11047,34 @@ button.danger:focus-visible {
   line-height: 1;
 }
 
+.client-session-location-chip i,
+.client-booking-location-legend i {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+}
+
+.client-session-location-chip i {
+  margin-right: 6px;
+}
+
+.client-booking-location-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin: 4px 0 10px;
+  color: #665c50;
+  font-size: 12px;
+}
+
+.client-booking-location-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
 .client-agenda-event .event-meta {
   font-size: 14px;
   line-height: 1.2;
@@ -11064,6 +11092,15 @@ button.danger:focus-visible {
 
 .client-session-card-compact .client-agenda-event .event-meta-secondary {
   display: none;
+}
+
+.client-session-card-compact .client-agenda-event .event-meta-professor {
+  display: block;
+  color: #5f5549;
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .client-agenda-event .occ-badge,

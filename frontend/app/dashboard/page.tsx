@@ -387,6 +387,10 @@ function normalizeStatus(value: string): string {
 }
 
 function sessionProfessorName(session: SessionOut): string {
+  const effectiveName = session.effective_teacher_display_name?.trim();
+  if (effectiveName) {
+    return effectiveName;
+  }
   if (!session.professor) {
     return "Sans professeur";
   }
@@ -3141,6 +3145,18 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     }))
     .filter((day) => day.sessions.length > 0);
   const agendaSessionCount = visibleAgendaDays.reduce((sum, day) => sum + day.sessions.length, 0);
+  const visibleBookingLocations = Array.from(
+    new Map(
+      visibleAgendaDays.flatMap((day) => day.sessions).map((session) => [session.location.id, session.location]),
+    ).values(),
+  ).sort((left, right) => left.name.localeCompare(right.name, language));
+  const bookingLocationColors = new Map(
+    Array.from(
+      new Map(siteScopedSessions.map((session) => [session.location.id, session.location])).values(),
+    )
+      .sort((left, right) => left.name.localeCompare(right.name, language))
+      .map((location, index) => [location.id, SESSION_ACCENT_COLORS[index % SESSION_ACCENT_COLORS.length]]),
+  );
   const advancedFiltersOpen =
     Boolean(selectedCourseType) ||
     Boolean(selectedCoachId) ||
@@ -4255,6 +4271,16 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     />
                   </label>
                 </form>
+                {visibleBookingLocations.length > 1 ? (
+                  <div className="client-booking-location-legend" aria-label="Couleurs des locaux">
+                    {visibleBookingLocations.map((location) => (
+                      <span key={location.id}>
+                        <i style={{ backgroundColor: bookingLocationColors.get(location.id) }} aria-hidden="true" />
+                        {location.name}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
                 <div className={`agenda-grid client-agenda-grid agenda-grid-${agendaView}`}>
                   {visibleAgendaDays.map((day) => {
                     return (
@@ -4269,7 +4295,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           {day.sessions.map((session) => {
                             const sessionState = planningStateForSession(session);
                             const compactAgendaCard = true;
-                            const accentColor = accentColorForId(session.course_type.id);
+                            const accentColor = bookingLocationColors.get(session.location.id) ?? accentColorForId(session.location.id);
                             const durationMinutes = Math.max(
                               1,
                               Math.round((new Date(session.end_at_utc).getTime() - new Date(session.start_at_utc).getTime()) / 60000),
@@ -4344,7 +4370,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                   <div className={`agenda-event client-agenda-event ${statusClass(session.status)}`}>
                                     <div className="client-event-topline">
                                       {sessionState.alreadyReserved ? <span className="client-session-owned-flag">{reservationFlagLabel}</span> : null}
-                                      <span className="client-session-location-chip">{session.location.name}</span>
+                                      <span className="client-session-location-chip" style={{ borderColor: accentColor }}>
+                                        <i style={{ backgroundColor: accentColor }} aria-hidden="true" />
+                                        {session.location.name}
+                                      </span>
                                     </div>
                                     <div className="row spread client-event-head">
                                       <h3 className="event-title">{session.title}</h3>
@@ -4356,7 +4385,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                       <span className="occ-badge">{session.booked_count}/{session.capacity_max}</span>
                                       <small className="event-meta">⏱ {durationMinutes} min</small>
                                     </div>
-                                    {session.professor ? <small className="event-meta event-meta-secondary">👨‍🏫 {sessionProfessorName(session)}</small> : null}
+                                    {session.professor || session.effective_teacher_display_name ? (
+                                      <small className="event-meta event-meta-secondary event-meta-professor">👨‍🏫 {sessionProfessorName(session)}</small>
+                                    ) : null}
                                     <small className="event-meta event-meta-secondary"><ClientNavigationIcon name="location" /> {session.location.name}</small>
                                     {!(sessionState.alreadyReserved && bookingSummaryLabel) ? (
                                       <small className="event-meta event-meta-secondary">{sessionState.contextLine}</small>
