@@ -2618,6 +2618,7 @@ export async function professorUpdateRepertoireAction(formData: FormData): Promi
     {
       method: "PATCH",
       body: JSON.stringify({
+        product_id: optionalField(formData, "product_id"),
         status: optionalField(formData, "status"),
         current_piece_id: optionalField(formData, "current_piece_id"),
         internal_note: optionalField(formData, "internal_note"),

@@ -54,6 +54,7 @@ import type {
   ProfessorSessionMessageOut,
   ProfessorInboxMessageOut,
   ProfessorSessionOut,
+  RepertoirePartitionOut,
   ClientNewsOut,
   UserOut,
 } from "../../lib/types";
@@ -615,6 +616,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
     localIntakesResult,
     selectedLocalIntakeResult,
     newsResult,
+    repertoireCatalogResult,
   ] = await Promise.all([
     backendRequest<ProfessorMeOut>("/api/v1/professors/me", {}, token),
     currentTab === "overview"
@@ -681,6 +683,9 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
         )
       : Promise.resolve({ ok: true as const, status: 200, data: null as ProfessorLocalIntakeDetailOut | null }),
     backendRequest<ClientNewsOut[]>("/api/v1/professors/me/news", {}, token),
+    needsPlanning
+      ? backendRequest<RepertoirePartitionOut[]>("/api/v1/repertoire/partitions", {}, token)
+      : emptyListResult<RepertoirePartitionOut>(),
   ]);
 
   if (!profileResult.ok) {
@@ -689,6 +694,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
 
   const profile = profileResult.data;
   const professorNews = newsResult.ok ? newsResult.data : [];
+  const repertoireCatalog = repertoireCatalogResult.ok ? repertoireCatalogResult.data : [];
   const fullName = `${profile.first_name} ${profile.last_name}`.trim();
   const canViewAllSchoolSessions = Boolean(
     profile.permissions.can_view_all_school_sessions
@@ -1869,6 +1875,15 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                                   </small>
                                   <strong>{assignment.title}</strong>
                                 </div>
+                                <label>
+                                  Degré / partition
+                                  <select name="product_id" defaultValue={assignment.product_id ?? ""} required>
+                                    {repertoireCatalog.map((partition) => (
+                                      <option key={partition.product_id} value={partition.product_id}>{partition.title}</option>
+                                    ))}
+                                  </select>
+                                </label>
+                                <small className="muted">Une correction est enregistrée dans l’historique, sans modifier le devis ni la facturation.</small>
                                 <label>
                                   État
                                   <select name="status" defaultValue={assignment.status}>

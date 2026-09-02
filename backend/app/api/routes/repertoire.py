@@ -388,4 +388,4 @@ def professor_update_assignment(
         or not _professor_can_edit(db, professor, student_id)
     ):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès refusé")
-    return _update_assignment(db, row, payload, actor)
+    return _update_assignment(db, row, payload, actor, allow_product_change=True)

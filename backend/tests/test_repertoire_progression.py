@@ -3,7 +3,8 @@ from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 from app.models.product_catalog import CatalogProduct
-from app.models.repertoire import SheetMusicPiece, StudentSheetMusic
+from app.models.repertoire import SheetMusicPiece, StudentSheetMusic, StudentSheetMusicEvent
+from app.api.routes.repertoire import AssignmentUpdate, _update_assignment
 from app.services.repertoire_progression import (
     ensure_previous_partition_for_reenrollment,
     partition_degree,
@@ -83,3 +84,52 @@ def test_completing_current_partition_starts_quote_partition_at_first_piece():
     assert next_assignment.current_piece_id == first_piece.id
     assert next_assignment.started_at == now
     assert next_assignment.delivered_at == now
+
+
+def test_professor_authorized_product_correction_is_audited_without_touching_quote():
+    db = MagicMock()
+    old_product_id = uuid4()
+    corrected_product = CatalogProduct(
+        id=uuid4(),
+        title="Partition degré 7",
+        active=True,
+        is_virtual=False,
+    )
+    assignment = StudentSheetMusic(
+        id=uuid4(),
+        student_id=uuid4(),
+        product_id=old_product_id,
+        title_snapshot="Partition degré 8",
+        status="IN_PROGRESS",
+        current_piece_id=uuid4(),
+        source_quote_line_id=uuid4(),
+    )
+    source_quote_line_id = assignment.source_quote_line_id
+    actor = MagicMock()
+    actor.id = uuid4()
+
+    with (
+        patch("app.api.routes.repertoire._partition_product", return_value=corrected_product),
+        patch("app.api.routes.repertoire._assignment_out", return_value=assignment),
+    ):
+        result = _update_assignment(
+            db,
+            assignment,
+            AssignmentUpdate(product_id=corrected_product.id),
+            actor,
+            allow_product_change=True,
+        )
+
+    assert result is assignment
+    assert assignment.product_id == corrected_product.id
+    assert assignment.title_snapshot == corrected_product.title
+    assert assignment.current_piece_id is None
+    assert assignment.source_quote_line_id == source_quote_line_id
+    events = [
+        call.args[0]
+        for call in db.add.call_args_list
+        if isinstance(call.args[0], StudentSheetMusicEvent)
+    ]
+    correction = next(event for event in events if event.event_type == "PARTITION_CORRECTED")
+    assert correction.actor_user_id == actor.id
+    assert correction.note == "Correction de partition : Partition degré 8 → Partition degré 7"
