@@ -24,6 +24,7 @@ from app.models.professor_contract import ProfessorContractLineMode
 from app.models.professor_access import ProfessorPermission
 from app.models.product_catalog import CatalogProduct, ProductCategory, ProductLocationStock
 from app.models.quote import Quote
+from app.models.repertoire import SheetMusicPiece, StudentSheetMusic
 from app.models.typeform_intake import TypeformIntake
 from app.models.user import User, UserRole
 from app.schemas.booking import AttendanceUpdateRequest, BookingOut
@@ -281,6 +282,56 @@ def _session_students(
             delta_seconds = abs((user.first_course_at - session_obj.start_at_utc).total_seconds())
             is_first_course = delta_seconds < 60
 
+        assignments = db.scalars(
+            select(StudentSheetMusic)
+            .where(StudentSheetMusic.student_id == user.id, StudentSheetMusic.status != "COMPLETED")
+            .order_by(StudentSheetMusic.created_at.desc())
+        ).all()
+        product_ids = [row.product_id for row in assignments if row.product_id]
+        piece_rows = (
+            db.scalars(
+                select(SheetMusicPiece)
+                .where(
+                    SheetMusicPiece.product_id.in_(product_ids),
+                    SheetMusicPiece.active.is_(True),
+                )
+                .order_by(SheetMusicPiece.product_id, SheetMusicPiece.position)
+            ).all()
+            if product_ids
+            else []
+        )
+        pieces_by_id = {piece.id: piece for piece in piece_rows}
+        repertoire = [
+            {
+                "id": str(assignment.id),
+                "product_id": str(assignment.product_id) if assignment.product_id else None,
+                "title": assignment.title_snapshot,
+                "status": assignment.status,
+                "current_piece_id": str(assignment.current_piece_id) if assignment.current_piece_id else None,
+                "current_piece_title": (
+                    pieces_by_id[assignment.current_piece_id].title
+                    if assignment.current_piece_id in pieces_by_id
+                    else None
+                ),
+                "current_piece_video_url": (
+                    pieces_by_id[assignment.current_piece_id].video_url
+                    if assignment.current_piece_id in pieces_by_id
+                    else None
+                ),
+                "internal_note": assignment.internal_note,
+                "pieces": [
+                    {
+                        "id": str(piece.id),
+                        "title": piece.title,
+                        "video_url": piece.video_url,
+                    }
+                    for piece in piece_rows
+                    if piece.product_id == assignment.product_id
+                ],
+            }
+            for assignment in assignments
+        ]
+
         out.append(
             ProfessorSessionStudentOut(
                 booking_id=booking.id,
@@ -292,6 +343,7 @@ def _session_students(
                 is_trial_course=bool(booking.is_trial_course),
                 is_first_course=is_first_course,
                 internal_note=_professor_visible_booking_note(booking.internal_note),
+                repertoire=repertoire,
             )
         )
     return out

@@ -8,6 +8,7 @@ import {
   professorMarkSessionAbsentAction,
   professorSendSessionMessageAction,
   professorUpdateAttendanceAction,
+  professorUpdateRepertoireAction,
   professorUpdateBookingInternalNoteAction,
   professorUpdateSessionInternalNoteAction,
 } from "../../lib/actions";
@@ -1832,6 +1833,63 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                               <button type="submit" className="ghost">{t("teacher.save")}</button>
                             </form>
                           </details>
+                        ) : null}
+
+                        {canTakeAttendanceForSelectedSession && student.repertoire.length > 0 ? (
+                          <details className="teacher-student-note" open={student.is_first_course}>
+                            <summary>
+                              <span>Progression musicale</span>
+                              <span className="status-pill status-scheduled">{student.repertoire[0].title}</span>
+                            </summary>
+                            {student.repertoire.map((assignment) => (
+                              <form key={assignment.id} action={professorUpdateRepertoireAction} className="teacher-student-note-form">
+                                <input type="hidden" name="student_id" value={student.user_id} />
+                                <input type="hidden" name="assignment_id" value={assignment.id} />
+                                <input
+                                  type="hidden"
+                                  name="return_to"
+                                  value={buildProfHref({
+                                    tab: "planning",
+                                    agendaView,
+                                    agendaDate,
+                                    sessionId: selectedSession.id,
+                                    attendanceFilter,
+                                    planningScope,
+                                  })}
+                                />
+                                <strong>{assignment.title}</strong>
+                                <label>
+                                  État
+                                  <select name="status" defaultValue={assignment.status}>
+                                    <option value="STANDBY">En attente</option>
+                                    <option value="TO_DELIVER">À remettre</option>
+                                    <option value="DELIVERED">Remise</option>
+                                    <option value="IN_PROGRESS">En cours</option>
+                                    <option value="COMPLETED">Terminée</option>
+                                  </select>
+                                </label>
+                                <label>
+                                  Morceau travaillé
+                                  <select name="current_piece_id" defaultValue={assignment.current_piece_id ?? ""}>
+                                    <option value="">À définir</option>
+                                    {assignment.pieces.map((piece) => (
+                                      <option key={piece.id} value={piece.id}>{piece.title}</option>
+                                    ))}
+                                  </select>
+                                </label>
+                                {assignment.current_piece_video_url ? (
+                                  <a href={assignment.current_piece_video_url} target="_blank" rel="noreferrer">Voir la vidéo ↗</a>
+                                ) : null}
+                                <label>
+                                  Note pédagogique
+                                  <textarea name="internal_note" rows={2} defaultValue={assignment.internal_note ?? ""} />
+                                </label>
+                                <button type="submit" className="ghost">Enregistrer la progression</button>
+                              </form>
+                            ))}
+                          </details>
+                        ) : student.is_first_course && canTakeAttendanceForSelectedSession ? (
+                          <p className="muted">Aucune partition enregistrée pour cet élève.</p>
                         ) : null}
                       </article>
                     ))}

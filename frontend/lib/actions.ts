@@ -2602,6 +2602,117 @@ export async function professorUpdateAttendanceAction(formData: FormData): Promi
   redirect(appendQueryMessage(returnTo, "ok", t("teacher.action.attendance_updated")));
 }
 
+export async function professorUpdateRepertoireAction(formData: FormData): Promise<void> {
+  const token = currentPortalToken();
+  if (!token) {
+    redirect("/login?portal=prof&error_code=session_expired");
+  }
+  const studentId = String(formData.get("student_id") ?? "").trim();
+  const assignmentId = String(formData.get("assignment_id") ?? "").trim();
+  const returnTo = safeProfessorReturnPath(formData, "/prof?tab=planning");
+  if (!studentId || !assignmentId) {
+    redirect(appendQueryMessage(returnTo, "error", "Suivi de partition invalide."));
+  }
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/professors/me/students/${studentId}/repertoire/${assignmentId}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        status: optionalField(formData, "status"),
+        current_piece_id: optionalField(formData, "current_piece_id"),
+        internal_note: optionalField(formData, "internal_note"),
+      }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/prof");
+  redirect(appendQueryMessage(returnTo, "ok", "Progression musicale enregistrée."));
+}
+
+export async function adminAddRepertoireAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/admin/login?error_code=session_expired");
+  }
+  const studentId = String(formData.get("student_id") ?? "").trim();
+  const returnTo = safeAdminReturnPath(formData, `/admin/clients/${studentId}`);
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/admin/clients/${studentId}/repertoire`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        product_id: String(formData.get("product_id") ?? ""),
+        status: String(formData.get("status") ?? "STANDBY"),
+      }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath(`/admin/clients/${studentId}`);
+  redirect(appendQueryMessage(returnTo, "ok", "Partition ajoutée au suivi."));
+}
+
+export async function adminUpdateRepertoireAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/admin/login?error_code=session_expired");
+  }
+  const studentId = String(formData.get("student_id") ?? "").trim();
+  const assignmentId = String(formData.get("assignment_id") ?? "").trim();
+  const returnTo = safeAdminReturnPath(formData, `/admin/clients/${studentId}`);
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/admin/clients/${studentId}/repertoire/${assignmentId}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        status: String(formData.get("status") ?? ""),
+        current_piece_id: optionalField(formData, "current_piece_id"),
+        internal_note: optionalField(formData, "internal_note"),
+      }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath(`/admin/clients/${studentId}`);
+  redirect(appendQueryMessage(returnTo, "ok", "Progression musicale enregistrée."));
+}
+
+export async function adminSavePartitionPiecesAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/admin/login?error_code=session_expired");
+  }
+  const productId = String(formData.get("product_id") ?? "").trim();
+  const returnTo = safeAdminReturnPath(formData, "/admin/partitions");
+  const titles = formData.getAll("piece_title").map(String);
+  const ids = formData.getAll("piece_id").map(String);
+  const videos = formData.getAll("piece_video_url").map(String);
+  const pieces = titles
+    .map((title, index) => ({
+      id: ids[index] || null,
+      title: title.trim(),
+      video_url: videos[index]?.trim() || null,
+    }))
+    .filter((item) => item.title);
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/admin/repertoire/partitions/${productId}/pieces`,
+    { method: "PUT", body: JSON.stringify(pieces) },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/admin/partitions");
+  redirect(appendQueryMessage(returnTo, "ok", "Morceaux enregistrés."));
+}
+
 export async function professorConfirmLocalIntakeAction(formData: FormData): Promise<void> {
   const token = currentPortalToken();
   const intakeId = String(formData.get("intake_id") ?? "").trim();

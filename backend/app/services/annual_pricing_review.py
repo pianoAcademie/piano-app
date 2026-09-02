@@ -66,6 +66,71 @@ def quote_fingerprint(quote, lines, *, calendar_snapshot=None):
         } for l in sorted(lines, key=lambda row: str(row.id))])
 
 
+SOLFEGE_SELECTION_FIELDS = {
+    "weekday",
+    "weekday_label",
+    "start_time",
+    "end_time",
+    "duration_minutes",
+    "location_id",
+    "location_label",
+    "modality",
+    "selection_pending",
+    "pending_slot_options",
+}
+
+
+def pricing_review_calendar(quote, lines):
+    """Ignore only the later scheduling choice for a free solfege line."""
+    calendar = deepcopy(quote.calendar_snapshot or {})
+    free_solfege_activity_ids = {
+        str(line.activity_id)
+        for line in lines
+        if line.activity_id
+        and line.line_type == "item"
+        and line.line_category == "service"
+        and Decimal(str(line.amount_ttc or 0)) == 0
+        and "solfege" in normalized(line.title)
+    }
+    if not free_solfege_activity_ids:
+        return calendar
+
+    normalized_blocks: list[object] = []
+    for raw_block in calendar.get("blocks", []):
+        if not isinstance(raw_block, dict):
+            normalized_blocks.append(raw_block)
+            continue
+        block = dict(raw_block)
+        if str(block.get("activity_id") or "") in free_solfege_activity_ids:
+            for field in SOLFEGE_SELECTION_FIELDS:
+                block.pop(field, None)
+        normalized_blocks.append(block)
+    calendar["blocks"] = normalized_blocks
+
+    solfege = calendar.get("solfege")
+    if isinstance(solfege, dict):
+        normalized_solfege = dict(solfege)
+        normalized_solfege.pop("selected_slot", None)
+        calendar["solfege"] = normalized_solfege
+    return calendar
+
+
+def pricing_review_fingerprint(quote, lines):
+    return quote_fingerprint(quote, lines, calendar_snapshot=pricing_review_calendar(quote, lines))
+
+
+def ensure_pricing_review_fingerprint(quote, lines) -> bool:
+    """Backfill the selection-insensitive fingerprint before slot selection."""
+    meta = dict(quote.meta or {})
+    review = dict(meta.get(KEY) or {})
+    if not review or review.get("pricing_fingerprint"):
+        return False
+    review["pricing_fingerprint"] = pricing_review_fingerprint(quote, lines)
+    meta[KEY] = review
+    quote.meta = meta
+    return True
+
+
 def is_annual_quote(db, quote):
     quote_type = db.get(QuoteType, quote.quote_type_id) if quote.quote_type_id else None
     if quote_type and quote_type.formula_id:
@@ -113,7 +178,7 @@ def reviewed_lines(db, quote, lines):
     return result
 
 
-def review_fingerprint_matches(quote, lines, expected_fingerprint):
+def review_fingerprint_matches(quote, lines, expected_fingerprint, expected_pricing_fingerprint=None):
     """Accept only harmless metadata materialized after an annual quote approval.
 
     The approval fingerprint remains authoritative.  The compatibility path only
@@ -123,6 +188,8 @@ def review_fingerprint_matches(quote, lines, expected_fingerprint):
     therefore remain protected.
     """
     if expected_fingerprint == quote_fingerprint(quote, lines):
+        return True
+    if expected_pricing_fingerprint and expected_pricing_fingerprint == pricing_review_fingerprint(quote, lines):
         return True
     if quote.status != "approved" or not expected_fingerprint:
         return False
@@ -178,7 +245,12 @@ def check_review_current(db, quote, lines):
     review = (quote.meta or {}).get(KEY)
     if not review:
         return
-    if not review_fingerprint_matches(quote, lines, review.get("fingerprint")):
+    if not review_fingerprint_matches(
+        quote,
+        lines,
+        review.get("fingerprint"),
+        review.get("pricing_fingerprint"),
+    ):
         fail("Le devis a changé depuis la vérification tarifaire. Recalculez les remises dans Lignes facturées avant envoi ou intégration.")
     # Sent documents keep their decision even if the family graph later changes.
     if quote.sent_at:
@@ -408,6 +480,7 @@ def apply_review(db, quote, lines, request, actor):
     updated_lines = db.scalars(select(QuoteLine).where(QuoteLine.quote_id == quote.id).order_by(QuoteLine.sort_order, QuoteLine.created_at)).all()
     review = {**request.model_dump(mode="json", exclude={"expected_version"}), **preview,
               "actor_id": str(actor.id), "actor_name": evidence["actor_name"], "verified_at": evidence["verified_at"],
-              "fingerprint": quote_fingerprint(quote, updated_lines)}
+              "fingerprint": quote_fingerprint(quote, updated_lines),
+              "pricing_fingerprint": pricing_review_fingerprint(quote, updated_lines)}
     quote.meta = {**(quote.meta or {}), KEY: review}
     return review

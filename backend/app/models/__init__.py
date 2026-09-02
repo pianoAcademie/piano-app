@@ -142,6 +142,7 @@ from app.models.product_catalog import (
     ProductTransferStatus,
 )
 from app.models.referral import ReferralReward
+from app.models.repertoire import SheetMusicPiece, StudentSheetMusic, StudentSheetMusicEvent
 from app.models.reporting import GeneratedReport
 from app.models.quote import (
     CgvVersion,

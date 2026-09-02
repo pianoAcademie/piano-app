@@ -20,7 +20,11 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_admin_or_permissions, require_roles
 from app.core.config import settings
-from app.services.annual_pricing_review import KEY as ANNUAL_REVIEW_KEY, check_review_current
+from app.services.annual_pricing_review import (
+    KEY as ANNUAL_REVIEW_KEY,
+    check_review_current,
+    ensure_pricing_review_fingerprint,
+)
 from app.services.annual_pricing_students import review_client_id, review_prospect_for_transformation, birth_date as annual_student_birth_date
 from app.services.annual_contracts import bind_contract_course, decorate_contract_price
 from app.api.routes.admin_clients import (
@@ -78,6 +82,7 @@ from app.models.quote import (
     TermsTemplateVersion,
 )
 from app.models.referral import ReferralReward
+from app.models.repertoire import StudentSheetMusic, StudentSheetMusicEvent
 from app.models.typeform_intake import TypeformIntake
 from app.models.user import ClientKind, ClientStatus, User, UserRole
 from app.services.i18n import normalize_language
@@ -11206,6 +11211,7 @@ def _execute_quote_followup_transformation(
     transformation_payload = _quote_transformation_payload(followup)
     if not transformation_payload:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Aucun payload de transformation a executer")
+    now = _utcnow()
 
     user_snapshots: dict[str, dict[str, object]] = {}
     prospect_snapshots: dict[str, dict[str, object]] = {}
@@ -11217,6 +11223,7 @@ def _execute_quote_followup_transformation(
     created_invoice_note_ids: list[UUID] = []
     created_annual_invoice_note_ids: list[UUID] = []
     created_makeup_pass_purchase_ids: list[UUID] = []
+    created_repertoire_ids: list[UUID] = []
     quote_snapshot = _snapshot_quote_state(quote)
     followup_snapshot = _snapshot_quote_followup(followup)
 
@@ -11230,6 +11237,55 @@ def _execute_quote_followup_transformation(
         created_user_ids=created_user_ids,
         created_family_link_ids=created_family_link_ids,
     )
+    quote_product_lines = db.scalars(
+        select(QuoteLine).where(QuoteLine.quote_id == quote.id, QuoteLine.product_id.is_not(None))
+    ).all()
+    product_ids = [line.product_id for line in quote_product_lines if line.product_id]
+    products = {
+        row.id: row
+        for row in db.scalars(select(CatalogProduct).where(CatalogProduct.id.in_(product_ids))).all()
+    } if product_ids else {}
+    category_ids = [row.category_id for row in products.values() if row.category_id]
+    categories = {
+        row.id: row
+        for row in db.scalars(select(ProductCategory).where(ProductCategory.id.in_(category_ids))).all()
+    } if category_ids else {}
+    intake_reenrollment = _quote_intake_is_reenrollment(_typeform_quote_normalized_payload(quote))
+    starts_partition_now = (
+        not intake_reenrollment
+        if intake_reenrollment is not None
+        else student.id in created_user_ids
+    )
+    for line in quote_product_lines:
+        product = products.get(line.product_id)
+        category = categories.get(product.category_id) if product and product.category_id else None
+        partition_text = f"{line.title} {product.title if product else ''} {category.name if category else ''}".lower()
+        if product is None or "partition" not in partition_text:
+            continue
+        existing = db.scalar(
+            select(StudentSheetMusic.id).where(StudentSheetMusic.source_quote_line_id == line.id)
+        )
+        if existing:
+            continue
+        assignment = StudentSheetMusic(
+            student_id=student.id,
+            product_id=product.id,
+            title_snapshot=product.title,
+            status="IN_PROGRESS" if starts_partition_now else "STANDBY",
+            source_quote_line_id=line.id,
+            started_at=now if starts_partition_now else None,
+        )
+        db.add(assignment)
+        db.flush()
+        created_repertoire_ids.append(assignment.id)
+        db.add(
+            StudentSheetMusicEvent(
+                assignment_id=assignment.id,
+                actor_user_id=current_user.id,
+                event_type="CREATED_FROM_QUOTE",
+                new_status=assignment.status,
+            )
+        )
     subscription, plan = _resolve_followup_subscription(
         db,
         student=student,
@@ -11316,7 +11372,6 @@ def _execute_quote_followup_transformation(
             return None
         return _parse_uuid_value(key.split(":", 1)[0])
 
-    now = _utcnow()
     for activity_id_str, session_id_raw in assigned_session_by_activity.items():
         schedule_key = str(activity_id_str or "").strip()
         activity_id = _activity_id_from_schedule_key(schedule_key)
@@ -11638,6 +11693,7 @@ def _execute_quote_followup_transformation(
         "annual_invoice_period_end": QUOTE_ANNUAL_INVOICE_PERIOD_END.isoformat(),
         "annual_invoice_skipped_reason": annual_invoice_skipped_reason,
         "created_makeup_pass_purchase_ids": _serialize_uuid_list(created_makeup_pass_purchase_ids),
+        "created_repertoire_ids": _serialize_uuid_list(created_repertoire_ids),
         "monthly_card_fixed_fee_date": monthly_card_fixed_fee_date.isoformat() if monthly_card_fixed_fee_date else None,
         "monthly_card_auto_invoice_rule_id": str(monthly_card_auto_rule_id) if monthly_card_auto_rule_id is not None else None,
         "user_snapshots": _serialize_snapshot_map(user_snapshots),
@@ -11687,6 +11743,7 @@ def _rollback_quote_followup_transformation(
     created_makeup_pass_purchase_ids = [
         _parse_uuid_value(item) for item in _json_list(execution.get("created_makeup_pass_purchase_ids"))
     ]
+    created_repertoire_ids = [_parse_uuid_value(item) for item in _json_list(execution.get("created_repertoire_ids"))]
 
     subscription_map: dict[UUID, tuple[ClientPlanSubscription, Plan | None]] = {}
     reviewed_course_keys = {d["course_key"] for d in (quote.meta or {}).get(ANNUAL_REVIEW_KEY, {}).get("decisions", [])}
@@ -11740,6 +11797,13 @@ def _rollback_quote_followup_transformation(
         purchase = db.scalar(select(MakeupPassPurchase).where(MakeupPassPurchase.id == purchase_id).with_for_update())
         if purchase is not None:
             db.delete(purchase)
+
+    for assignment_id in created_repertoire_ids:
+        if assignment_id is None:
+            continue
+        assignment = db.get(StudentSheetMusic, assignment_id)
+        if assignment is not None:
+            db.delete(assignment)
 
     for subscription_id in created_subscription_ids:
         if subscription_id is None:
@@ -11927,6 +11991,8 @@ def public_approve_quote(
     if solfege_selection is not None and solfege_selection.required and not resolved_selected_slot:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="A solfege slot must be selected before approval")
 
+    lines = _load_quote_lines(db, quote.id)
+    ensure_pricing_review_fingerprint(quote, lines)
     now = _utcnow()
     cancelled_variants = _cancel_unselected_quote_variants(
         db,
@@ -11965,7 +12031,6 @@ def public_approve_quote(
     followup.updated_at = now
     db.add(followup)
 
-    lines = _load_quote_lines(db, quote.id)
     snapshot = _freeze_quote_document_snapshot(db, quote=quote, lines=lines, state="frozen")
     db.add(
         QuoteEvent(
@@ -12326,6 +12391,7 @@ def select_quote_followup_solfege_slot(
     row.updated_at = _utcnow()
 
     quote = _load_quote(db, row.quote_id, lock=True)
+    ensure_pricing_review_fingerprint(quote, _load_quote_lines(db, quote.id))
     quote.selected_solfege_slot = selected_slot
     slot_level = str(selected_slot.get("level_code") or "").strip()
     if slot_level:

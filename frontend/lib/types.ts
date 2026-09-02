@@ -1550,6 +1550,45 @@ export type ProfessorSessionStudentOut = {
   is_trial_course: boolean;
   is_first_course: boolean;
   internal_note: string | null;
+  repertoire: Array<{
+    id: string;
+    product_id: string | null;
+    title: string;
+    status: "STANDBY" | "TO_DELIVER" | "DELIVERED" | "IN_PROGRESS" | "COMPLETED" | string;
+    current_piece_id: string | null;
+    current_piece_title: string | null;
+    current_piece_video_url: string | null;
+    internal_note: string | null;
+    pieces: Array<{ id: string; title: string; video_url: string | null }>;
+  }>;
+};
+
+export type RepertoirePieceOut = {
+  id: string;
+  title: string;
+  position: number;
+  video_url: string | null;
+};
+
+export type RepertoirePartitionOut = {
+  product_id: string;
+  title: string;
+  pieces: RepertoirePieceOut[];
+};
+
+export type StudentRepertoireOut = {
+  id: string;
+  student_id: string;
+  product_id: string | null;
+  title: string;
+  status: string;
+  current_piece_id: string | null;
+  current_piece_title: string | null;
+  current_piece_video_url: string | null;
+  internal_note: string | null;
+  source: string;
+  pieces: RepertoirePieceOut[];
+  updated_at: string;
 };
 
 export type ProfessorSessionOut = {

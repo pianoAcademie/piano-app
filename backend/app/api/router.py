@@ -38,6 +38,7 @@ from app.api.routes import (
     professors,
     quotes,
     reports,
+    repertoire,
     teacher_invoicing,
     typeform_intakes,
 )
@@ -66,6 +67,7 @@ api_router.include_router(admin_teacher_invoices.router, tags=["admin-teacher-in
 api_router.include_router(admin_triggers.router, tags=["admin-triggers"])
 api_router.include_router(client_news.router, tags=["client-news"])
 api_router.include_router(reports.router, tags=["admin-reports"])
+api_router.include_router(repertoire.router, tags=["repertoire"])
 api_router.include_router(catalogue.router, tags=["catalogue"])
 api_router.include_router(plans.router, tags=["plans"])
 api_router.include_router(bookings.router, tags=["bookings"])

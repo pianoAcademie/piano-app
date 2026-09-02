@@ -53,6 +53,8 @@ import {
   updateAdminClientManualCreditAction,
   updateAdminClientAction,
   updateAdminClientGroupsAction,
+  adminAddRepertoireAction,
+  adminUpdateRepertoireAction,
 } from "../../../../lib/actions";
 import { backendRequest } from "../../../../lib/backend";
 import { regularScheduleSummaries } from "../../../../lib/client-schedule-summary";
@@ -103,6 +105,8 @@ import type {
   MakeupStudentSummaryOut,
   LocationOut,
   UserOut,
+  StudentRepertoireOut,
+  RepertoirePartitionOut,
 } from "../../../../lib/types";
 import { localeForUiLanguage, normalizeUiLanguage, translateBackendMessage, type UiLanguage, uiText } from "../../../../lib/ui-i18n";
 
@@ -1972,6 +1976,8 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     quoteChangesResult,
     approvedQuotesResult,
     makeupSummaryResult,
+    repertoireResult,
+    repertoireCatalogResult,
   ] = await Promise.all([
     backendRequest<UserOut>("/api/v1/auth/me", {}, token),
     needsFinancialHistory
@@ -2045,6 +2051,12 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     isSummaryTab
       ? backendRequest<MakeupStudentSummaryOut[]>(`/api/v1/admin/clients/${params.clientId}/makeup-summary`, {}, token)
       : immediateBackendResult<MakeupStudentSummaryOut[]>([]),
+    isSummaryTab
+      ? backendRequest<StudentRepertoireOut[]>(`/api/v1/admin/clients/${params.clientId}/repertoire`, {}, token)
+      : immediateBackendResult<StudentRepertoireOut[]>([]),
+    isSummaryTab
+      ? backendRequest<RepertoirePartitionOut[]>("/api/v1/repertoire/partitions", {}, token)
+      : immediateBackendResult<RepertoirePartitionOut[]>([]),
   ]);
 
   const language = meResult.ok ? normalizeUiLanguage(meResult.data.preferred_language) : "fr";
@@ -2152,6 +2164,18 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     : (() => {
         errors.push(`makeup-summary: ${makeupSummaryResult.message}`);
         return [] as MakeupStudentSummaryOut[];
+      })();
+  const repertoire = repertoireResult.ok
+    ? repertoireResult.data
+    : (() => {
+        errors.push(`repertoire: ${repertoireResult.message}`);
+        return [] as StudentRepertoireOut[];
+      })();
+  const repertoireCatalog = repertoireCatalogResult.ok
+    ? repertoireCatalogResult.data
+    : (() => {
+        errors.push(`repertoire-catalog: ${repertoireCatalogResult.message}`);
+        return [] as RepertoirePartitionOut[];
       })();
 
   const messages = messagesResult.ok
@@ -3536,6 +3560,79 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 })}
               </div>
             )}
+          </article>
+
+          <article className="card span-2">
+            <div className="row spread">
+              <div>
+                <h3>Progression musicale</h3>
+                <p className="muted">Partition actuelle, morceau travaillé et prochaine partition à remettre.</p>
+              </div>
+              <Link className="mode-link" href="/admin/partitions">Gérer les morceaux</Link>
+            </div>
+            {repertoire.length === 0 ? (
+              <p className="muted top-gap-sm">Aucune partition suivie pour cet élève.</p>
+            ) : (
+              <div className="grid cols-2 top-gap-sm">
+                {repertoire.map((assignment) => (
+                  <form key={assignment.id} action={adminUpdateRepertoireAction} className="card compact-card">
+                    <input type="hidden" name="student_id" value={client.id} />
+                    <input type="hidden" name="assignment_id" value={assignment.id} />
+                    <input type="hidden" name="return_to" value={`/admin/clients/${client.id}?tab=fiche`} />
+                    <div className="row spread">
+                      <strong>{assignment.title}</strong>
+                      <span className="badge">{assignment.source === "DEVIS" ? "Issue du devis" : "Ajout manuel"}</span>
+                    </div>
+                    <label>
+                      État
+                      <select name="status" defaultValue={assignment.status}>
+                        <option value="STANDBY">En attente</option>
+                        <option value="TO_DELIVER">À remettre</option>
+                        <option value="DELIVERED">Remise</option>
+                        <option value="IN_PROGRESS">En cours</option>
+                        <option value="COMPLETED">Terminée</option>
+                      </select>
+                    </label>
+                    <label>
+                      Morceau travaillé
+                      <select name="current_piece_id" defaultValue={assignment.current_piece_id ?? ""}>
+                        <option value="">À définir</option>
+                        {assignment.pieces.map((piece) => (
+                          <option key={piece.id} value={piece.id}>{piece.title}</option>
+                        ))}
+                      </select>
+                    </label>
+                    {assignment.current_piece_video_url ? (
+                      <a href={assignment.current_piece_video_url} target="_blank" rel="noreferrer">Voir la vidéo du morceau ↗</a>
+                    ) : null}
+                    <label>
+                      Note pédagogique
+                      <textarea name="internal_note" rows={2} defaultValue={assignment.internal_note ?? ""} />
+                    </label>
+                    <button type="submit" className="ghost">Enregistrer</button>
+                  </form>
+                ))}
+              </div>
+            )}
+            <details className="top-gap-sm">
+              <summary>Ajouter une partition au suivi</summary>
+              <form action={adminAddRepertoireAction} className="row top-gap-sm">
+                <input type="hidden" name="student_id" value={client.id} />
+                <input type="hidden" name="return_to" value={`/admin/clients/${client.id}?tab=fiche`} />
+                <select name="product_id" required>
+                  <option value="">Choisir une partition</option>
+                  {repertoireCatalog.map((partition) => (
+                    <option key={partition.product_id} value={partition.product_id}>{partition.title}</option>
+                  ))}
+                </select>
+                <select name="status" defaultValue="STANDBY">
+                  <option value="STANDBY">En attente</option>
+                  <option value="IN_PROGRESS">En cours</option>
+                  <option value="TO_DELIVER">À remettre</option>
+                </select>
+                <button type="submit">Ajouter</button>
+              </form>
+            </details>
           </article>
 
           <article className="card span-2">

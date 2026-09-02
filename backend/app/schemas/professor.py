@@ -41,6 +41,7 @@ class ProfessorSessionStudentOut(BaseModel):
     is_trial_course: bool
     is_first_course: bool
     internal_note: str | None = None
+    repertoire: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ProfessorSessionOut(BaseModel):
