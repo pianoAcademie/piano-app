@@ -15,7 +15,7 @@ import {
 } from "../../../../lib/actions";
 import { getAdminToken } from "../../../../lib/auth-cookies";
 import { backendRequest } from "../../../../lib/backend";
-import { hasAdminPermission } from "../../../../lib/admin-access";
+import { hasAdminPermission, MANAGER_ADMIN_PERMISSION_KEYS } from "../../../../lib/admin-access";
 import {
   buildAgendaRange,
   formatAgendaDayLabel,
@@ -369,6 +369,10 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
     !Boolean(permissionState.can_edit_planning) &&
     !Boolean(permissionState.can_view_clients) &&
     !Boolean(permissionState.can_access_collaborators);
+  const canOpenTeacherPortal = professor.role === "prof" && professor.is_coach;
+  const canOpenManagerPortal =
+    professor.role === "prof" &&
+    MANAGER_ADMIN_PERMISSION_KEYS.some((permission) => Boolean(professor.permissions[permission]));
   const rates = ratesResult.ok ? ratesResult.data : [];
   const courseTypes = courseTypesResult.ok ? courseTypesResult.data : [];
   const sessions = sessionsResult.ok ? sessionsResult.data : [];
@@ -521,17 +525,19 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
           <Link className="reset-link" href="/admin/professors">
             {t("admin.professor_detail.back_list")}
           </Link>
-          {canManageCollaborators ? (
+          {canManageCollaborators && (canOpenTeacherPortal || canOpenManagerPortal) ? (
             <div className="row teacher-actions-wrap">
-              <form action={adminViewTeacherPortalAction} target="_blank" rel="noopener noreferrer">
-                <input type="hidden" name="teacher_id" value={professor.id} />
-                <input type="hidden" name="view_mode" value="teacher" />
-                <input type="hidden" name="return_to" value={`/admin/professors/${professor.id}?tab=${currentTab}`} />
-                <button type="submit" className="mode-link">
-                  {t("admin.professor_detail.view_teacher_portal")}
-                </button>
-              </form>
-              {isManagerProfile ? (
+              {canOpenTeacherPortal ? (
+                <form action={adminViewTeacherPortalAction} target="_blank" rel="noopener noreferrer">
+                  <input type="hidden" name="teacher_id" value={professor.id} />
+                  <input type="hidden" name="view_mode" value="teacher" />
+                  <input type="hidden" name="return_to" value={`/admin/professors/${professor.id}?tab=${currentTab}`} />
+                  <button type="submit" className="mode-link">
+                    {t("admin.professor_detail.view_teacher_portal")}
+                  </button>
+                </form>
+              ) : null}
+              {canOpenManagerPortal ? (
                 <form action={adminViewTeacherPortalAction} target="_blank" rel="noopener noreferrer">
                   <input type="hidden" name="teacher_id" value={professor.id} />
                   <input type="hidden" name="view_mode" value="manager" />
