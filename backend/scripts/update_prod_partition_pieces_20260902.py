@@ -42,6 +42,22 @@ TARGET_PIECES: dict[int, tuple[str, ...]] = {
         "Valse des fleurs — Tchaïkovski",
         "Marche turque — Beethoven",
     ),
+    4: (
+        "Yankee Doodle",
+        "Au clair de la lune",
+        "Row, Row, Row Your Boat",
+        "Lavender’s Blue",
+        "We Wish You a Merry Christmas",
+        "Joyeux anniversaire",
+    ),
+    5: (
+        "Lac des Cygnes — P. I. Tchaïkovski",
+        "Symphonie n° 9, Hymne à la Joie — L. van Beethoven",
+        "Carnaval des Animaux – Le Lion — C. Saint-Saëns",
+        "Alouette, Gentille Alouette — Chanson française",
+        "Skip To My Lou — Chanson américaine",
+        "Head, Shoulders, Knees and Feet — Chanson anglaise",
+    ),
     7: (
         "Le Petit Champ — L. Knipper",
         "Poupée française — W. Gillock",
@@ -58,6 +74,14 @@ TARGET_PIECES: dict[int, tuple[str, ...]] = {
         "Étude op. 25 n° 1 — F. Chopin",
         "Marche turque — W. A. Mozart",
     ),
+    9: (
+        "Shallow",
+        "Pirates des Caraïbes",
+        "Château dans le ciel",
+        "Passacaglia",
+        "River Flows in You",
+        "Greensleeves",
+    ),
     10: (
         "7 Years — L. Graham",
         "Mariage d’amour — P. de Senneville",
@@ -72,10 +96,23 @@ EXPECTED_PRODUCT_TITLES = {
     1: "partition degre 1",
     2: "partition degre 2 mon 1er piano",
     3: "partition degre 3",
+    4: "partition degre 4 bami",
+    5: "partition degre 5",
     7: "partition degre 7",
     8: "partition degre 8",
+    9: "partition degre 9",
     10: "partition degre 10",
 }
+
+ADOS_PIECES = (
+    "I Will Survive — Gloria Gaynor",
+    "What’s Up? — 4 Non Blondes",
+    "Another Love — Tom Odell",
+    "Don’t Stop Me Now — Queen",
+    "Someone You Loved — Lewis Capaldi",
+    "The Winner Takes It All — ABBA",
+)
+ADOS_EXPECTED_PRODUCT_TITLE = "partitions ados"
 
 
 def _normalize(value: str | None) -> str:
@@ -86,7 +123,7 @@ def _normalize(value: str | None) -> str:
 
 @dataclass(frozen=True)
 class ProductTarget:
-    degree: int
+    label: str
     product_id: UUID
     product_title: str
     pieces: tuple[str, ...]
@@ -122,13 +159,28 @@ def _resolve_targets(db) -> list[ProductTarget]:
         match = matches[0]
         resolved.append(
             ProductTarget(
-                degree=degree,
+                label=f"degree_{degree}",
                 product_id=match["id"],
                 product_title=match["title"],
                 pieces=TARGET_PIECES[degree],
             )
         )
-    return sorted(resolved, key=lambda item: item.degree)
+    ados_matches = [row for row in rows if _normalize(row["title"]) == ADOS_EXPECTED_PRODUCT_TITLE]
+    if len(ados_matches) != 1:
+        raise SystemExit(
+            f"[{SCRIPT_PREFIX}] product_resolution_failed partition=ados|"
+            f"matches={len(ados_matches)}|possible={[row['title'] for row in rows if 'ado' in _normalize(row['title'])]}"
+        )
+    ados_match = ados_matches[0]
+    resolved.append(
+        ProductTarget(
+            label="ados",
+            product_id=ados_match["id"],
+            product_title=ados_match["title"],
+            pieces=ADOS_PIECES,
+        )
+    )
+    return resolved
 
 
 def _current_pieces(db, product_id: UUID, *, lock: bool = False):
@@ -151,7 +203,7 @@ def _print_plan(db, targets: list[ProductTarget]) -> None:
     for target in targets:
         current = _current_pieces(db, target.product_id)
         print(
-            f"[{SCRIPT_PREFIX}] partition degree={target.degree}|product_id={target.product_id}|"
+            f"[{SCRIPT_PREFIX}] partition={target.label}|product_id={target.product_id}|"
             f"title={target.product_title}|current_count={len(current)}|target_count={len(target.pieces)}"
         )
         current_by_position = {int(row["position"]): row for row in current}
@@ -160,13 +212,13 @@ def _print_plan(db, targets: list[ProductTarget]) -> None:
             before = previous["title"] if previous else "<missing>"
             action = "unchanged" if previous and previous["title"] == title and previous["active"] else "update"
             print(
-                f"[{SCRIPT_PREFIX}] piece degree={target.degree}|position={position}|"
+                f"[{SCRIPT_PREFIX}] piece partition={target.label}|position={position}|"
                 f"action={action}|before={before}|after={title}"
             )
         for row in current:
             if int(row["position"]) > len(target.pieces) and row["active"]:
                 print(
-                    f"[{SCRIPT_PREFIX}] piece degree={target.degree}|position={row['position']}|"
+                    f"[{SCRIPT_PREFIX}] piece partition={target.label}|position={row['position']}|"
                     f"action=deactivate|before={row['title']}"
                 )
 
@@ -225,10 +277,10 @@ def _verify(db, targets: list[ProductTarget]) -> None:
         expected = list(enumerate(target.pieces, 1))
         if actual != expected:
             raise SystemExit(
-                f"[{SCRIPT_PREFIX}] verification_failed degree={target.degree}|"
+                f"[{SCRIPT_PREFIX}] verification_failed partition={target.label}|"
                 f"actual={actual}|expected={expected}"
             )
-        print(f"[{SCRIPT_PREFIX}] verified degree={target.degree}|active_pieces={len(active)}")
+        print(f"[{SCRIPT_PREFIX}] verified partition={target.label}|active_pieces={len(active)}")
 
 
 def main() -> None:
