@@ -41,6 +41,16 @@ class AttendanceReportRow(BaseModel):
     attendance_status: str
 
 
+class TrialCourseEmailEvent(BaseModel):
+    communication_id: UUID
+    trigger_code: str
+    trigger_label: str
+    subject: str
+    delivery_status: str
+    sent_at: datetime
+    delivered_at: datetime | None = None
+
+
 class TrialCourseReportRow(BaseModel):
     booking_id: UUID
     session_id: UUID
@@ -74,6 +84,7 @@ class TrialCourseReportRow(BaseModel):
     is_registered: bool
     enrollment_status_label: str
     enrollment_evidence: str | None = None
+    email_history: list[TrialCourseEmailEvent] = Field(default_factory=list)
     trial_detection_source: str
 
 

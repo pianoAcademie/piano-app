@@ -17,6 +17,8 @@ from app.api.routes.reports import (
     _trial_conversion_status,
     _trial_courses_xlsx,
     _trial_detection_source,
+    _trial_email_matches_student,
+    _trial_email_trigger_label,
     _trial_enrollment_evidence,
 )
 from app.models.catalog import BookingStatus
@@ -129,6 +131,27 @@ class TrialCourseReportTests(unittest.TestCase):
             (True, "Carnet actif", "ACTIVE_PACK"),
         )
 
+    def test_trial_email_trigger_has_a_readable_label(self) -> None:
+        self.assertEqual(
+            _trial_email_trigger_label("NOTIFICATION:client_booking_confirmation", "OPERATIONAL"),
+            "Confirmation de réservation",
+        )
+
+    def test_parent_email_is_kept_only_for_the_matching_child(self) -> None:
+        parent_id = uuid4()
+        communication = SimpleNamespace(
+            recipient_user_id=parent_id,
+            recipient="parent@example.test",
+            subject="Rappel de cours",
+            content="Bonjour, voici le prochain cours de Lina Martin.",
+        )
+        parent = SimpleNamespace(id=parent_id, email="parent@example.test")
+        lina = SimpleNamespace(id=uuid4(), email="lina@example.test", first_name="Lina", last_name="Martin")
+        leo = SimpleNamespace(id=uuid4(), email="leo@example.test", first_name="Leo", last_name="Martin")
+
+        self.assertTrue(_trial_email_matches_student(communication, student=lina, parent=parent))
+        self.assertFalse(_trial_email_matches_student(communication, student=leo, parent=parent))
+
     def test_xlsx_contains_detail_and_summary_sheets(self) -> None:
         start_at = datetime(2026, 9, 10, 14, 0, tzinfo=timezone.utc)
         row = TrialCourseReportRow(
@@ -164,6 +187,17 @@ class TrialCourseReportTests(unittest.TestCase):
             is_registered=True,
             enrollment_status_label="Devis validé",
             enrollment_evidence="APPROVED_QUOTE",
+            email_history=[
+                {
+                    "communication_id": uuid4(),
+                    "trigger_code": "NOTIFICATION:reminder_email",
+                    "trigger_label": "Rappel de cours",
+                    "subject": "Rappel de cours - Initiation piano",
+                    "delivery_status": "DELIVERED",
+                    "sent_at": start_at - timedelta(days=1),
+                    "delivered_at": start_at - timedelta(days=1) + timedelta(seconds=2),
+                }
+            ],
             trial_detection_source="STATUT_ESSAI",
         )
 
@@ -174,6 +208,8 @@ class TrialCourseReportTests(unittest.TestCase):
         self.assertEqual(detail["H2"].value, "Lina")
         self.assertEqual(detail["M2"].value, "Tres bon contact")
         self.assertEqual(detail["N2"].value, "Inscrit - devis validé")
+        self.assertEqual(detail["Y2"].value, "Rappel de cours")
+        self.assertEqual(detail["AA2"].value, "DELIVERED")
         self.assertEqual(workbook["Synthese"]["B5"].value, 1)
 
 

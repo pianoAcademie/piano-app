@@ -42,6 +42,15 @@ type TrialCourseReportRow = {
   is_registered: boolean;
   enrollment_status_label: string;
   enrollment_evidence: string | null;
+  email_history: Array<{
+    communication_id: string;
+    trigger_code: string;
+    trigger_label: string;
+    subject: string;
+    delivery_status: string;
+    sent_at: string;
+    delivered_at: string | null;
+  }>;
   trial_detection_source: string;
 };
 
@@ -145,6 +154,14 @@ function attendanceClass(status: string): string {
   return "status-warn";
 }
 
+function deliveryStatusLabel(status: string, language: UiLanguage): string {
+  const normalized = status.trim().toUpperCase();
+  const labels = language === "fr"
+    ? { DELIVERED: "Délivré", SENT: "Envoyé", QUEUED: "En attente", FAILED: "Échec", UNKNOWN: "Statut inconnu" }
+    : { DELIVERED: "Delivered", SENT: "Sent", QUEUED: "Queued", FAILED: "Failed", UNKNOWN: "Unknown status" };
+  return labels[normalized as keyof typeof labels] ?? normalized;
+}
+
 const LABELS = {
   fr: {
     title: "Essais à venir",
@@ -173,6 +190,8 @@ const LABELS = {
     note: "Note interne professeur",
     attendance: "Présence",
     status: "Statut de suivi",
+    emails: "E-mails automatiques",
+    noEmail: "Aucun trigger e-mail retrouvé",
     noRows: "Aucun cours d'essai ne correspond à ces filtres.",
   },
   en: {
@@ -202,6 +221,8 @@ const LABELS = {
     note: "Internal teacher note",
     attendance: "Attendance",
     status: "Follow-up status",
+    emails: "Automated emails",
+    noEmail: "No email trigger found",
     noRows: "No trial lesson matches these filters.",
   },
 };
@@ -344,6 +365,7 @@ export default async function TrialCoursesReportPage({ searchParams }: { searchP
                       <th>{labels.location}</th>
                       <th>{labels.attendance}</th>
                       <th>{labels.status}</th>
+                      <th>{labels.emails}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -380,6 +402,22 @@ export default async function TrialCoursesReportPage({ searchParams }: { searchP
                               Devis : {row.quote_status_label}<br />
                               Inscription : {row.enrollment_status_label}
                             </small>
+                          </td>
+                          <td>
+                            {row.email_history.length > 0 ? (
+                              <ul className="trial-report-email-history">
+                                {row.email_history.map((event) => {
+                                  const sentAt = localDateTime(event.sent_at, row.session_timezone, language);
+                                  return (
+                                    <li key={event.communication_id} title={event.subject}>
+                                      <strong>{event.trigger_label}</strong>
+                                      <small>{sentAt.date} à {sentAt.time} · {deliveryStatusLabel(event.delivery_status, language)}</small>
+                                      <small className="muted">{event.trigger_code}</small>
+                                    </li>
+                                  );
+                                })}
+                              </ul>
+                            ) : <small className="muted">{labels.noEmail}</small>}
                           </td>
                         </tr>
                       );

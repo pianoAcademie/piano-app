@@ -25590,6 +25590,27 @@ button.client-danger-button:hover {
   line-height: 1.45;
   white-space: nowrap;
 }
+
+.trial-report-email-history {
+  display: grid;
+  gap: 8px;
+  min-width: 230px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.trial-report-email-history li {
+  display: grid;
+  gap: 1px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid var(--border);
+}
+
+.trial-report-email-history li:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
 .supply-order-fields {
   border: 0;
   padding: 0;

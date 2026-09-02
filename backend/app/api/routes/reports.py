@@ -2663,6 +2663,48 @@ def _trial_quote_status_label(quote_status: str | None) -> str:
     return labels.get(normalized, "Absent" if not normalized else normalized)
 
 
+def _trial_email_trigger_label(source: str | None, communication_type: str | None) -> str:
+    normalized_source = str(source or "").strip()
+    trigger_code = normalized_source.split(":", 1)[-1].strip().lower()
+    labels = {
+        "reminder_email": "Rappel de cours",
+        "client_booking_confirmation": "Confirmation de réservation",
+        "trial_booking_confirmation": "Confirmation de cours d'essai",
+        "booking_confirmation": "Confirmation de réservation",
+        "booking_cancelled": "Annulation de réservation",
+        "booking_updated": "Modification de réservation",
+    }
+    if trigger_code in labels:
+        return labels[trigger_code]
+    if trigger_code:
+        return trigger_code.replace("_", " ").strip().capitalize()
+    return communication_type_label(communication_type)
+
+
+def _trial_email_matches_student(
+    communication: CommunicationLog,
+    *,
+    student: User,
+    parent: User | None,
+) -> bool:
+    recipient_id = communication.recipient_user_id
+    recipient_email = str(communication.recipient or "").strip().lower()
+    student_email = str(student.email or "").strip().lower()
+    if recipient_id == student.id or (student_email and recipient_email == student_email):
+        return True
+    if parent is None:
+        return False
+    parent_email = str(parent.email or "").strip().lower()
+    if recipient_id != parent.id and (not parent_email or recipient_email != parent_email):
+        return False
+
+    # A responsible adult can receive messages for several children. Only keep
+    # a family email when its subject/body identifies this trial participant.
+    student_name = _normalize_token(f"{student.first_name or ''} {student.last_name or ''}")
+    searchable = _normalize_token(html.unescape(f"{communication.subject or ''} {communication.content or ''}"))
+    return bool(student_name and student_name in searchable)
+
+
 def _trial_enrollment_evidence(
     *,
     client_kind: str,
@@ -2839,6 +2881,36 @@ def _load_trial_course_report_rows(
         intake_email = str(normalized.get("parent_email") or normalized.get("adult_email") or "").strip().lower()
         if intake_email:
             intakes_by_parent_email.setdefault(intake_email, []).append(intake)
+
+    related_emails = {
+        str(user.email or "").strip().lower()
+        for user in [student for *_, student, _source in trial_rows] + list(parent_by_student_id.values())
+        if str(user.email or "").strip()
+    }
+    earliest_trial = min(session.start_at_utc for session, *_rest in trial_rows)
+    latest_trial = max(session.end_at_utc for session, *_rest in trial_rows)
+    email_rows = db.scalars(
+        select(CommunicationLog)
+        .where(
+            CommunicationLog.channel == CommunicationChannelModel.EMAIL,
+            CommunicationLog.source.ilike("NOTIFICATION:%"),
+            CommunicationLog.occurred_at >= earliest_trial - timedelta(days=180),
+            CommunicationLog.occurred_at <= latest_trial + timedelta(days=180),
+            or_(
+                CommunicationLog.recipient_user_id.in_(related_client_ids),
+                func.lower(CommunicationLog.recipient).in_(related_emails),
+            ),
+        )
+        .order_by(CommunicationLog.occurred_at.desc())
+    ).all()
+    emails_by_recipient_id: dict[UUID, list[CommunicationLog]] = {}
+    emails_by_recipient_email: dict[str, list[CommunicationLog]] = {}
+    for communication in email_rows:
+        if communication.recipient_user_id is not None:
+            emails_by_recipient_id.setdefault(communication.recipient_user_id, []).append(communication)
+        recipient_email = str(communication.recipient or "").strip().lower()
+        if recipient_email:
+            emails_by_recipient_email.setdefault(recipient_email, []).append(communication)
     timestamp = now or datetime.now(timezone.utc)
     out: list[TrialCourseReportRow] = []
     for session, course_type, location, professor, booking, student, detection_source in trial_rows:
@@ -2883,6 +2955,32 @@ def _load_trial_course_report_rows(
             normalized_note = str(candidate_note or "").strip()
             if normalized_note and normalized_note not in internal_notes:
                 internal_notes.append(normalized_note)
+        candidate_emails: dict[UUID, CommunicationLog] = {}
+        for recipient_id in {student.id, parent.id if parent is not None else None}:
+            if recipient_id is not None:
+                candidate_emails.update(
+                    {communication.id: communication for communication in emails_by_recipient_id.get(recipient_id, [])}
+                )
+        for recipient_email in {
+            str(student.email or "").strip().lower(),
+            str(parent.email or "").strip().lower() if parent is not None else "",
+        }:
+            if recipient_email:
+                candidate_emails.update(
+                    {
+                        communication.id: communication
+                        for communication in emails_by_recipient_email.get(recipient_email, [])
+                    }
+                )
+        matching_emails = sorted(
+            (
+            communication
+            for communication in candidate_emails.values()
+            if _trial_email_matches_student(communication, student=student, parent=parent)
+            ),
+            key=lambda communication: communication.occurred_at,
+            reverse=True,
+        )[:5]
         out.append(
             TrialCourseReportRow(
                 booking_id=booking.id,
@@ -2930,6 +3028,21 @@ def _load_trial_course_report_rows(
                 is_registered=is_registered,
                 enrollment_status_label=enrollment_status_label,
                 enrollment_evidence=enrollment_evidence,
+                email_history=[
+                    {
+                        "communication_id": communication.id,
+                        "trigger_code": communication.source,
+                        "trigger_label": _trial_email_trigger_label(
+                            communication.source,
+                            communication.communication_type,
+                        ),
+                        "subject": communication.subject,
+                        "delivery_status": _enum_value(communication.delivery_status),
+                        "sent_at": communication.occurred_at,
+                        "delivered_at": communication.delivered_at,
+                    }
+                    for communication in matching_emails
+                ],
                 trial_detection_source=detection_source,
             )
         )
@@ -2987,6 +3100,10 @@ def _trial_courses_xlsx(rows: list[TrialCourseReportRow]) -> bytes:
         "Compte",
         "Etat inscription",
         "Preuve inscription",
+        "Dernier trigger email",
+        "Date dernier email",
+        "Statut dernier email",
+        "Historique emails",
     ]
     sheet.append(headers)
     for cell in sheet[1]:
@@ -3002,6 +3119,13 @@ def _trial_courses_xlsx(rows: list[TrialCourseReportRow]) -> bytes:
         local_start = row.session_start_at.astimezone(zone)
         local_end = row.session_end_at.astimezone(zone)
         intake_local = row.intake_received_at.astimezone(zone) if row.intake_received_at is not None else None
+        latest_email = row.email_history[0] if row.email_history else None
+        latest_email_local = latest_email.sent_at.astimezone(zone) if latest_email is not None else None
+        email_history_label = "\n".join(
+            f"{event.sent_at.astimezone(zone).strftime('%d/%m/%Y %H:%M')} - "
+            f"{event.trigger_label} - {_enum_value(event.delivery_status)}"
+            for event in row.email_history
+        )
         sheet.append(
             [
                 local_start.date(),
@@ -3028,21 +3152,28 @@ def _trial_courses_xlsx(rows: list[TrialCourseReportRow]) -> bytes:
                 row.account_status_label,
                 row.enrollment_status_label,
                 row.enrollment_evidence or "",
+                latest_email.trigger_label if latest_email is not None else "",
+                latest_email_local.replace(tzinfo=None) if latest_email_local is not None else None,
+                latest_email.delivery_status if latest_email is not None else "",
+                email_history_label,
             ]
         )
 
     sheet.freeze_panes = "A2"
     sheet.auto_filter.ref = sheet.dimensions
     sheet.row_dimensions[1].height = 34
-    widths = [12, 12, 12, 28, 14, 24, 24, 18, 20, 32, 32, 24, 48, 30, 14, 18, 20, 18, 12, 30, 14, 18, 24, 24]
+    widths = [12, 12, 12, 28, 14, 24, 24, 18, 20, 32, 32, 24, 48, 30, 14, 18, 20, 18, 12, 30, 14, 18, 24, 24, 28, 22, 20, 48]
     for index, width in enumerate(widths, start=1):
-        sheet.column_dimensions[chr(64 + index)].width = width
+        column_letter = chr(64 + index) if index <= 26 else f"A{chr(64 + index - 26)}"
+        sheet.column_dimensions[column_letter].width = width
     for row_cells in sheet.iter_rows(min_row=2):
         for cell in row_cells:
             cell.alignment = Alignment(vertical="top", wrap_text=True)
     for cell in sheet["A"][1:]:
         cell.number_format = "dd/mm/yyyy"
     for cell in sheet["Q"][1:]:
+        cell.number_format = "dd/mm/yyyy hh:mm"
+    for cell in sheet["Z"][1:]:
         cell.number_format = "dd/mm/yyyy hh:mm"
 
     summary = workbook.create_sheet("Synthese")
