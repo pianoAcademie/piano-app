@@ -29,8 +29,14 @@ def _display_name(first_name: str | None, last_name: str | None, fallback: str) 
 def _teacher_impersonation_destination(
     view_mode: Literal["teacher", "manager"],
     *,
+    has_teacher_access: bool,
     has_manager_access: bool,
 ) -> tuple[str, str]:
+    if view_mode == "teacher" and not has_teacher_access:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Collaborator has no teacher access",
+        )
     if view_mode == "manager" and not has_manager_access:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -95,6 +101,7 @@ def start_admin_teacher_impersonation(
     has_manager_access = any(bool(permission_map.get(field)) for field in BACKOFFICE_PERMISSION_KEYS)
     target_role, redirect_path = _teacher_impersonation_destination(
         view_mode,
+        has_teacher_access=bool(professor.is_coach),
         has_manager_access=has_manager_access,
     )
 

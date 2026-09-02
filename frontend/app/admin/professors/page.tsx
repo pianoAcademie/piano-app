@@ -8,7 +8,7 @@ import {
   sendAdminCollaboratorsMessageAction,
   sendAdminCollaboratorsPushAction,
 } from "../../../lib/actions";
-import { hasAdminPermission } from "../../../lib/admin-access";
+import { hasAdminPermission, MANAGER_ADMIN_PERMISSION_KEYS } from "../../../lib/admin-access";
 import { backendRequest } from "../../../lib/backend";
 import CollaboratorSelectionControls from "../../../components/collaborator-selection-controls";
 import RichMessageEditor from "../../../components/rich-message-editor";
@@ -218,6 +218,16 @@ export default async function AdminCollaboratorsPage({ searchParams }: { searchP
                     const statusLabel = professor.active ? t("common.active") : t("common.inactive");
                     const payoutCurrency = professor.payout_balance_currency || professor.payout_currency || "EUR";
                     const payoutAmount = professor.payout_balance_amount || "0.00";
+                    const canOpenManagerPortal =
+                      professor.role === "prof" &&
+                      MANAGER_ADMIN_PERMISSION_KEYS.some((permission) => Boolean(professor.permissions[permission]));
+                    const portalViewMode = professor.role === "prof"
+                      ? professor.is_coach
+                        ? "teacher"
+                        : canOpenManagerPortal
+                          ? "manager"
+                          : null
+                      : null;
                     return (
                       <tr key={professor.id}>
                         <td data-mobile-label="">
@@ -238,15 +248,25 @@ export default async function AdminCollaboratorsPage({ searchParams }: { searchP
                         </td>
                         {canManageCollaborators ? (
                           <td data-mobile-label={t("admin.professors.portal_view")}>
-                            <button
-                              type="submit"
-                              name="teacher_id"
-                              value={professor.id}
-                              formAction={adminViewTeacherPortalAction}
-                              className="ghost"
-                            >
-                              {t("admin.professors.view_collaborator")}
-                            </button>
+                            {portalViewMode ? (
+                              <>
+                                <input type="hidden" name={`portal_view_mode_${professor.id}`} value={portalViewMode} />
+                                <button
+                                  type="submit"
+                                  name="teacher_id"
+                                  value={professor.id}
+                                  formAction={adminViewTeacherPortalAction}
+                                  formMethod="post"
+                                  className="ghost"
+                                >
+                                  {portalViewMode === "manager"
+                                    ? t("admin.professors.view_manager")
+                                    : t("admin.professors.view_collaborator")}
+                                </button>
+                              </>
+                            ) : (
+                              <span className="muted">-</span>
+                            )}
                           </td>
                         ) : null}
                       </tr>
