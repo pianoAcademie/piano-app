@@ -17,6 +17,7 @@ from app.api.routes.reports import (
     _trial_conversion_status,
     _trial_courses_xlsx,
     _trial_detection_source,
+    _trial_enrollment_evidence,
 )
 from app.models.catalog import BookingStatus
 from app.schemas.report import TrialCourseReportRow
@@ -66,15 +67,66 @@ class TrialCourseReportTests(unittest.TestCase):
         )
         self.assertEqual(label, "Presence non renseignee")
 
-    def test_conversion_status_prioritizes_registration(self) -> None:
+    def test_future_trial_with_account_only_is_not_marked_registered(self) -> None:
+        now = datetime(2026, 9, 2, 10, 0, tzinfo=timezone.utc)
         self.assertEqual(
             _trial_conversion_status(
-                client_status="TRIAL",
-                registered=True,
-                quote_status="sent",
-                has_intake=True,
+                session_start_at=now + timedelta(hours=2),
+                session_end_at=now + timedelta(hours=2, minutes=30),
+                now=now,
+                attendance_status="BOOKED",
+                client_kind="ADULT",
+                enrollment_evidence=None,
+                quote_status=None,
+                has_intake=False,
             ),
-            "Inscrit",
+            "Essai à venir - compte créé",
+        )
+
+    def test_past_trial_without_progress_is_marked_for_followup(self) -> None:
+        now = datetime(2026, 9, 2, 18, 0, tzinfo=timezone.utc)
+        self.assertEqual(
+            _trial_conversion_status(
+                session_start_at=now - timedelta(hours=2),
+                session_end_at=now - timedelta(hours=1, minutes=30),
+                now=now,
+                attendance_status="ATTENDED",
+                client_kind="ADULT",
+                enrollment_evidence=None,
+                quote_status=None,
+                has_intake=False,
+            ),
+            "À relancer",
+        )
+
+    def test_child_is_registered_only_with_approved_quote(self) -> None:
+        self.assertEqual(
+            _trial_enrollment_evidence(
+                client_kind="CHILD",
+                quote_status="approved",
+                subscriptions=[],
+            ),
+            (True, "Devis validé", "APPROVED_QUOTE"),
+        )
+
+    def test_adult_pending_subscription_is_not_registered(self) -> None:
+        self.assertEqual(
+            _trial_enrollment_evidence(
+                client_kind="ADULT",
+                quote_status=None,
+                subscriptions=[("SUBSCRIPTION", "PENDING")],
+            ),
+            (False, "Non confirmée", None),
+        )
+
+    def test_adult_active_pack_is_registered_with_explicit_evidence(self) -> None:
+        self.assertEqual(
+            _trial_enrollment_evidence(
+                client_kind="ADULT",
+                quote_status=None,
+                subscriptions=[("PACK", "ACTIVE")],
+            ),
+            (True, "Carnet actif", "ACTIVE_PACK"),
         )
 
     def test_xlsx_contains_detail_and_summary_sheets(self) -> None:
@@ -99,13 +151,19 @@ class TrialCourseReportTests(unittest.TestCase):
             attendance_status="ATTENDED",
             attendance_label="Present",
             internal_note="Tres bon contact",
-            conversion_status="Inscrit",
+            conversion_status="Inscrit - devis validé",
+            account_status_label="Compte créé",
+            client_kind="CHILD",
             client_status="ACTIVE",
             has_intake=True,
+            intake_status_label="Reçu",
             intake_status="PROCESSED",
             intake_received_at=start_at - timedelta(days=2),
             quote_status="approved",
+            quote_status_label="Validé",
             is_registered=True,
+            enrollment_status_label="Devis validé",
+            enrollment_evidence="APPROVED_QUOTE",
             trial_detection_source="STATUT_ESSAI",
         )
 
@@ -115,7 +173,7 @@ class TrialCourseReportTests(unittest.TestCase):
         detail = workbook["Cours d'essai"]
         self.assertEqual(detail["H2"].value, "Lina")
         self.assertEqual(detail["M2"].value, "Tres bon contact")
-        self.assertEqual(detail["N2"].value, "Inscrit")
+        self.assertEqual(detail["N2"].value, "Inscrit - devis validé")
         self.assertEqual(workbook["Synthese"]["B5"].value, 1)
 
 

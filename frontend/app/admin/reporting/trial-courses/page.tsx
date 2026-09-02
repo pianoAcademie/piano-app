@@ -30,12 +30,18 @@ type TrialCourseReportRow = {
   attendance_label: string;
   internal_note: string | null;
   conversion_status: string;
+  account_status_label: string;
+  client_kind: string;
   client_status: string;
   has_intake: boolean;
+  intake_status_label: string;
   intake_status: string | null;
   intake_received_at: string | null;
   quote_status: string | null;
+  quote_status_label: string;
   is_registered: boolean;
+  enrollment_status_label: string;
+  enrollment_evidence: string | null;
   trial_detection_source: string;
 };
 
@@ -368,7 +374,12 @@ export default async function TrialCoursesReportPage({ searchParams }: { searchP
                           <td><span className={`status-pill ${attendanceClass(row.attendance_status)}`}>{row.attendance_label}</span></td>
                           <td>
                             <strong>{row.conversion_status}</strong>
-                            <br /><small className="muted">Intake: {row.has_intake ? "oui" : "non"}{row.quote_status ? ` · Devis: ${row.quote_status}` : ""}</small>
+                            <small className="trial-report-followup-evidence">
+                              Compte : {row.account_status_label}<br />
+                              Intake : {row.intake_status_label}<br />
+                              Devis : {row.quote_status_label}<br />
+                              Inscription : {row.enrollment_status_label}
+                            </small>
                           </td>
                         </tr>
                       );

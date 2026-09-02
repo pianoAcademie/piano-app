@@ -62,12 +62,18 @@ class TrialCourseReportRow(BaseModel):
     attendance_label: str
     internal_note: str | None = None
     conversion_status: str
+    account_status_label: str
+    client_kind: str
     client_status: str
     has_intake: bool
+    intake_status_label: str
     intake_status: str | None = None
     intake_received_at: datetime | None = None
     quote_status: str | None = None
+    quote_status_label: str
     is_registered: bool
+    enrollment_status_label: str
+    enrollment_evidence: str | None = None
     trial_detection_source: str
 
 

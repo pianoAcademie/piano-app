@@ -25399,6 +25399,14 @@ button.client-danger-button:hover {
   color: var(--muted);
   white-space: pre-wrap;
 }
+
+.trial-report-followup-evidence {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
+  line-height: 1.45;
+  white-space: nowrap;
+}
 .supply-order-fields {
   border: 0;
   padding: 0;

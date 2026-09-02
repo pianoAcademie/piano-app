@@ -32,13 +32,13 @@ from app.models.catalog import (
 from app.models.client_record import ClientInvoiceLine, ClientManualTransaction, ClientNoteEntry
 from app.models.family import ClientFamilyLink
 from app.models.ops import CommunicationChannel as CommunicationChannelModel, CommunicationLog, LegalEntity, ProfessorSessionMessage
-from app.models.plan import ClientPlanSubscription, SubscriptionStatus
+from app.models.plan import ClientPlanSubscription, Plan, PlanKind, SubscriptionStatus
 from app.models.payout import ProfessorSessionPayout
 from app.models.product_catalog import CatalogKit, CatalogKitItem, CatalogProduct, ProductCategory, ProductLocationStock
 from app.models.quote import Prospect, Quote, QuoteLine
 from app.models.reporting import GeneratedReport
 from app.models.typeform_intake import TypeformFormConfig, TypeformIntake
-from app.models.user import ClientStatus, User, UserRole
+from app.models.user import ClientKind, ClientStatus, User, UserRole
 from app.schemas.report import (
     AttendanceReportRow,
     CommunicationChannel,
@@ -2603,23 +2603,122 @@ def _intake_matches_trial_student(
 
 def _trial_conversion_status(
     *,
-    client_status: str,
-    registered: bool,
+    session_start_at: datetime,
+    session_end_at: datetime,
+    now: datetime,
+    attendance_status: str,
+    client_kind: str,
+    enrollment_evidence: str | None,
     quote_status: str | None,
     has_intake: bool,
 ) -> str:
-    if registered or client_status == ClientStatus.ACTIVE.value:
-        return "Inscrit"
+    if enrollment_evidence == "APPROVED_QUOTE":
+        return "Inscrit - devis validé"
+    if enrollment_evidence == "ACTIVE_SUBSCRIPTION":
+        return "Inscrit - abonnement actif"
+    if enrollment_evidence == "ACTIVE_PACK":
+        return "Inscrit - carnet actif"
+    if enrollment_evidence == "ACTIVE_FORFAIT":
+        return "Inscrit - forfait actif"
+    if enrollment_evidence == "PAUSED_SUBSCRIPTION":
+        return "Inscrit - abonnement suspendu"
+    if enrollment_evidence == "PLAN_WITHOUT_APPROVED_QUOTE":
+        return "Anomalie - devis validé non retrouvé"
     normalized_quote_status = str(quote_status or "").strip().lower()
     if normalized_quote_status == "approved":
-        return "Devis accepte"
-    if normalized_quote_status in {"sent", "change_requested", "created"}:
-        return "Devis en cours"
+        if str(client_kind or "").strip().upper() == ClientKind.ADULT.value:
+            return "Devis validé - achat à finaliser"
+        return "Inscrit - devis validé"
+    if normalized_quote_status == "change_requested":
+        return "Modification demandée"
+    if normalized_quote_status == "sent":
+        return "Devis envoyé"
+    if normalized_quote_status == "created":
+        return "Devis en préparation"
     if has_intake:
-        return "Intake rempli"
-    if client_status == ClientStatus.TRIAL.value:
-        return "Compte essai"
-    return "A relancer"
+        return "Intake reçu"
+    normalized_attendance = str(attendance_status or "").strip().upper()
+    if normalized_attendance == BookingStatus.CANCELLED.value:
+        return "Essai annulé"
+    if normalized_attendance == BookingStatus.NO_SHOW.value:
+        return "Absent - à relancer"
+    end_at = session_end_at if session_end_at.tzinfo is not None else session_end_at.replace(tzinfo=timezone.utc)
+    if end_at > now:
+        return "Essai à venir - compte créé"
+    return "À relancer"
+
+
+def _trial_quote_status_label(quote_status: str | None) -> str:
+    labels = {
+        "approved": "Validé",
+        "sent": "Envoyé",
+        "change_requested": "Modification demandée",
+        "created": "Brouillon",
+        "expired": "Expiré",
+        "rejected": "Refusé",
+        "cancelled": "Annulé",
+        "replaced": "Remplacé",
+    }
+    normalized = str(quote_status or "").strip().lower()
+    return labels.get(normalized, "Absent" if not normalized else normalized)
+
+
+def _trial_enrollment_evidence(
+    *,
+    client_kind: str,
+    quote_status: str | None,
+    subscriptions: list[tuple[str, str]],
+) -> tuple[bool, str, str | None]:
+    normalized_kind = str(client_kind or "").strip().upper()
+    normalized_quote = str(quote_status or "").strip().lower()
+    if normalized_kind == ClientKind.CHILD.value:
+        if normalized_quote == "approved":
+            return True, "Devis validé", "APPROVED_QUOTE"
+        has_operational_plan = any(
+            str(subscription_status or "").strip().upper()
+            in {
+                SubscriptionStatus.ACTIVE.value,
+                SubscriptionStatus.PAYMENT_ALERT.value,
+                SubscriptionStatus.PRE_TERMINATION.value,
+                SubscriptionStatus.PAUSED.value,
+            }
+            for _plan_kind, subscription_status in subscriptions
+        )
+        if has_operational_plan:
+            return False, "Planning actif sans devis validé", "PLAN_WITHOUT_APPROVED_QUOTE"
+        return False, "Non confirmée", None
+
+    # A technical account status and a pending purchase are deliberately not
+    # evidence of registration. Only an acquired, operational offer counts.
+    active_statuses = {
+        SubscriptionStatus.ACTIVE.value,
+        SubscriptionStatus.PAYMENT_ALERT.value,
+        SubscriptionStatus.PRE_TERMINATION.value,
+    }
+    for plan_kind, subscription_status in subscriptions:
+        normalized_plan_kind = str(plan_kind or "").strip().upper()
+        normalized_subscription_status = str(subscription_status or "").strip().upper()
+        if normalized_subscription_status not in active_statuses:
+            continue
+        if normalized_plan_kind == PlanKind.PACK.value:
+            return True, "Carnet actif", "ACTIVE_PACK"
+        if normalized_plan_kind == PlanKind.SUBSCRIPTION.value:
+            return True, "Abonnement actif", "ACTIVE_SUBSCRIPTION"
+        if normalized_plan_kind == PlanKind.FORFAIT.value:
+            return True, "Forfait actif", "ACTIVE_FORFAIT"
+
+    for plan_kind, subscription_status in subscriptions:
+        normalized_plan_kind = str(plan_kind or "").strip().upper()
+        normalized_subscription_status = str(subscription_status or "").strip().upper()
+        if (
+            normalized_subscription_status == SubscriptionStatus.PAUSED.value
+            and normalized_plan_kind == PlanKind.SUBSCRIPTION.value
+        ):
+            return True, "Abonnement suspendu", "PAUSED_SUBSCRIPTION"
+
+    if normalized_kind == ClientKind.ADULT.value and normalized_quote == "approved":
+        return False, "Achat à finaliser", None
+    return False, "Non confirmée", None
 
 
 def _load_trial_course_report_rows(
@@ -2695,20 +2794,16 @@ def _load_trial_course_report_rows(
         if body:
             notes_by_session_id.setdefault(note.session_id, []).append(body)
 
-    registered_statuses = {
-        SubscriptionStatus.ACTIVE,
-        SubscriptionStatus.PAYMENT_ALERT,
-        SubscriptionStatus.PRE_TERMINATION,
-        SubscriptionStatus.PAUSED,
-        SubscriptionStatus.PENDING,
-    }
     subscription_rows = db.execute(
-        select(ClientPlanSubscription.user_id, ClientPlanSubscription.status)
+        select(ClientPlanSubscription.user_id, Plan.kind, ClientPlanSubscription.status)
+        .join(Plan, Plan.id == ClientPlanSubscription.plan_id)
         .where(ClientPlanSubscription.user_id.in_(student_ids))
     ).all()
-    registered_student_ids = {
-        user_id for user_id, subscription_status in subscription_rows if subscription_status in registered_statuses
-    }
+    subscriptions_by_student_id: dict[UUID, list[tuple[str, str]]] = {}
+    for user_id, plan_kind, subscription_status in subscription_rows:
+        subscriptions_by_student_id.setdefault(user_id, []).append(
+            (_enum_value(plan_kind), _enum_value(subscription_status))
+        )
 
     related_client_ids = set(student_ids) | {parent.id for parent in parent_by_student_id.values()}
     quote_rows = db.execute(
@@ -2722,23 +2817,15 @@ def _load_trial_course_report_rows(
         )
         .order_by(Quote.updated_at.desc())
     ).all()
-    quote_rank = {
-        "approved": 6,
-        "sent": 5,
-        "change_requested": 4,
-        "created": 3,
-        "expired": 2,
-        "rejected": 1,
-        "cancelled": 0,
-    }
     quote_status_by_client_id: dict[UUID, str] = {}
     for quote, prospect in quote_rows:
         client_id = quote.client_id or (prospect.linked_client_id if prospect is not None else None)
         if client_id is None:
             continue
-        current = quote_status_by_client_id.get(client_id)
-        if current is None or quote_rank.get(str(quote.status).lower(), -1) > quote_rank.get(current.lower(), -1):
-            quote_status_by_client_id[client_id] = str(quote.status)
+        # Rows are ordered newest first. The current dossier state must win over
+        # an older approved quote that may have been replaced or belong to a
+        # previous registration.
+        quote_status_by_client_id.setdefault(client_id, str(quote.status))
 
     intake_rows = db.scalars(
         select(TypeformIntake).order_by(TypeformIntake.received_at.desc()).limit(10000)
@@ -2779,7 +2866,12 @@ def _load_trial_course_report_rows(
         )
         quote_status = quote_status_by_client_id.get(student.id)
         client_status = _enum_value(student.client_status)
-        is_registered = student.id in registered_student_ids or client_status == ClientStatus.ACTIVE.value
+        client_kind = _enum_value(student.client_kind)
+        is_registered, enrollment_status_label, enrollment_evidence = _trial_enrollment_evidence(
+            client_kind=client_kind,
+            quote_status=quote_status,
+            subscriptions=subscriptions_by_student_id.get(student.id, []),
+        )
         persisted_notes = [booking.internal_note, session.internal_note]
         candidate_notes = (
             persisted_notes
@@ -2817,17 +2909,27 @@ def _load_trial_course_report_rows(
                 ),
                 internal_note="\n\n".join(internal_notes) or None,
                 conversion_status=_trial_conversion_status(
-                    client_status=client_status,
-                    registered=is_registered,
+                    session_start_at=booking.student_start_at_utc or session.start_at_utc,
+                    session_end_at=booking.student_end_at_utc or session.end_at_utc,
+                    now=timestamp,
+                    attendance_status=_enum_value(booking.status),
+                    client_kind=client_kind,
+                    enrollment_evidence=enrollment_evidence,
                     quote_status=quote_status,
                     has_intake=matching_intake is not None,
                 ),
+                account_status_label="Compte créé",
+                client_kind=client_kind,
                 client_status=client_status,
                 has_intake=matching_intake is not None,
+                intake_status_label="Reçu" if matching_intake is not None else "Absent",
                 intake_status=matching_intake.intake_status if matching_intake is not None else None,
                 intake_received_at=matching_intake.received_at if matching_intake is not None else None,
                 quote_status=quote_status,
+                quote_status_label=_trial_quote_status_label(quote_status),
                 is_registered=is_registered,
+                enrollment_status_label=enrollment_status_label,
+                enrollment_evidence=enrollment_evidence,
                 trial_detection_source=detection_source,
             )
         )
@@ -2881,6 +2983,10 @@ def _trial_courses_xlsx(rows: list[TrialCourseReportRow]) -> bytes:
         "Statut devis",
         "Inscrit",
         "Source identification essai",
+        "Type client",
+        "Compte",
+        "Etat inscription",
+        "Preuve inscription",
     ]
     sheet.append(headers)
     for cell in sheet[1]:
@@ -2918,15 +3024,19 @@ def _trial_courses_xlsx(rows: list[TrialCourseReportRow]) -> bytes:
                 row.quote_status or "",
                 "Oui" if row.is_registered else "Non",
                 row.trial_detection_source,
+                row.client_kind,
+                row.account_status_label,
+                row.enrollment_status_label,
+                row.enrollment_evidence or "",
             ]
         )
 
     sheet.freeze_panes = "A2"
     sheet.auto_filter.ref = sheet.dimensions
     sheet.row_dimensions[1].height = 34
-    widths = [12, 12, 12, 28, 14, 24, 24, 18, 20, 32, 32, 24, 48, 22, 14, 18, 20, 18, 12, 30]
+    widths = [12, 12, 12, 28, 14, 24, 24, 18, 20, 32, 32, 24, 48, 30, 14, 18, 20, 18, 12, 30, 14, 18, 24, 24]
     for index, width in enumerate(widths, start=1):
-        sheet.column_dimensions[chr(64 + index) if index <= 26 else "A"].width = width
+        sheet.column_dimensions[chr(64 + index)].width = width
     for row_cells in sheet.iter_rows(min_row=2):
         for cell in row_cells:
             cell.alignment = Alignment(vertical="top", wrap_text=True)
