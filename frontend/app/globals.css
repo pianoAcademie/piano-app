@@ -3827,6 +3827,11 @@ button.danger:focus-visible {
   margin-top: 10px;
 }
 
+/* Keep the fixed support launcher from covering the last pagination action. */
+.quote-list-pagination-help-safe {
+  padding-right: 172px;
+}
+
 .disabled-link {
   opacity: 0.55;
   pointer-events: none;
@@ -18974,6 +18979,11 @@ button.danger:focus-visible {
 }
 
 @media (max-width: 760px) {
+  .quote-list-pagination-help-safe {
+    padding-right: 0;
+    padding-bottom: 76px;
+  }
+
   .quote-list-refine-card {
     padding: 12px;
   }

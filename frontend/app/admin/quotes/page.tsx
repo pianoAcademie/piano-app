@@ -362,6 +362,7 @@ function QuotePaginationControls({
   pageSize,
   pageStart,
   language,
+  avoidHelpWidget = false,
 }: {
   filters: QuoteListHrefParams;
   total: number;
@@ -370,6 +371,7 @@ function QuotePaginationControls({
   pageSize: number;
   pageStart: number;
   language: UiLanguage;
+  avoidHelpWidget?: boolean;
 }): JSX.Element {
   const previousPageHref = withUiLanguage(buildQuotesListHref({ ...filters, page: currentPage - 1, pageSize }), language);
   const nextPageHref = withUiLanguage(buildQuotesListHref({ ...filters, page: currentPage + 1, pageSize }), language);
@@ -397,7 +399,7 @@ function QuotePaginationControls({
   const hiddenFields = hiddenFieldEntries.filter(([, value]) => Boolean(value));
 
   return (
-    <div className="row spread wrap clients-pagination top-gap-sm">
+    <div className={`row spread wrap clients-pagination top-gap-sm${avoidHelpWidget ? " quote-list-pagination-help-safe" : ""}`}>
       <div className="row wrap gap-sm">
         <small className="muted">
           {uiText(language, "admin.quotes.pagination_summary", {
@@ -970,6 +972,7 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
           pageSize={effectivePageSize}
           pageStart={pageStart}
           language={language}
+          avoidHelpWidget
         />
       </QuoteListPageRefine>
     </section>
