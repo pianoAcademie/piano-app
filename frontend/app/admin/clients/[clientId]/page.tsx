@@ -55,6 +55,7 @@ import {
   updateAdminClientGroupsAction,
 } from "../../../../lib/actions";
 import { backendRequest } from "../../../../lib/backend";
+import { regularScheduleSummaries } from "../../../../lib/client-schedule-summary";
 import { hasAdminPermission } from "../../../../lib/admin-access";
 import {
   COUNTRY_OPTIONS,
@@ -2712,6 +2713,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const pastBookings = bookings
     .filter((row) => Date.parse(row.session_start_at_utc) < Date.now())
     .sort((a, b) => b.session_start_at_utc.localeCompare(a.session_start_at_utc));
+  const regularSchedules = regularScheduleSummaries(bookings);
   const reservationRows = [...upcomingBookings, ...pastBookings];
   const includedPlanBookingsCount = bookings.filter((row) => bookingIsIncludedInPlan(row)).length;
   const receiptsSentCount = bookings.filter((row) => Boolean(row.payment_receipt_sent_at)).length;
@@ -3467,6 +3469,73 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
             <p className="muted">
               {t("admin.client_detail.add_product_rules")}
             </p>
+          </article>
+
+          <article className="card span-2 client-regular-schedules">
+            <div className="row spread">
+              <div>
+                <h3>{t("admin.client_detail.regular_schedules_title")}</h3>
+                <p className="muted">{t("admin.client_detail.regular_schedules_help")}</p>
+              </div>
+              <Link className="mode-link" href={tabHref(client.id, "reservations")}>
+                {t("admin.client_detail.regular_schedules_details")}
+              </Link>
+            </div>
+            {regularSchedules.length === 0 ? (
+              <p className="muted top-gap-sm">{t("admin.client_detail.regular_schedules_empty")}</p>
+            ) : (
+              <div className="client-regular-schedule-list top-gap-sm">
+                {regularSchedules.map((schedule) => {
+                  const start = new Date(schedule.startAt);
+                  const end = new Date(schedule.endAt);
+                  const weekday = start.toLocaleDateString(localeForUiLanguage(language), {
+                    weekday: "long",
+                    timeZone: "Europe/Paris",
+                  });
+                  const startTime = start.toLocaleTimeString(localeForUiLanguage(language), {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    timeZone: "Europe/Paris",
+                  });
+                  const endTime = end.toLocaleTimeString(localeForUiLanguage(language), {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    timeZone: "Europe/Paris",
+                  });
+                  return (
+                    <article key={schedule.key} className="client-regular-schedule-row">
+                      <div className="client-regular-schedule-activity">
+                        <strong>{schedule.courseTypeName}</strong>
+                        <div className="row gap-sm">
+                          <span className={`status-pill ${schedule.waitlisted ? "status-warn" : "status-ok"}`}>
+                            {t(schedule.waitlisted ? "admin.client_detail.regular_schedule_waitlisted" : "admin.client_detail.regular_schedule_active")}
+                          </span>
+                          <span className="badge">
+                            {t("admin.client_detail.regular_schedule_occurrences", { count: schedule.occurrenceCount })}
+                          </span>
+                        </div>
+                      </div>
+                      <div>
+                        <small>{t("admin.client_detail.regular_schedule_slot")}</small>
+                        <strong>{weekday} · {startTime}–{endTime}</strong>
+                      </div>
+                      <div>
+                        <small>{t("admin.client_detail.regular_schedule_location")}</small>
+                        <strong>{schedule.locationName}</strong>
+                      </div>
+                      <div>
+                        <small>{t("admin.client_detail.regular_schedule_professor")}</small>
+                        <strong>{schedule.professorName || t("admin.client_detail.regular_schedule_unassigned")}</strong>
+                      </div>
+                      <div>
+                        <small>{t("admin.client_detail.regular_schedule_period")}</small>
+                        <strong>{formatDateOnlyNumeric(schedule.firstDate, language)}–{formatDateOnlyNumeric(schedule.lastDate, language)}</strong>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
           </article>
 
           <article className="card span-2">

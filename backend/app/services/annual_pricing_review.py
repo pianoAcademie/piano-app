@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import date, datetime, timezone
 from decimal import Decimal
+from itertools import combinations
 import unicodedata
 from uuid import UUID, uuid4
 
@@ -49,14 +51,14 @@ def normalized(value):
     return "".join(c for c in unicodedata.normalize("NFKD", str(value or "").lower()) if not unicodedata.combining(c))
 
 
-def quote_fingerprint(quote, lines):
+def quote_fingerprint(quote, lines, *, calendar_snapshot=None):
     def numeric(value):
         return str(Decimal(str(value or 0)).quantize(Decimal("0.001")))
     return build_price_version("quote-review", season=quote.school_year_label, client=quote.client_id,
         location=quote.location_id, catalog=quote.pricing_catalog_id, currency=quote.currency,
         prospect=quote.prospect_id, total=numeric(quote.total_ttc), quote_type=quote.quote_type, quote_type_id=quote.quote_type_id,
         adjustment=(quote.meta or {}).get("financial_adjustment"),
-        calendar=quote.calendar_snapshot, lines=[{
+        calendar=quote.calendar_snapshot if calendar_snapshot is None else calendar_snapshot, lines=[{
             "id": str(l.id), "activity": l.activity_id, "quantity": numeric(l.quantity),
             "price": numeric(l.unit_price_ttc), "total": numeric(l.amount_ttc), "vat": numeric(l.vat_rate),
             "meta": l.meta, "title": l.title, "kind": l.line_type,
@@ -111,11 +113,72 @@ def reviewed_lines(db, quote, lines):
     return result
 
 
+def review_fingerprint_matches(quote, lines, expected_fingerprint):
+    """Accept only harmless metadata materialized after an annual quote approval.
+
+    The approval fingerprint remains authoritative.  The compatibility path only
+    removes redundant fields from already selected, zero-priced solfege blocks
+    and then requires the complete historical fingerprint to match.  Prices,
+    identities, quantities, activities, times and every other calendar field
+    therefore remain protected.
+    """
+    if expected_fingerprint == quote_fingerprint(quote, lines):
+        return True
+    if quote.status != "approved" or not expected_fingerprint:
+        return False
+
+    free_solfege_activity_ids = {
+        str(line.activity_id)
+        for line in lines
+        if line.activity_id
+        and line.line_type == "item"
+        and line.line_category == "service"
+        and Decimal(line.amount_ttc) == 0
+        and "solfege" in normalized(line.title)
+    }
+    removable_fields: list[tuple[int, str]] = []
+    blocks = (quote.calendar_snapshot or {}).get("blocks", [])
+    for index, block in enumerate(blocks):
+        if not isinstance(block, dict) or str(block.get("activity_id")) not in free_solfege_activity_ids:
+            continue
+        if block.get("selection_pending") is not False:
+            continue
+        try:
+            start = datetime.strptime(block["start_time"], "%H:%M")
+            end = datetime.strptime(block["end_time"], "%H:%M")
+            duration_minutes = int((end - start).total_seconds() / 60)
+        except (KeyError, TypeError, ValueError):
+            continue
+        if duration_minutes <= 0:
+            continue
+        if block.get("duration_minutes") == duration_minutes:
+            removable_fields.append((index, "duration_minutes"))
+        if block.get("pending_slot_options") == []:
+            removable_fields.append((index, "pending_slot_options"))
+
+    # Keep the compatibility search deliberately small and fail closed for an
+    # unexpected or malformed calendar instead of weakening the review.
+    if len(removable_fields) > 8:
+        return False
+    for field_count in range(1, len(removable_fields) + 1):
+        for fields in combinations(removable_fields, field_count):
+            candidate_calendar = deepcopy(quote.calendar_snapshot)
+            for index, key in fields:
+                candidate_calendar["blocks"][index].pop(key)
+            if expected_fingerprint == quote_fingerprint(
+                quote,
+                lines,
+                calendar_snapshot=candidate_calendar,
+            ):
+                return True
+    return False
+
+
 def check_review_current(db, quote, lines):
     review = (quote.meta or {}).get(KEY)
     if not review:
         return
-    if review.get("fingerprint") != quote_fingerprint(quote, lines):
+    if not review_fingerprint_matches(quote, lines, review.get("fingerprint")):
         fail("Le devis a changé depuis la vérification tarifaire. Recalculez les remises dans Lignes facturées avant envoi ou intégration.")
     # Sent documents keep their decision even if the family graph later changes.
     if quote.sent_at:

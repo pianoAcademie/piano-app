@@ -1,6 +1,10 @@
 export type AuthLoginResponse = {
   access_token: string;
   token_type: string;
+  refresh_token: string;
+  access_token_expires_in_seconds: number;
+  refresh_token_expires_in_seconds: number;
+  role: "admin" | "prof" | "client";
 };
 
 export type LocalizedTextMap = Record<string, string>;
@@ -589,6 +593,8 @@ export type AdminClientBookingOut = {
   session_end_at_utc: string;
   course_type_name: string;
   location_name: string;
+  recurrence_group_id: string | null;
+  professor_name: string | null;
   client_plan_subscription_id: string | null;
   plan_name: string | null;
   status: string;
@@ -1178,11 +1184,23 @@ export type AdminClientNewsOut = {
   link_label_en: string | null;
   status: "DRAFT" | "PUBLISHED";
   is_pinned: boolean;
+  audience_codes: ClientNewsAudienceCode[];
   published_at: string | null;
   expires_at: string | null;
   created_at: string;
   updated_at: string;
 };
+
+export type ClientNewsAudienceCode =
+  | "ALL_CLIENTS"
+  | "PARENTS_CHILD_5_12"
+  | "PARENTS_TEEN"
+  | "PARENTS_EARLY_MUSIC"
+  | "PARENTS_INITIATION"
+  | "ADULT_STUDENTS"
+  | "CHILD_ONLINE_ONLY"
+  | "ADULT_ONLINE_ONLY"
+  | "PROFESSORS";
 
 export type ClientContentLessonOut = {
   id: string;

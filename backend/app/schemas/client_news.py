@@ -7,6 +7,19 @@ from uuid import UUID
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
+ClientNewsAudienceCode = Literal[
+    "ALL_CLIENTS",
+    "PARENTS_CHILD_5_12",
+    "PARENTS_TEEN",
+    "PARENTS_EARLY_MUSIC",
+    "PARENTS_INITIATION",
+    "ADULT_STUDENTS",
+    "CHILD_ONLINE_ONLY",
+    "ADULT_ONLINE_ONLY",
+    "PROFESSORS",
+]
+
+
 class AdminClientNewsBase(BaseModel):
     title_fr: str = Field(min_length=1, max_length=220)
     title_en: str | None = Field(default=None, max_length=220)
@@ -19,6 +32,7 @@ class AdminClientNewsBase(BaseModel):
     link_label_en: str | None = Field(default=None, max_length=120)
     status: Literal["DRAFT", "PUBLISHED"] = "DRAFT"
     is_pinned: bool = False
+    audience_codes: list[ClientNewsAudienceCode] = Field(default_factory=lambda: ["ALL_CLIENTS"], min_length=1)
     published_at: datetime | None = None
     expires_at: datetime | None = None
 
@@ -53,6 +67,16 @@ class AdminClientNewsBase(BaseModel):
         if self.expires_at is not None and self.published_at is not None and self.expires_at <= self.published_at:
             raise ValueError("La date d'expiration doit être postérieure à la publication")
         return self
+
+    @field_validator("audience_codes")
+    @classmethod
+    def validate_audiences(cls, value: list[ClientNewsAudienceCode]) -> list[ClientNewsAudienceCode]:
+        unique = list(dict.fromkeys(value))
+        if "ALL_CLIENTS" in unique and len(unique) > 1:
+            raise ValueError("Tout le monde ne peut pas être combiné avec une autre audience")
+        if "PROFESSORS" in unique and len(unique) > 1:
+            raise ValueError("Les professeurs ne peuvent pas être combinés avec une audience client")
+        return unique
 
 
 class AdminClientNewsCreate(AdminClientNewsBase):

@@ -129,7 +129,7 @@ def test_successful_reset_invalidates_all_other_active_links_and_returns_email()
 
     assert user.hashed_password == "new-hash"
     assert token_row.used_at is not None
-    db.execute.assert_called_once()
+    assert db.execute.call_count == 2
     db.commit.assert_called_once()
     assert response.email == user.email
     assert "bien été modifié" in response.message

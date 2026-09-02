@@ -12,6 +12,7 @@ import {
   professorUpdateSessionInternalNoteAction,
 } from "../../lib/actions";
 import { backendRequest } from "../../lib/backend";
+import { portalFailurePath } from "../../lib/portal-auth-routing";
 import { hasAnyAdminAccess } from "../../lib/admin-access";
 import AutoSubmitInput from "../../components/auto-submit-input";
 import AutoSubmitSelect from "../../components/auto-submit-select";
@@ -52,12 +53,17 @@ import type {
   ProfessorSessionMessageOut,
   ProfessorInboxMessageOut,
   ProfessorSessionOut,
+  ClientNewsOut,
   UserOut,
 } from "../../lib/types";
 import { normalizeUiLanguage, resolveAuthOkMessage, type UiLanguage, uiText } from "../../lib/ui-i18n";
 import { sanitizeRichHtml } from "../../lib/sanitize-rich-html";
 
 type SearchParams = Record<string, string | string[] | undefined>;
+
+function emptyListResult<T>(): Promise<{ ok: true; status: 200; data: T[] }> {
+  return Promise.resolve({ ok: true, status: 200, data: [] as T[] });
+}
 type Tab = "overview" | "planning" | "notes" | "finance" | "messages" | "catalog" | "profile";
 type AgendaView = "week" | "day" | "agenda";
 type PlanningScope = "mine" | "all";
@@ -555,7 +561,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
 
   const meResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, token);
   if (!meResult.ok) {
-    redirect(professorLoginPath);
+    redirect(portalFailurePath({ status: meResult.status, returnTo: "/prof", loginPath: professorLoginPath }));
   }
 
   if (meResult.data.role === "admin") {
@@ -580,6 +586,10 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
   const requestedPlanningScope: PlanningScope =
     currentTab === "planning" && readParam(searchParams, "planning_scope") === "all" ? "all" : "mine";
   const selectedLocalIntakeId = currentTab === "overview" ? readParam(searchParams, "intake_detail").trim() : "";
+  const needsPlanning = currentTab === "overview" || currentTab === "planning";
+  const needsCatalog = currentTab === "catalog";
+  const needsFinance = currentTab === "finance";
+  const needsMessages = currentTab === "messages" || currentTab === "planning";
 
   const sessionsQuery = new URLSearchParams();
   sessionsQuery.set("from", agendaRange.from.toISOString());
@@ -603,29 +613,65 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
     catalogRequestsResult,
     localIntakesResult,
     selectedLocalIntakeResult,
+    newsResult,
   ] = await Promise.all([
     backendRequest<ProfessorMeOut>("/api/v1/professors/me", {}, token),
-    backendRequest<ProfessorAttendancePendingOut[]>("/api/v1/professors/me/attendance/pending?limit=200", {}, token),
-    backendRequest<ProfessorSessionOut[]>(`/api/v1/professors/me/sessions?${sessionsQuery.toString()}`, {}, token),
+    currentTab === "overview"
+      ? backendRequest<ProfessorAttendancePendingOut[]>("/api/v1/professors/me/attendance/pending?limit=200", {}, token)
+      : emptyListResult<ProfessorAttendancePendingOut>(),
+    needsPlanning
+      ? backendRequest<ProfessorSessionOut[]>(`/api/v1/professors/me/sessions?${sessionsQuery.toString()}`, {}, token)
+      : emptyListResult<ProfessorSessionOut>(),
     currentTab === "notes"
       ? backendRequest<ProfessorInternalNoteListOut[]>("/api/v1/professors/me/notes?limit=1000", {}, token)
       : Promise.resolve({ ok: true as const, status: 200, data: [] as ProfessorInternalNoteListOut[] }),
-    backendRequest<ProfessorBalanceOut>("/api/v1/professors/me/balance", {}, token),
-    backendRequest<ProfessorPayoutOut[]>("/api/v1/professors/me/payouts?limit=200", {}, token),
-    backendRequest<ProfessorSessionMessageOut[]>("/api/v1/professors/me/messages?limit=100", {}, token),
+    needsFinance
+      ? backendRequest<ProfessorBalanceOut>("/api/v1/professors/me/balance", {}, token)
+      : Promise.resolve({
+          ok: true as const,
+          status: 200 as const,
+          data: {
+            currency: "EUR",
+            pending_amount: "0",
+            approved_amount: "0",
+            paid_amount: "0",
+            total_amount: "0",
+            pending_sessions: 0,
+            approved_sessions: 0,
+            paid_sessions: 0,
+          } satisfies ProfessorBalanceOut,
+        }),
+    needsFinance
+      ? backendRequest<ProfessorPayoutOut[]>("/api/v1/professors/me/payouts?limit=200", {}, token)
+      : emptyListResult<ProfessorPayoutOut>(),
+    needsMessages
+      ? backendRequest<ProfessorSessionMessageOut[]>("/api/v1/professors/me/messages?limit=100", {}, token)
+      : emptyListResult<ProfessorSessionMessageOut>(),
     currentTab === "messages"
       ? backendRequest<ProfessorInboxMessageOut[]>("/api/v1/professors/me/inbox?limit=200", {}, token)
       : Promise.resolve({ ok: true as const, status: 200, data: [] as ProfessorInboxMessageOut[] }),
-    backendRequest<ProfessorContractGridOut[]>("/api/v1/professors/me/contract-grids", {}, token),
-    backendRequest<ProfessorCatalogStudentOut[]>("/api/v1/professors/me/catalog/students", {}, token),
-    backendRequest<AdminCatalogProductOut[]>("/api/v1/professors/me/catalog/products", {}, token),
-    backendRequest<LocationOut[]>("/api/v1/locations?active=true", {}, token),
-    backendRequest<AdminCatalogRequestOut[]>("/api/v1/professors/me/catalog/requests", {}, token),
-    backendRequest<ProfessorLocalIntakeTaskOut[]>(
-      "/api/v1/professors/me/intakes/local-confirmations?status=PENDING&limit=100",
-      {},
-      token,
-    ),
+    needsFinance
+      ? backendRequest<ProfessorContractGridOut[]>("/api/v1/professors/me/contract-grids", {}, token)
+      : emptyListResult<ProfessorContractGridOut>(),
+    needsCatalog
+      ? backendRequest<ProfessorCatalogStudentOut[]>("/api/v1/professors/me/catalog/students", {}, token)
+      : emptyListResult<ProfessorCatalogStudentOut>(),
+    needsCatalog
+      ? backendRequest<AdminCatalogProductOut[]>("/api/v1/professors/me/catalog/products", {}, token)
+      : emptyListResult<AdminCatalogProductOut>(),
+    needsCatalog
+      ? backendRequest<LocationOut[]>("/api/v1/locations?active=true", {}, token)
+      : emptyListResult<LocationOut>(),
+    needsCatalog
+      ? backendRequest<AdminCatalogRequestOut[]>("/api/v1/professors/me/catalog/requests", {}, token)
+      : emptyListResult<AdminCatalogRequestOut>(),
+    currentTab === "overview"
+      ? backendRequest<ProfessorLocalIntakeTaskOut[]>(
+          "/api/v1/professors/me/intakes/local-confirmations?status=PENDING&limit=100",
+          {},
+          token,
+        )
+      : emptyListResult<ProfessorLocalIntakeTaskOut>(),
     selectedLocalIntakeId
       ? backendRequest<ProfessorLocalIntakeDetailOut>(
           `/api/v1/professors/me/intakes/local-confirmations/${encodeURIComponent(selectedLocalIntakeId)}`,
@@ -633,13 +679,15 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
           token,
         )
       : Promise.resolve({ ok: true as const, status: 200, data: null as ProfessorLocalIntakeDetailOut | null }),
+    backendRequest<ClientNewsOut[]>("/api/v1/professors/me/news", {}, token),
   ]);
 
   if (!profileResult.ok) {
-    redirect(`/login?portal=prof&return_to=%2Fprof&error=${encodeURIComponent(profileResult.message)}`);
+    redirect(portalFailurePath({ status: profileResult.status, returnTo: "/prof", loginPath: professorLoginPath }));
   }
 
   const profile = profileResult.data;
+  const professorNews = newsResult.ok ? newsResult.data : [];
   const fullName = `${profile.first_name} ${profile.last_name}`.trim();
   const canViewAllSchoolSessions = Boolean(
     profile.permissions.can_view_all_school_sessions
@@ -915,6 +963,20 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
 
       {currentTab === "overview" ? (
         <section className="teacher-section-stack">
+          {professorNews.length > 0 ? (
+            <ActionCard title={language === "en" ? "School news" : "Actualités de l’école"} subtitle={language === "en" ? "Information for professors" : "Informations destinées aux professeurs"}>
+              <div className="client-news-list">
+                {professorNews.map((article) => (
+                  <article className={`client-news-card ${article.is_pinned ? "is-pinned" : ""}`} key={article.id}>
+                    <h2>{article.title}</h2>
+                    {article.summary ? <p className="client-news-summary">{article.summary}</p> : null}
+                    <div className="client-news-body">{article.body}</div>
+                    {article.link_url ? <a className="mode-link client-news-link" href={article.link_url} target="_blank" rel="noreferrer">{article.link_label || (language === "en" ? "Learn more" : "En savoir plus")}</a> : null}
+                  </article>
+                ))}
+              </div>
+            </ActionCard>
+          ) : null}
           {pendingLocalIntakes.length > 0 ? (
             <ActionCard
               title="Confirmations Bar-le-Duc"

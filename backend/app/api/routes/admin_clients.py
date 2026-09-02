@@ -9447,10 +9447,14 @@ def list_admin_client_bookings(
     _require_client(db, client_id)
 
     rows = db.execute(
-        select(Booking, CourseSession, CourseType, Location, Plan)
+        select(Booking, CourseSession, CourseType, Location, Plan, Professor)
         .join(CourseSession, CourseSession.id == Booking.session_id)
         .join(CourseType, CourseType.id == CourseSession.course_type_id)
         .join(Location, Location.id == CourseSession.location_id)
+        .outerjoin(
+            Professor,
+            Professor.id == func.coalesce(CourseSession.substitute_teacher_id, CourseSession.professor_id),
+        )
         .outerjoin(ClientPlanSubscription, ClientPlanSubscription.id == Booking.client_plan_subscription_id)
         .outerjoin(Plan, Plan.id == ClientPlanSubscription.plan_id)
         .where(Booking.user_id == client_id)
@@ -9521,6 +9525,12 @@ def list_admin_client_bookings(
                 session_end_at_utc=session_obj.end_at_utc,
                 course_type_name=course_type.name,
                 location_name=location.name,
+                recurrence_group_id=session_obj.recurrence_group_id,
+                professor_name=(
+                    " ".join(part for part in (professor.first_name, professor.last_name) if part).strip()
+                    if professor is not None
+                    else None
+                ),
                 client_plan_subscription_id=booking.client_plan_subscription_id,
                 plan_name=plan.name if plan is not None else None,
                 status=booking.status.value,
@@ -9586,7 +9596,7 @@ def list_admin_client_bookings(
             if latest_receipt_by_booking.get(booking.id) is not None
             else None,
         )
-        for booking, session_obj, course_type, location, plan in rows
+        for booking, session_obj, course_type, location, plan, professor in rows
     ]
 
 

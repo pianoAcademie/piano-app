@@ -1709,6 +1709,8 @@ class AdminClientBookingOut(BaseModel):
     session_end_at_utc: datetime
     course_type_name: str
     location_name: str
+    recurrence_group_id: UUID | None = None
+    professor_name: str | None = None
     client_plan_subscription_id: UUID | None
     plan_name: str | None
     status: str

@@ -19,6 +19,7 @@ from app.api.routes.quotes import (
     _missing_expected_live_session_dates,
     _planning_session_limit_from_quote_line,
     _quote_line_schedule_key,
+    _quote_transform_schedule_key_candidates,
     _resolve_envelope_session_for_student_time,
     _validated_quote_transform_expected_dates,
 )
@@ -427,6 +428,23 @@ class QuoteLiveSeriesMatchingTests(unittest.TestCase):
         )
 
         self.assertEqual(_quote_line_schedule_key(line), f"{activity_id}:adult_collective_main")
+
+    def test_transform_schedule_key_candidates_include_historical_quote_line_key(self) -> None:
+        activity_id = uuid4()
+        line = SimpleNamespace(
+            id=uuid4(),
+            activity_id=activity_id,
+            meta={"recommendation_key": f"{activity_id}:historical"},
+        )
+
+        self.assertEqual(
+            _quote_transform_schedule_key_candidates(
+                f"{activity_id}:snapshot",
+                activity_id=activity_id,
+                quote_service_lines=[line],
+            ),
+            [f"{activity_id}:snapshot", f"{activity_id}:historical", str(activity_id)],
+        )
 
     def test_planning_session_limit_reads_top_level_or_template_meta(self) -> None:
         top_level_line = SimpleNamespace(

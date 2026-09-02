@@ -5,6 +5,7 @@ import PortalImpersonationBanner from "../../components/portal-impersonation-ban
 import PortalReadOnlyPreviewGuard from "../../components/portal-read-only-preview-guard";
 import { getAdminToken, getPortalReturnTo, getPortalToken, readPortalImpersonationClaims } from "../../lib/auth-cookies";
 import { backendRequest } from "../../lib/backend";
+import { portalFailurePath } from "../../lib/portal-auth-routing";
 import {
   cancelBookingAction,
   changePasswordAction,
@@ -81,6 +82,10 @@ import { localeForUiLanguage, normalizeUiLanguage, resolveAuthErrorMessage, reso
 import { sanitizeExternalCourseContentHtml, sanitizeRichHtml } from "../../lib/sanitize-rich-html";
 
 type SearchParams = Record<string, string | string[] | undefined>;
+
+function emptyListResult<T>(): Promise<{ ok: true; status: 200; data: T[] }> {
+  return Promise.resolve({ ok: true, status: 200, data: [] as T[] });
+}
 type AgendaView = "agenda" | "week" | "day";
 type DashboardTab = "home" | "planning" | "courses" | "reservations" | "offers" | "finance" | "messages" | "news" | "account";
 type MessageScope = "LAST_3_MONTHS" | "CURRENT_YEAR" | "ALL";
@@ -1336,13 +1341,23 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 
   const meResult = await backendRequest<UserOut>("/api/v1/clients/me", {}, token);
   if (!meResult.ok) {
-    redirect("/login?error_code=client_access_required");
+    redirect(portalFailurePath({
+      status: meResult.status,
+      returnTo: "/client",
+      loginPath: "/login?error_code=client_access_required",
+    }));
   }
 
   const me = meResult.data;
   const language = normalizeUiLanguage(me.preferred_language);
   const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const tab = parseTab(readParam(searchParams, "tab"));
+  const needsPlanningData = tab === "home" || tab === "planning";
+  const needsPlans = needsPlanningData || tab === "offers";
+  const needsSubscriptions = ["home", "planning", "courses", "offers", "finance", "account"].includes(tab);
+  const needsBookings = ["home", "planning", "courses", "reservations"].includes(tab);
+  const needsInvoices = ["home", "offers", "finance"].includes(tab);
+  const needsPayments = tab === "finance" || tab === "account" || Boolean(readParam(searchParams, "payment_id").trim());
   const impersonationClaims = readPortalImpersonationClaims();
   const isImpersonating = Boolean(impersonationClaims?.imp);
   const isReadOnlyPreview = Boolean(impersonationClaims?.imp && impersonationClaims?.preview_read_only);
@@ -1520,33 +1535,57 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     manualCreditsResult,
     makeupSummaryResult,
   ] = await Promise.all([
-    backendRequest<CourseTypeOut[]>("/api/v1/course-types", {}, token),
-    backendRequest<LocationOut[]>("/api/v1/locations", {}, token),
-    backendRequest<SessionOut[]>(`/api/v1/clients/me/sessions?${sessionQuery.toString()}`, {}, token),
-    backendRequest<PlanOut[]>(
-      `/api/v1/plans${readParam(searchParams, "purchase_user_id") ? `?purchase_user_id=${encodeURIComponent(readParam(searchParams, "purchase_user_id"))}` : ""}`,
-      {},
-      token,
-    ),
-    backendRequest<ClientCatalogProductOut[]>("/api/v1/clients/catalog/products", {}, token),
-    backendRequest<SubscriptionOut[]>("/api/v1/clients/me/subscriptions", {}, token),
-    backendRequest<ClientBookingOut[]>("/api/v1/clients/me/bookings", {}, token),
+    needsPlanningData ? backendRequest<CourseTypeOut[]>("/api/v1/course-types", {}, token) : emptyListResult<CourseTypeOut>(),
+    needsPlanningData ? backendRequest<LocationOut[]>("/api/v1/locations", {}, token) : emptyListResult<LocationOut>(),
+    needsPlanningData
+      ? backendRequest<SessionOut[]>(`/api/v1/clients/me/sessions?${sessionQuery.toString()}`, {}, token)
+      : emptyListResult<SessionOut>(),
+    needsPlans
+      ? backendRequest<PlanOut[]>(
+          `/api/v1/plans${readParam(searchParams, "purchase_user_id") ? `?purchase_user_id=${encodeURIComponent(readParam(searchParams, "purchase_user_id"))}` : ""}`,
+          {},
+          token,
+        )
+      : emptyListResult<PlanOut>(),
+    tab === "offers"
+      ? backendRequest<ClientCatalogProductOut[]>("/api/v1/clients/catalog/products", {}, token)
+      : emptyListResult<ClientCatalogProductOut>(),
+    needsSubscriptions
+      ? backendRequest<SubscriptionOut[]>("/api/v1/clients/me/subscriptions", {}, token)
+      : emptyListResult<SubscriptionOut>(),
+    needsBookings
+      ? backendRequest<ClientBookingOut[]>("/api/v1/clients/me/bookings", {}, token)
+      : emptyListResult<ClientBookingOut>(),
     familyResultPromise,
-    backendRequest<ClientContentCourseOut[]>(
-      `/api/v1/clients/me/content-courses${
-        selectedContentMemberFilter !== "ALL"
-          ? `?member_id=${encodeURIComponent(selectedContentMemberFilter)}`
-          : ""
-      }`,
-      {},
-      token,
-    ),
-    backendRequest<ClientMessageOut[]>(`/api/v1/clients/me/messages?scope=${messageScope}`, {}, token),
-    backendRequest<ClientNewsOut[]>("/api/v1/clients/me/news", {}, token),
-    backendRequest<ClientPaymentOut[]>("/api/v1/clients/me/payments", {}, token),
-    backendRequest<ClientInvoiceOut[]>("/api/v1/clients/me/invoices", {}, token),
-    backendRequest<ClientManualCreditOut[]>("/api/v1/clients/me/manual-credits", {}, token),
-    backendRequest<MakeupStudentSummaryOut[]>("/api/v1/clients/me/makeup-summary", {}, token),
+    tab === "courses"
+      ? backendRequest<ClientContentCourseOut[]>(
+          `/api/v1/clients/me/content-courses${
+            selectedContentMemberFilter !== "ALL"
+              ? `?member_id=${encodeURIComponent(selectedContentMemberFilter)}`
+              : ""
+          }`,
+          {},
+          token,
+        )
+      : emptyListResult<ClientContentCourseOut>(),
+    (tab === "home" || tab === "messages")
+      ? backendRequest<ClientMessageOut[]>(`/api/v1/clients/me/messages?scope=${messageScope}`, {}, token)
+      : emptyListResult<ClientMessageOut>(),
+    (tab === "home" || tab === "news")
+      ? backendRequest<ClientNewsOut[]>("/api/v1/clients/me/news", {}, token)
+      : emptyListResult<ClientNewsOut>(),
+    needsPayments
+      ? backendRequest<ClientPaymentOut[]>("/api/v1/clients/me/payments", {}, token)
+      : emptyListResult<ClientPaymentOut>(),
+    needsInvoices
+      ? backendRequest<ClientInvoiceOut[]>("/api/v1/clients/me/invoices", {}, token)
+      : emptyListResult<ClientInvoiceOut>(),
+    (needsPlanningData || tab === "offers" || tab === "account")
+      ? backendRequest<ClientManualCreditOut[]>("/api/v1/clients/me/manual-credits", {}, token)
+      : emptyListResult<ClientManualCreditOut>(),
+    (needsPlanningData || tab === "courses" || tab === "reservations")
+      ? backendRequest<MakeupStudentSummaryOut[]>("/api/v1/clients/me/makeup-summary", {}, token)
+      : emptyListResult<MakeupStudentSummaryOut>(),
   ]);
 
   const errors: string[] = [...preFetchErrors];

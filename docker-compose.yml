@@ -1,6 +1,7 @@
 services:
   db:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_DB: piano_academie
       POSTGRES_USER: piano
@@ -17,6 +18,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     ports:
       - "6379:6379"
     healthcheck:
@@ -36,8 +38,12 @@ services:
       GIFT_CARD_CODE_PEPPER: ${GIFT_CARD_CODE_PEPPER:-}
       TYPEFORM_WEBHOOK_SECRET: ${TYPEFORM_WEBHOOK_SECRET:-}
       BREVO_WEBHOOK_SECRET: ${BREVO_WEBHOOK_SECRET:-}
-      ACCESS_TOKEN_EXPIRE_MINUTES: "60"
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${CLIENT_ACCESS_TOKEN_EXPIRE_MINUTES:-120}
+      CLIENT_ACCESS_TOKEN_EXPIRE_MINUTES: ${CLIENT_ACCESS_TOKEN_EXPIRE_MINUTES:-120}
+      PROFESSOR_ACCESS_TOKEN_EXPIRE_MINUTES: ${PROFESSOR_ACCESS_TOKEN_EXPIRE_MINUTES:-480}
       ADMIN_ACCESS_TOKEN_EXPIRE_MINUTES: ${ADMIN_ACCESS_TOKEN_EXPIRE_MINUTES:-480}
+      REFRESH_SESSION_EXPIRE_DAYS: ${REFRESH_SESSION_EXPIRE_DAYS:-30}
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
       LOG_LEVEL: INFO
       LOG_JSON: "true"
       EMAIL_PROVIDER: ${EMAIL_PROVIDER:-LOG}
@@ -68,6 +74,7 @@ services:
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
     ports:
       - "8000:8000"
+    restart: unless-stopped
     volumes:
       - catalog_product_images:/app/uploads/catalog-products
       - legacy_invoice_documents:/app/uploads/legacy-invoices
@@ -99,6 +106,7 @@ services:
       ADMIN_ACCESS_TOKEN_EXPIRE_MINUTES: ${ADMIN_ACCESS_TOKEN_EXPIRE_MINUTES:-480}
     ports:
       - "3000:3000"
+    restart: unless-stopped
     depends_on:
       backend:
         condition: service_healthy
@@ -121,6 +129,7 @@ services:
       SMTP_USE_SSL: ${SMTP_USE_SSL:-false}
       SMTP_TIMEOUT_SECONDS: ${SMTP_TIMEOUT_SECONDS:-15}
     command: ["python", "scripts/worker_immediate_notifications.py"]
+    restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
@@ -150,6 +159,7 @@ services:
       ZENDESK_API_TOKEN: ${ZENDESK_API_TOKEN:-}
       ZENDESK_SYNC_INTERVAL_MINUTES: ${ZENDESK_SYNC_INTERVAL_MINUTES:-15}
     command: ["python", "scripts/worker_scheduled_notifications.py"]
+    restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
@@ -163,6 +173,7 @@ services:
       DATABASE_URL: postgresql+psycopg://piano:piano@db:5432/piano_academie
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
     command: ["python", "scripts/worker_delivery_feedback.py"]
+    restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
