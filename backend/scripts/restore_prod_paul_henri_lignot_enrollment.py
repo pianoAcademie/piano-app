@@ -143,7 +143,7 @@ def main() -> None:
         invoice_to_pay = _money((invoice_meta.get("total_to_pay_by_currency") or {}).get("EUR"))
         if (
             invoice_number != TARGET_INVOICE_NUMBER
-            or invoice_status == "CANCELLED"
+            or invoice_status not in {"ISSUED", "PAID", "CANCELLED"}
             or invoice_to_pay != TARGET_TOTAL
         ):
             print(
@@ -298,6 +298,7 @@ def main() -> None:
                     "restored_subscription_ids": [str(row.id) for row in restorable_subscriptions],
                     "skipped_cancelled_session_count": skipped_cancelled_sessions,
                     "invoice_number": TARGET_INVOICE_NUMBER,
+                    "historical_invoice_status": invoice_status,
                 },
                 created_at=now,
             )
