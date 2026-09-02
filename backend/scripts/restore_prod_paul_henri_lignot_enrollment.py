@@ -180,7 +180,7 @@ def main() -> None:
             )
         if not booking_ids:
             booking_ids = list(LEGACY_BOOKING_IDS)
-        if set(booking_ids) != set(LEGACY_BOOKING_IDS):
+        if not modern_execution and set(booking_ids) != set(LEGACY_BOOKING_IDS):
             print(f"[{SCRIPT_PREFIX}] abort=booking_ids_do_not_match_reviewed_invoice_export")
             db.rollback()
             return
