@@ -8,6 +8,7 @@ import {
   professorMarkSessionAbsentAction,
   professorSendSessionMessageAction,
   professorUpdateAttendanceAction,
+  professorAddRepertoireAction,
   professorUpdateRepertoireAction,
   professorUpdateBookingInternalNoteAction,
   professorUpdateSessionInternalNoteAction,
@@ -27,6 +28,7 @@ import BottomTabs from "../../components/teacher-ui/bottom-tabs";
 import ProfessorHelpAssistant from "../../components/teacher-ui/help-assistant";
 import ProfessorMobilePushRegistration from "../../components/teacher-ui/mobile-push-registration";
 import PresenceHeartbeat from "../../components/presence-heartbeat";
+import RepertoireAssignmentFields from "../../components/repertoire-assignment-fields";
 import ListRow from "../../components/teacher-ui/list-row";
 import ProfessorLocalIntakeRequestModal from "../../components/professor-local-intake-request-modal";
 import PageHeaderMobile from "../../components/teacher-ui/page-header-mobile";
@@ -1842,10 +1844,13 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                         ) : null}
 
                         {canTakeAttendanceForSelectedSession && student.repertoire.length > 0 ? (
-                          <details className="teacher-student-note" open={student.is_first_course}>
+                          <details
+                            className="teacher-student-note"
+                            open={student.is_first_course || student.repertoire.some((assignment) => !assignment.current_piece_id || assignment.pieces.length === 0)}
+                          >
                             <summary>
                               <span>Progression musicale</span>
-                              <span className="status-pill status-scheduled">{student.repertoire[0].title}</span>
+                              <span className="status-pill status-scheduled">{student.repertoire[0].title} · Modifier</span>
                             </summary>
                             {student.repertoire.map((assignment) => (
                               <form key={assignment.id} action={professorUpdateRepertoireAction} className="teacher-student-note-form">
@@ -1875,14 +1880,11 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                                   </small>
                                   <strong>{assignment.title}</strong>
                                 </div>
-                                <label>
-                                  Degré / partition
-                                  <select name="product_id" defaultValue={assignment.product_id ?? ""} required>
-                                    {repertoireCatalog.map((partition) => (
-                                      <option key={partition.product_id} value={partition.product_id}>{partition.title}</option>
-                                    ))}
-                                  </select>
-                                </label>
+                                <RepertoireAssignmentFields
+                                  catalog={repertoireCatalog}
+                                  initialProductId={assignment.product_id}
+                                  initialPieceId={assignment.current_piece_id}
+                                />
                                 <small className="muted">Une correction est enregistrée dans l’historique, sans modifier le devis ni la facturation.</small>
                                 <label>
                                   État
@@ -1895,18 +1897,6 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                                   </select>
                                 </label>
                                 <label>
-                                  Morceau travaillé
-                                  <select name="current_piece_id" defaultValue={assignment.current_piece_id ?? ""}>
-                                    <option value="">À définir</option>
-                                    {assignment.pieces.map((piece) => (
-                                      <option key={piece.id} value={piece.id}>{piece.title}</option>
-                                    ))}
-                                  </select>
-                                </label>
-                                {assignment.current_piece_video_url ? (
-                                  <a href={assignment.current_piece_video_url} target="_blank" rel="noreferrer">Voir la vidéo ↗</a>
-                                ) : null}
-                                <label>
                                   Note pédagogique
                                   <textarea name="internal_note" rows={2} defaultValue={assignment.internal_note ?? ""} />
                                 </label>
@@ -1917,8 +1907,47 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                               </form>
                             ))}
                           </details>
-                        ) : student.is_first_course && canTakeAttendanceForSelectedSession ? (
-                          <p className="muted">Aucune partition enregistrée pour cet élève.</p>
+                        ) : canTakeAttendanceForSelectedSession ? (
+                          <details className="teacher-student-note" open>
+                            <summary>
+                              <span>Progression musicale</span>
+                              <span className="status-pill status-warn">Ajouter une partition</span>
+                            </summary>
+                            <form action={professorAddRepertoireAction} className="teacher-student-note-form">
+                              <input type="hidden" name="student_id" value={student.user_id} />
+                              <input
+                                type="hidden"
+                                name="return_to"
+                                value={buildProfHref({
+                                  tab: "planning",
+                                  agendaView,
+                                  agendaDate,
+                                  sessionId: selectedSession.id,
+                                  attendanceFilter,
+                                  planningScope,
+                                })}
+                              />
+                              <label>
+                                Partition
+                                <select name="product_id" required defaultValue="">
+                                  <option value="">Choisir une partition</option>
+                                  {repertoireCatalog.map((partition) => (
+                                    <option key={partition.product_id} value={partition.product_id}>{partition.title}</option>
+                                  ))}
+                                </select>
+                              </label>
+                              <label>
+                                État
+                                <select name="status" defaultValue="IN_PROGRESS">
+                                  <option value="IN_PROGRESS">En cours</option>
+                                  <option value="TO_DELIVER">À remettre</option>
+                                  <option value="STANDBY">En attente</option>
+                                </select>
+                              </label>
+                              <small className="muted">Cet ajout concerne uniquement le suivi pédagogique et ne modifie ni le devis ni la facturation.</small>
+                              <button type="submit" className="ghost">Ajouter la partition</button>
+                            </form>
+                          </details>
                         ) : null}
                       </article>
                     ))}

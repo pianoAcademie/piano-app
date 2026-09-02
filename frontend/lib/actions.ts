@@ -2633,6 +2633,35 @@ export async function professorUpdateRepertoireAction(formData: FormData): Promi
   redirect(appendQueryMessage(returnTo, "ok", "Progression musicale enregistrée."));
 }
 
+export async function professorAddRepertoireAction(formData: FormData): Promise<void> {
+  const token = currentPortalToken();
+  if (!token) {
+    redirect("/login?portal=prof&error_code=session_expired");
+  }
+  const studentId = String(formData.get("student_id") ?? "").trim();
+  const productId = String(formData.get("product_id") ?? "").trim();
+  const returnTo = safeProfessorReturnPath(formData, "/prof?tab=planning");
+  if (!studentId || !productId) {
+    redirect(appendQueryMessage(returnTo, "error", "Sélectionnez une partition."));
+  }
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/professors/me/students/${studentId}/repertoire`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        product_id: productId,
+        status: String(formData.get("status") ?? "IN_PROGRESS"),
+      }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/prof");
+  redirect(appendQueryMessage(returnTo, "ok", "Partition ajoutée au suivi."));
+}
+
 export async function adminAddRepertoireAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {

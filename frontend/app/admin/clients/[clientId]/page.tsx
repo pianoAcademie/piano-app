@@ -80,6 +80,7 @@ import InvoiceLineSelection from "../../../../components/invoice-line-selection"
 import FamilyBillingSplitEditor from "../../../../components/family-billing-split-editor";
 import ConfirmSubmitButton from "../../../../components/confirm-submit-button";
 import AutomaticInvoicePreview from "../../../../components/automatic-invoice-preview";
+import RepertoireAssignmentFields from "../../../../components/repertoire-assignment-fields";
 import ClientTabNavigation from "../../../../components/client-tab-navigation";
 import type {
   AdminClientBookingOut,
@@ -3594,14 +3595,11 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                       </div>
                       <span className="badge">{assignment.source === "DEVIS" ? "Issue du devis" : "Ajout manuel"}</span>
                     </div>
-                    <label>
-                      Partition suivie
-                      <select name="product_id" defaultValue={assignment.product_id ?? ""} required>
-                        {repertoireCatalog.map((partition) => (
-                          <option key={partition.product_id} value={partition.product_id}>{partition.title}</option>
-                        ))}
-                      </select>
-                    </label>
+                    <RepertoireAssignmentFields
+                      catalog={repertoireCatalog}
+                      initialProductId={assignment.product_id}
+                      initialPieceId={assignment.current_piece_id}
+                    />
                     {assignment.source === "DEVIS" ? (
                       <small className="muted">Modifiable ici si la partition indiquée dans le devis était incorrecte. Le devis d’origine reste inchangé.</small>
                     ) : null}
@@ -3615,18 +3613,6 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                         <option value="COMPLETED">Terminée</option>
                       </select>
                     </label>
-                    <label>
-                      Morceau travaillé
-                      <select name="current_piece_id" defaultValue={assignment.current_piece_id ?? ""}>
-                        <option value="">À définir</option>
-                        {assignment.pieces.map((piece) => (
-                          <option key={piece.id} value={piece.id}>{piece.title}</option>
-                        ))}
-                      </select>
-                    </label>
-                    {assignment.current_piece_video_url ? (
-                      <a href={assignment.current_piece_video_url} target="_blank" rel="noreferrer">Voir la vidéo du morceau ↗</a>
-                    ) : null}
                     <label>
                       Note pédagogique
                       <textarea name="internal_note" rows={2} defaultValue={assignment.internal_note ?? ""} />

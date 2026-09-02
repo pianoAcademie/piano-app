@@ -133,3 +133,47 @@ def test_professor_authorized_product_correction_is_audited_without_touching_quo
     correction = next(event for event in events if event.event_type == "PARTITION_CORRECTED")
     assert correction.actor_user_id == actor.id
     assert correction.note == "Correction de partition : Partition degré 8 → Partition degré 7"
+
+
+def test_product_correction_accepts_a_piece_from_the_new_partition():
+    db = MagicMock()
+    corrected_product = CatalogProduct(
+        id=uuid4(),
+        title="Partitions Ados",
+        active=True,
+        is_virtual=False,
+    )
+    selected_piece = SheetMusicPiece(
+        id=uuid4(),
+        product_id=corrected_product.id,
+        title="I Will Survive - Gloria Gaynor",
+        position=1,
+        active=True,
+    )
+    assignment = StudentSheetMusic(
+        id=uuid4(),
+        student_id=uuid4(),
+        product_id=uuid4(),
+        title_snapshot="Partition degré 6 Adulte",
+        status="IN_PROGRESS",
+        current_piece_id=None,
+    )
+    actor = MagicMock()
+    actor.id = uuid4()
+    db.get.return_value = selected_piece
+
+    with (
+        patch("app.api.routes.repertoire._partition_product", return_value=corrected_product),
+        patch("app.api.routes.repertoire._assignment_out", return_value=assignment),
+    ):
+        _update_assignment(
+            db,
+            assignment,
+            AssignmentUpdate(product_id=corrected_product.id, current_piece_id=selected_piece.id),
+            actor,
+            allow_product_change=True,
+        )
+
+    assert assignment.product_id == corrected_product.id
+    assert assignment.title_snapshot == "Partitions Ados"
+    assert assignment.current_piece_id == selected_piece.id

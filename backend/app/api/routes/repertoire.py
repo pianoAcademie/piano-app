@@ -281,6 +281,7 @@ def _update_assignment(
 ) -> AssignmentOut:
     old_status = row.status
     correction_note: str | None = None
+    product_changed = False
     if "product_id" in payload.model_fields_set:
         if not allow_product_change:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Correction réservée à l'administration")
@@ -294,23 +295,29 @@ def _update_assignment(
             row.product_id = product.id
             row.title_snapshot = product.title
             row.current_piece_id = None
+            product_changed = True
             correction_note = f"Correction de partition : {previous_title} → {product.title}"
     if payload.status is not None:
         if payload.status not in STATUSES:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Statut invalide")
         row.status = payload.status
 
-    if "current_piece_id" in payload.model_fields_set and correction_note is None:
+    if "current_piece_id" in payload.model_fields_set:
         if payload.current_piece_id is None:
             row.current_piece_id = None
         else:
             piece = db.get(SheetMusicPiece, payload.current_piece_id)
             if piece is None or piece.product_id != row.product_id or not piece.active:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="Morceau incompatible avec la partition",
-                )
-            row.current_piece_id = piece.id
+                if product_changed:
+                    row.current_piece_id = None
+                    piece = None
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail="Morceau incompatible avec la partition",
+                    )
+            if piece is not None:
+                row.current_piece_id = piece.id
 
     if "internal_note" in payload.model_fields_set:
         row.internal_note = (payload.internal_note or "").strip() or None
@@ -389,3 +396,39 @@ def professor_update_assignment(
     ):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès refusé")
     return _update_assignment(db, row, payload, actor, allow_product_change=True)
+
+
+@router.post("/professors/me/students/{student_id}/repertoire", response_model=AssignmentOut)
+def professor_add_assignment(
+    student_id: UUID,
+    payload: AssignmentCreate,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_roles(UserRole.PROF)),
+) -> AssignmentOut:
+    professor = db.scalar(select(Professor).where(func.lower(Professor.email) == actor.email.lower()))
+    student = db.get(User, student_id)
+    product = _partition_product(db, payload.product_id)
+    if professor is None or student is None or not _professor_can_edit(db, professor, student_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès refusé")
+    if product is None or payload.status not in STATUSES:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Partition ou statut invalide")
+    row = StudentSheetMusic(
+        student_id=student_id,
+        product_id=product.id,
+        title_snapshot=product.title,
+        status=payload.status,
+    )
+    db.add(row)
+    db.flush()
+    db.add(
+        StudentSheetMusicEvent(
+            assignment_id=row.id,
+            actor_user_id=actor.id,
+            event_type="CREATED",
+            new_status=row.status,
+            note="Partition ajoutée depuis le suivi professeur",
+        )
+    )
+    db.commit()
+    db.refresh(row)
+    return _assignment_out(db, row)
