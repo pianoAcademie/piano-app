@@ -25,9 +25,48 @@ TARGET_STUDENT_ID = UUID("4ef64d90-8afa-4852-8b24-71026835b649")
 TARGET_QUOTE_ID = UUID("7c8faf2d-9a14-41f7-8a3f-cc776696369e")
 TARGET_QUOTE_NUMBER = "DV-20260618092030-0BA5"
 TARGET_INVOICE_NUMBER = "PA26-0664"
+TARGET_INVOICE_NOTE_ID = UUID("88a335e1-0772-40dd-bf26-adc684b81a04")
+TARGET_BILLING_ID = UUID("4a1594ec-3009-4471-8e22-84b0cb0017d9")
 TARGET_TOTAL = Decimal("819.00")
 EXECUTION_KEY = "quote_to_enrollment_execution"
 CAPACITY_STATUSES = (BookingStatus.BOOKED, BookingStatus.PENDING_PAYMENT)
+LEGACY_BOOKING_IDS = tuple(
+    UUID(value)
+    for value in (
+        "27fb54bc-d68a-4567-a05d-a0ec25cf2e5b",
+        "bdea64dc-7dba-4bed-9bd8-5ddce1f7cff5",
+        "206619b7-cdbb-4bb1-b935-e0c6019ffd12",
+        "c2368ecf-9707-49ac-a0b7-8c412d33468b",
+        "cb74a468-ce3e-490c-8a8b-cb80fa31d68a",
+        "80f92498-a920-45e0-9eaa-7d14f113b2c3",
+        "25a04e3c-1cd3-4fe4-915a-79442bed0df5",
+        "a0f90b5e-3bc1-4aa1-80de-ee13cf65450b",
+        "227b8f93-e79c-4043-ac96-8f967b272ff0",
+        "31934aee-9cd7-4970-bb0b-1553d73af94a",
+        "5a4372fc-f1f9-4d52-89a6-8f38a6551a1a",
+        "9c67576c-d58e-41d5-97ea-9016aaedefac",
+        "f8070466-8a21-4c1c-ab41-438a89484ee7",
+        "84428c00-832e-446c-a2f1-329386107727",
+        "51fd4cc9-a4df-4246-aebe-b412e4c21162",
+        "4a2146a1-265f-420d-80a4-29637c75beaf",
+        "13f22cca-fb05-4e5f-bb22-9215b12eaf79",
+        "358077f9-f19b-4d7a-99c7-0f7f478ef4b5",
+        "2f8e2368-ed15-4c38-98a9-924ff9d2b712",
+        "4cc4849b-04c0-4e2e-947e-6cf86b743c40",
+        "526ccc66-8f23-4257-9070-b4d81054794a",
+        "a80dcd21-89ac-4cdd-878b-9a21aff3ef8b",
+        "1dc63de3-02fc-40b7-912e-a0bf38f52daf",
+        "83fff0c4-e7f1-4132-9a3a-a0accd5dcefe",
+        "e5cc9952-858d-4917-913f-97e3c0868227",
+        "4764a9aa-2f74-42b2-9b6f-eaf6354cb45e",
+        "037cc666-ff82-4671-8446-28f7a760d9da",
+        "21df7a8c-fcfa-4db5-9f24-1a19cc756ece",
+        "93724be1-ee05-4152-a1bc-fd3214225c11",
+        "6fa082d6-99ed-401f-9089-014d0cf1e78e",
+        "0cd0ccd4-fa6a-4ced-a6b8-c24ed701ffaf",
+        "73a296c2-677d-4b8f-8e5d-abbfd13d5ee5",
+    )
+)
 
 
 def _uuid_list(value: object) -> list[UUID]:
@@ -90,24 +129,26 @@ def main() -> None:
             db.rollback()
             return
 
-        invoice_rows = db.scalars(
-            select(ClientNoteEntry).where(
-                ClientNoteEntry.message.contains(TARGET_INVOICE_NUMBER),
-                ClientNoteEntry.message.contains(str(TARGET_QUOTE_ID)),
-            )
-        ).all()
-        if len(invoice_rows) != 1:
-            print(f"[{SCRIPT_PREFIX}] abort=active_annual_invoice_not_found_exactly_once")
+        invoice_note = db.scalar(
+            select(ClientNoteEntry).where(ClientNoteEntry.id == TARGET_INVOICE_NOTE_ID).with_for_update()
+        )
+        if invoice_note is None or invoice_note.user_id != TARGET_BILLING_ID:
+            print(f"[{SCRIPT_PREFIX}] abort=exact_annual_invoice_not_found")
             db.rollback()
             return
 
-        invoice_meta = _invoice_metadata(invoice_rows[0])
+        invoice_meta = _invoice_metadata(invoice_note)
         if (
             str(invoice_meta.get("invoice_number") or "") != TARGET_INVOICE_NUMBER
-            or str(invoice_meta.get("source_quote_id") or "") != str(TARGET_QUOTE_ID)
             or str(invoice_meta.get("invoice_status") or "ISSUED").upper() == "CANCELLED"
+            or _money((invoice_meta.get("total_to_pay_by_currency") or {}).get("EUR")) != TARGET_TOTAL
         ):
             print(f"[{SCRIPT_PREFIX}] abort=annual_invoice_metadata_mismatch")
+            db.rollback()
+            return
+        invoice_source_quote_id = str(invoice_meta.get("source_quote_id") or "")
+        if invoice_source_quote_id and invoice_source_quote_id != str(TARGET_QUOTE_ID):
+            print(f"[{SCRIPT_PREFIX}] abort=annual_invoice_source_quote_mismatch")
             db.rollback()
             return
 
@@ -128,6 +169,12 @@ def main() -> None:
                     if isinstance(key, str) and key.startswith("BOOKING:")
                 ]
             )
+        if not booking_ids:
+            booking_ids = list(LEGACY_BOOKING_IDS)
+        if set(booking_ids) != set(LEGACY_BOOKING_IDS):
+            print(f"[{SCRIPT_PREFIX}] abort=booking_ids_do_not_match_reviewed_invoice_export")
+            db.rollback()
+            return
         if not booking_ids:
             print(f"[{SCRIPT_PREFIX}] abort=no_invoice_or_execution_bookings")
             db.rollback()
