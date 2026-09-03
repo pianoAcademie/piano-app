@@ -538,7 +538,7 @@ def _payment_method_label_from_code(method_code: str) -> str:
 
 def _object_mentions_monthly_card_payment(value: object) -> bool:
     if isinstance(value, str):
-        return value.strip().upper() == "CARD_MONTHLY"
+        return value.strip().upper() in {"CARD_MONTHLY", "CARD_MONTHLY_FIXED", "CB_MONTHLY_FIXED"}
     if isinstance(value, dict):
         return any(_object_mentions_monthly_card_payment(item) for item in value.values())
     if isinstance(value, list):
@@ -556,6 +556,82 @@ def _quote_followup_uses_monthly_card_payment(*, quote: Quote, followup: QuoteAc
         if str(terms_snapshot.get(key) or "").strip().upper() == "CARD_MONTHLY":
             return True
     return _object_mentions_monthly_card_payment(payload) or _object_mentions_monthly_card_payment(terms_snapshot)
+
+
+def _quote_followup_uses_fixed_monthly_card_payment(*, quote: Quote, followup: QuoteAcceptanceFollowup) -> bool:
+    fixed_codes = {"CARD_MONTHLY_FIXED", "CB_MONTHLY_FIXED"}
+    payload = _json_object(followup.payload)
+    terms_snapshot = _json_object(quote.payment_terms_snapshot)
+    for source in (payload, terms_snapshot):
+        for key in ("payment_method_code", "paymentMethodCode", "payment_method", "paymentMethod"):
+            if str(source.get(key) or "").strip().upper() in fixed_codes:
+                return True
+    return False
+
+
+def _create_followup_fixed_monthly_installments(
+    db: Session,
+    *,
+    quote: Quote,
+    student: User,
+    billing: User,
+    actor_user_id: UUID | None,
+    created_transaction_ids: list[UUID],
+) -> None:
+    """Materialize the accepted fixed schedule so invoices never depend on lesson density."""
+    schedule = _json_list(_json_object(quote.payment_terms_snapshot).get("schedule"))
+    if not schedule:
+        raise HTTPException(status_code=409, detail="L'echeancier mensuel fixe du devis est introuvable")
+
+    quote_lines = db.scalars(select(QuoteLine).where(QuoteLine.quote_id == quote.id)).all()
+    vat_rates = {_q3(Decimal(line.vat_rate or 0)) for line in quote_lines if Decimal(line.amount_ttc or 0) != 0}
+    if len(vat_rates) != 1:
+        raise HTTPException(status_code=409, detail="Le devis mensuel fixe contient plusieurs taux de TVA")
+    vat_rate = next(iter(vat_rates))
+    now = _utcnow()
+    expected_total = Decimal("0.00")
+    installment_count = len(schedule)
+    for index, raw in enumerate(schedule, start=1):
+        item = _json_object(raw)
+        amount_ttc = _q2(_decimal_or_none(item.get("amount_ttc")) or Decimal("0"))
+        due_date_raw = str(item.get("due_date") or "").strip()
+        if amount_ttc <= 0 or not due_date_raw:
+            raise HTTPException(status_code=409, detail="Une echeance mensuelle fixe est incomplete")
+        try:
+            due_date = date.fromisoformat(due_date_raw)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail="Une date d'echeance mensuelle fixe est invalide") from exc
+        reference = f"QUOTE:{quote.id}:INSTALLMENT:{index}"
+        if db.scalar(select(ClientManualTransaction.id).where(ClientManualTransaction.reference == reference)):
+            raise HTTPException(status_code=409, detail="Une echeance mensuelle fixe existe deja pour ce devis")
+        divisor = Decimal("1") + (vat_rate / Decimal("100"))
+        amount_ht = _q2(amount_ttc / divisor) if divisor else amount_ttc
+        transaction = ClientManualTransaction(
+            user_id=billing.id,
+            student_user_id=student.id,
+            actor_user_id=actor_user_id,
+            transaction_type="CHARGE",
+            status="PENDING",
+            label=f"Echeance {index}/{installment_count} - {quote.quote_number}",
+            description="Echeance mensuelle fixe conforme au devis accepte",
+            category="Forfait annuel - mensualite fixe",
+            occurred_at=_invoice_issued_at_for_date(issued_date=due_date, now=now),
+            amount_excl_vat=amount_ht,
+            vat_rate=vat_rate,
+            vat_amount=_q2(amount_ttc - amount_ht),
+            total_incl_vat=amount_ttc,
+            currency=(quote.currency or "EUR").upper(),
+            reference=reference,
+            legal_entity_id=quote.legal_entity_id,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(transaction)
+        db.flush()
+        created_transaction_ids.append(transaction.id)
+        expected_total += amount_ttc
+    if _q2(expected_total) != _q2(Decimal(quote.total_ttc or 0)):
+        raise HTTPException(status_code=409, detail="Le total de l'echeancier fixe differe du total du devis")
 
 
 def _upsert_quote_monthly_card_auto_invoice_rule(
@@ -11448,6 +11524,7 @@ def _execute_quote_followup_transformation(
     if annual_review and (student.id != review_client_id(db, annual_review) or not plan or plan.kind != PlanKind.FORFAIT):
         raise HTTPException(409, "L'élève et le forfait doivent correspondre à la décision tarifaire validée.")
     monthly_card_billing = _quote_followup_uses_monthly_card_payment(quote=quote, followup=followup)
+    fixed_monthly_card_billing = _quote_followup_uses_fixed_monthly_card_payment(quote=quote, followup=followup)
     monthly_card_auto_rule_id: UUID | None = None
     monthly_card_fixed_fee_date = QUOTE_MONTHLY_CARD_BILLING_START_DATE if monthly_card_billing else None
     if monthly_card_billing:
@@ -11458,6 +11535,9 @@ def _execute_quote_followup_transformation(
             actor_user_id=current_user.id,
         )
         monthly_card_auto_rule_id = monthly_card_auto_rule.id if monthly_card_auto_rule is not None else None
+    if fixed_monthly_card_billing and subscription is not None:
+        subscription.billing_method_code = "CARD_MONTHLY_FIXED"
+        db.add(subscription)
     forfait_discount_row_ids = _apply_followup_forfait_discount_rows(
         db,
         quote=quote,
@@ -11795,17 +11875,27 @@ def _execute_quote_followup_transformation(
                 annual_decision=annual_decision,
             )
 
-    _create_followup_manual_transactions(
-        db,
-        quote=quote,
-        student=student,
-        billing=billing,
-        transformation_payload=transformation_payload,
-        actor_user_id=current_user.id,
-        created_transaction_ids=created_transaction_ids,
-        skip_row_ids=forfait_discount_row_ids,
-        forced_effective_date=monthly_card_fixed_fee_date,
-    )
+    if fixed_monthly_card_billing:
+        _create_followup_fixed_monthly_installments(
+            db,
+            quote=quote,
+            student=student,
+            billing=billing,
+            actor_user_id=current_user.id,
+            created_transaction_ids=created_transaction_ids,
+        )
+    else:
+        _create_followup_manual_transactions(
+            db,
+            quote=quote,
+            student=student,
+            billing=billing,
+            transformation_payload=transformation_payload,
+            actor_user_id=current_user.id,
+            created_transaction_ids=created_transaction_ids,
+            skip_row_ids=forfait_discount_row_ids,
+            forced_effective_date=monthly_card_fixed_fee_date,
+        )
     _create_followup_makeup_pass_purchases(
         db,
         quote=quote,
@@ -11817,7 +11907,7 @@ def _execute_quote_followup_transformation(
     _assert_quote_followup_generated_total(
         db,
         quote=quote,
-        created_booking_ids=created_booking_ids,
+        created_booking_ids=[] if fixed_monthly_card_billing else created_booking_ids,
         created_transaction_ids=created_transaction_ids,
     )
     annual_booking_ids = list(created_booking_ids)
