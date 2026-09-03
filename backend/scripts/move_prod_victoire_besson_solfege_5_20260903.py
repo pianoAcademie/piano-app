@@ -117,7 +117,7 @@ def run(*, apply: bool) -> dict:
         pairs = []
         for booking, source, _ in source_rows:
             source_date, source_start, source_end, week = local_parts(source)
-            require(source_start == "19:00" and source_end == "19:30", f"Unexpected source time on {source_date}")
+            require(source_start == "19:00" and source_end == "19:45", f"Unexpected source time on {source_date}")
             target = target_by_week.get(week)
             require(target is not None, f"No target lesson in ISO week {week}")
             target_date, _, _, _ = local_parts(target)
@@ -143,7 +143,7 @@ def run(*, apply: bool) -> dict:
         result = {
             "mode": "apply" if apply else "dry_run",
             "student": "Victoire Besson",
-            "from": "Solfège niveau 4 — jeudi 19:00-19:30",
+            "from": "Solfège niveau 4 — jeudi 19:00-19:45",
             "to": "Solfège niveau 5 — lundi 19:35-20:05",
             "bookings": len(pairs),
             "first_target_date": local_parts(pairs[0][2])[0],
