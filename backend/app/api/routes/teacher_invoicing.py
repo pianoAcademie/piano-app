@@ -89,6 +89,7 @@ TEACHER_I18N = {
         "service_fallback": "Prestation",
         "missing_service_message": "Signalement prestation manquante\nDate: {service_date}\nPrestation: {service_label}\nEleve/Groupe: {student_or_group}\nDuree (min): {duration_minutes}\nModalite/Lieu: {modality_label}\nEleves presents: {attendee_count}\nTaux estime HT: {estimated_rate}\n\nCommentaire professeur:\n{comment}",
         "external_invoice_must_be_approved": "Le releve doit etre approuve avant envoi d une facture externe",
+        "external_invoice_already_sent": "Cette facture a deja ete transmise a la comptabilite. Un nouvel envoi est bloque pour eviter un doublon.",
         "payor_invalid": "Entite payeur invalide",
         "statement_not_found_payor": "Releve introuvable pour l entite payeur selectionnee",
         "external_invoice_default_name": "facture.pdf",
@@ -147,6 +148,7 @@ TEACHER_I18N = {
         "service_fallback": "Service",
         "missing_service_message": "Missing service report\nDate: {service_date}\nService: {service_label}\nStudent/Group: {student_or_group}\nDuration (min): {duration_minutes}\nMode/Location: {modality_label}\nStudents present: {attendee_count}\nEstimated net rate: {estimated_rate}\n\nTeacher comment:\n{comment}",
         "external_invoice_must_be_approved": "The statement must be approved before sending an external invoice",
+        "external_invoice_already_sent": "This invoice has already been sent to accounting. Another submission is blocked to prevent a duplicate.",
         "payor_invalid": "Invalid payor legal entity",
         "statement_not_found_payor": "Statement not found for the selected payor",
         "external_invoice_default_name": "invoice.pdf",
@@ -388,6 +390,8 @@ def _statement_out(row: TeacherMonthlyStatement, computed: ComputedStatement) ->
         vat_applicable=computed.vat_applicable,
         vat_rate=computed.vat_rate,
         dispute_message_last=row.dispute_message_last,
+        external_invoice_sent_at=row.external_invoice_sent_at,
+        external_invoice_file_name=row.external_invoice_file_name,
         lines=[
             {
                 "course_type_id": line.course_type_id,
@@ -1459,6 +1463,20 @@ async def send_teacher_external_invoice(
     if statement_row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_teacher_text("statement_not_found_payor", language=language))
     statement, computed = statement_row
+    locked_statement = db.scalar(
+        select(TeacherMonthlyStatement)
+        .where(TeacherMonthlyStatement.id == statement.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if locked_statement is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_teacher_text("statement_not_found_payor", language=language))
+    statement = locked_statement
+    if statement.external_invoice_sent_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=_teacher_text("external_invoice_already_sent", language=language),
+        )
     if statement.status not in {"validated", "approved", "exported", "invoice_generated", "closed"}:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -1511,6 +1529,8 @@ async def send_teacher_external_invoice(
 
     now = _utcnow()
     statement.status = "exported"
+    statement.external_invoice_sent_at = now
+    statement.external_invoice_file_name = file_name
     statement.updated_at = now
     db.add(statement)
     _log_audit(

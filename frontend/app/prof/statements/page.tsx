@@ -18,6 +18,7 @@ import BottomTabs from "../../../components/teacher-ui/bottom-tabs";
 import ProfessorHelpAssistant from "../../../components/teacher-ui/help-assistant";
 import PageHeaderMobile from "../../../components/teacher-ui/page-header-mobile";
 import TeacherMissingServiceForm, { type MissingServiceActivityOption, type MissingServiceLocationOption } from "../../../components/teacher-missing-service-form";
+import TeacherExternalInvoiceSubmitButton from "../../../components/teacher-external-invoice-submit-button";
 import PortalImpersonationBanner from "../../../components/portal-impersonation-banner";
 import type { CourseTypeOut, LocationOut, ProfessorContractGridOut, TeacherInvoiceOut, TeacherStatementOut, UserOut } from "../../../lib/types";
 import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../lib/ui-i18n";
@@ -65,6 +66,21 @@ function formatDateLabel(value: string, language: UiLanguage): string {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
+  });
+}
+
+function formatDateTimeLabel(value: string, language: UiLanguage): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return parsed.toLocaleString(localeForUiLanguage(language), {
+    timeZone: "Europe/Paris",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
   });
 }
 
@@ -353,13 +369,16 @@ export default async function TeacherStatementsPage({
     ? t("teacher.statement_missing_service_success")
     : notice === "dispute_sent"
       ? t("teacher.statement_dispute_success")
+      : notice === "external_invoice_sent"
+        ? t("teacher.external_invoice_success")
       : "";
   const showSuccessModal = successMessage.length > 0;
   const monthInvoices = invoicesResult.ok ? invoicesResult.data : [];
-  const externalPayorOptions = statements.map((statement) => ({
+  const externalPayorOptions = statements.filter((statement) => !statement.external_invoice_sent_at).map((statement) => ({
     id: statement.payor_legal_entity_id,
     label: statement.payor_legal_entity_name,
   }));
+  const sentExternalInvoices = statements.filter((statement) => statement.external_invoice_sent_at);
 
   const gridLineByCourseTypeId = new Map<string, ProfessorContractGridOut["lines"][number]>();
   if (contractGridsResult.ok) {
@@ -674,6 +693,15 @@ export default async function TeacherStatementsPage({
               <a className="mode-link" href={`/prof/statements/${year}/${month}/export`}>
                 {t("teacher.export_services")}
               </a>
+              {sentExternalInvoices.map((statement) => (
+                <AlertCard key={statement.payor_legal_entity_id} tone="ok">
+                  {t("teacher.external_invoice_already_sent", {
+                    payor: statement.payor_legal_entity_name,
+                    date: formatDateTimeLabel(statement.external_invoice_sent_at || "", language),
+                    file: statement.external_invoice_file_name || t("teacher.invoice_pdf"),
+                  })}
+                </AlertCard>
+              ))}
               {externalPayorOptions.length > 0 ? (
                 <form action={teacherSendExternalInvoiceAction} className="grid top-gap-sm teacher-form-stack statement-external-send-form">
                   <input type="hidden" name="year" value={year} />
@@ -697,7 +725,7 @@ export default async function TeacherStatementsPage({
                     {t("teacher.optional_note")}
                     <textarea name="note" rows={3} maxLength={1000} placeholder={t("teacher.accounting_note_placeholder")} />
                   </label>
-                  <button type="submit">{t("teacher.send_external_invoice")}</button>
+                  <TeacherExternalInvoiceSubmitButton language={language} />
                 </form>
               ) : null}
             </details>
@@ -799,7 +827,7 @@ export default async function TeacherStatementsPage({
           <a className="close-link" href={statementsMonthHref} aria-label={t("teacher.close_confirmation")}>
             ✕
           </a>
-          <h3>{t("teacher.report_sent")}</h3>
+          <h3>{notice === "external_invoice_sent" ? t("teacher.external_invoice_confirmation_title") : t("teacher.report_sent")}</h3>
           <p className="muted">{successMessage || ok || t("teacher.statement_default_success")}</p>
           <a className="mode-link" href={statementsMonthHref}>
             {t("common.continue")}

@@ -62,6 +62,8 @@ class TeacherMonthlyStatement(Base):
         server_default=text("'{}'::jsonb"),
     )
     dispute_message_last: Mapped[str | None] = mapped_column(Text, nullable=True)
+    external_invoice_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    external_invoice_file_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

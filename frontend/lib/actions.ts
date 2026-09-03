@@ -3276,7 +3276,12 @@ export async function teacherSendExternalInvoiceAction(formData: FormData): Prom
   }
   revalidatePath("/prof/statements");
   revalidatePath(`/prof/statements/${year}/${month}`);
-  redirect(appendQueryMessage(returnTo, "ok", t("teacher.action.external_invoice_sent_to_accounting")));
+  const successPath = setQueryParam(
+    appendQueryMessage(returnTo, "ok", t("teacher.action.external_invoice_sent_to_accounting")),
+    "notice",
+    "external_invoice_sent",
+  );
+  redirect(successPath);
 }
 
 export async function createAdminSessionAction(formData: FormData): Promise<void> {

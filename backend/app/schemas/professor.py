@@ -367,6 +367,8 @@ class TeacherStatementOut(BaseModel):
     vat_applicable: bool = False
     vat_rate: Decimal | None = None
     dispute_message_last: str | None = None
+    external_invoice_sent_at: datetime | None = None
+    external_invoice_file_name: str | None = None
     lines: list[TeacherStatementLineOut] = Field(default_factory=list)
     missing_sessions: list[TeacherStatementMissingSessionOut] = Field(default_factory=list)
 

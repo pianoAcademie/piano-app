@@ -1806,6 +1806,8 @@ export type TeacherStatementOut = {
   vat_applicable: boolean;
   vat_rate: string | null;
   dispute_message_last: string | null;
+  external_invoice_sent_at: string | null;
+  external_invoice_file_name: string | null;
   lines: TeacherStatementLineOut[];
   missing_sessions: TeacherStatementMissingSessionOut[];
 };
