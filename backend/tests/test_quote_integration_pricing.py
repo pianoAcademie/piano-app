@@ -209,6 +209,11 @@ class QuoteIntegrationPricingTests(unittest.TestCase):
             activity_id=activity_id,
             schedule_key_candidates=[f"{activity_id}:primary"],
             selected_series_key=str(approved_series_id),
+            selected_session_id=uuid4(),
+            selected_location_id=uuid4(),
+            selected_weekday=2,
+            selected_start_time="14:00",
+            selected_end_time="15:00",
         ))
         self.assertFalse(_approved_quote_contains_selected_series(
             quote=quote,
@@ -216,6 +221,11 @@ class QuoteIntegrationPricingTests(unittest.TestCase):
             activity_id=activity_id,
             schedule_key_candidates=[f"{activity_id}:primary"],
             selected_series_key=str(uuid4()),
+            selected_session_id=uuid4(),
+            selected_location_id=uuid4(),
+            selected_weekday=2,
+            selected_start_time="14:00",
+            selected_end_time="15:00",
         ))
         quote.meta = {"planning_hold_released": "true"}
         self.assertFalse(_approved_quote_contains_selected_series(
@@ -224,6 +234,51 @@ class QuoteIntegrationPricingTests(unittest.TestCase):
             activity_id=activity_id,
             schedule_key_candidates=[f"{activity_id}:primary"],
             selected_series_key=str(approved_series_id),
+            selected_session_id=uuid4(),
+            selected_location_id=uuid4(),
+            selected_weekday=2,
+            selected_start_time="14:00",
+            selected_end_time="15:00",
+        ))
+
+    def test_legacy_approved_quote_series_is_recognized_by_its_exact_schedule(self) -> None:
+        activity_id = uuid4()
+        location_id = uuid4()
+        session_id = uuid4()
+        quote = SimpleNamespace(
+            status="approved",
+            approved_at=datetime(2026, 9, 3, tzinfo=timezone.utc),
+            meta={},
+        )
+        legacy_snapshot = {
+            "blocks": [{
+                "activity_id": str(activity_id),
+                "location_id": str(location_id),
+                "weekday": 2,
+                "start_time": "18:35",
+                "end_time": "19:20",
+            }],
+            "sessions": [],
+        }
+
+        shared = dict(
+            quote=quote,
+            calendar_snapshot=legacy_snapshot,
+            activity_id=activity_id,
+            schedule_key_candidates=[str(activity_id)],
+            selected_series_key=str(uuid4()),
+            selected_session_id=session_id,
+            selected_location_id=location_id,
+            selected_weekday=2,
+            selected_end_time="19:20",
+        )
+        self.assertTrue(_approved_quote_contains_selected_series(
+            **shared,
+            selected_start_time="18:35",
+        ))
+        self.assertFalse(_approved_quote_contains_selected_series(
+            **shared,
+            selected_start_time="17:35",
         ))
 
     def test_stale_pricing_review_becomes_audit_warning_after_client_approval(self) -> None:

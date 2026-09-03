@@ -10710,6 +10710,11 @@ def _approved_quote_contains_selected_series(
     activity_id: UUID,
     schedule_key_candidates: list[str],
     selected_series_key: str,
+    selected_session_id: UUID,
+    selected_location_id: UUID,
+    selected_weekday: int,
+    selected_start_time: str,
+    selected_end_time: str,
 ) -> bool:
     """Return whether the selected live series is exactly the one accepted by the client.
 
@@ -10724,18 +10729,40 @@ def _approved_quote_contains_selected_series(
     if hold_released is True or str(hold_released or "").strip().lower() in {"1", "true", "yes"}:
         return False
     normalized_series_key = str(selected_series_key or "").strip()
-    if not normalized_series_key:
-        return False
+    normalized_session_id = str(selected_session_id or "").strip()
+    normalized_location_id = str(selected_location_id or "").strip()
     accepted_schedule_keys = {str(item or "").strip() for item in schedule_key_candidates if str(item or "").strip()}
     for collection_name in ("blocks", "sessions"):
         for raw in _json_list(calendar_snapshot.get(collection_name)):
             row = _json_object(raw)
-            row_series_key = str(row.get("series_key") or row.get("recurrence_group_id") or "").strip()
-            if row_series_key != normalized_series_key:
-                continue
             recommendation_key = str(row.get("recommendation_key") or "").strip()
             row_activity_id = _parse_uuid_value(row.get("activity_id"))
-            if row_activity_id == activity_id or recommendation_key in accepted_schedule_keys:
+            if row_activity_id != activity_id and recommendation_key not in accepted_schedule_keys:
+                continue
+            row_series_key = str(row.get("series_key") or row.get("recurrence_group_id") or "").strip()
+            if row_series_key:
+                if normalized_series_key and row_series_key == normalized_series_key:
+                    return True
+                continue
+            row_session_id = str(row.get("session_id") or row.get("selected_session_id") or row.get("id") or "").strip()
+            if row_session_id:
+                if normalized_session_id and row_session_id == normalized_session_id:
+                    return True
+                continue
+            try:
+                row_weekday = int(row.get("weekday"))
+            except (TypeError, ValueError):
+                row_weekday = -1
+            row_location_id = str(row.get("location_id") or "").strip()
+            row_start_time = str(row.get("start_time") or "").strip()
+            row_end_time = str(row.get("end_time") or "").strip()
+            if (
+                normalized_location_id
+                and row_location_id == normalized_location_id
+                and row_weekday == selected_weekday
+                and row_start_time == selected_start_time
+                and (not row_end_time or row_end_time == selected_end_time)
+            ):
                 return True
     return False
 
@@ -12163,6 +12190,11 @@ def _execute_quote_followup_transformation(
             activity_id=activity_id,
             schedule_key_candidates=schedule_key_candidates,
             selected_series_key=selected_series_key,
+            selected_session_id=selected_session.id,
+            selected_location_id=selected_session.location_id,
+            selected_weekday=selected_weekday,
+            selected_start_time=selected_session_start_local.strftime("%H:%M"),
+            selected_end_time=selected_session.end_at_utc.astimezone(selected_session_zone).strftime("%H:%M"),
         )
 
         def _expected_dates_for_candidates(
