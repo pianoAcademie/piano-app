@@ -111,17 +111,15 @@ def run(*, apply: bool) -> dict:
             if course.name == TARGET_LEVEL and start_time == TARGET_START and end_time == TARGET_END:
                 target_rows.append((session, course))
         require(len(target_rows) == EXPECTED_COUNT, f"Expected {EXPECTED_COUNT} target lessons, found {len(target_rows)}")
-        target_by_week = {local_parts(session)[3]: session for session, _ in target_rows}
-        require(len(target_by_week) == EXPECTED_COUNT, "Target series contains duplicate ISO weeks")
-
         pairs = []
-        for booking, source, _ in source_rows:
-            source_date, source_start, source_end, week = local_parts(source)
+        # This is an annual series replacement, not an occurrence reschedule.
+        # The two school calendars legitimately differ around holidays, so the
+        # 26 actual source dates are replaced by the 26 actual target dates in
+        # chronological order rather than synthesized week by week.
+        for (booking, source, _), (target, _) in zip(source_rows, target_rows, strict=True):
+            source_date, source_start, source_end, _ = local_parts(source)
             require(source_start == "19:00" and source_end == "19:45", f"Unexpected source time on {source_date}")
-            target = target_by_week.get(week)
-            require(target is not None, f"No target lesson in ISO week {week}")
             target_date, _, _, _ = local_parts(target)
-            require((datetime.fromisoformat(source_date).date() - datetime.fromisoformat(target_date).date()).days == 3, f"Source/target week mismatch for {source_date}")
             require(source.location_id == target.location_id, "Online location changed")
             active_count = db.scalar(
                 select(func.count(Booking.id)).where(
