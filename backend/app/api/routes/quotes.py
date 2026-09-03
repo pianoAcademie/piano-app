@@ -10165,7 +10165,7 @@ def _create_followup_booking(
             start_time_local=student_start_time_local,
             end_time_local=student_end_time_local,
         )
-    is_completed_occurrence = session_obj.status == SessionStatus.COMPLETED
+    is_completed_occurrence = getattr(session_obj, "status", SessionStatus.SCHEDULED) == SessionStatus.COMPLETED
     booking = Booking(
         session_id=session_obj.id,
         user_id=student.id,

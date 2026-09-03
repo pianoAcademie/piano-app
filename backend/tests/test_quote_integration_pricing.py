@@ -15,6 +15,7 @@ from fastapi import HTTPException
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.api.routes.admin_clients import (
+    _invoice_payments_with_routed_referral_credits,
     _invoice_payments_with_referral_credit_tax,
     _invoice_referral_credit_tax_breakdown,
 )
@@ -430,6 +431,27 @@ class QuoteIntegrationPricingTests(unittest.TestCase):
         self.assertEqual(normalized_credit.vat_rate, Decimal("20.000"))
         self.assertEqual(normalized_credit.vat_amount, Decimal("-8.33"))
         self.assertEqual(normalized_credit.total_incl_vat, Decimal("-50.00"))
+
+    def test_entity_less_referral_credit_follows_unique_positive_purchase_seller(self) -> None:
+        seller_id = uuid4()
+        purchase = AdminClientPaymentOut(
+            id=uuid4(), source="BOOKING", occurred_at=datetime(2026, 9, 2, tzinfo=timezone.utc),
+            label="Cours", status="PENDING", amount_excl_vat=Decimal("18.33"),
+            vat_rate=Decimal("20.000"), vat_amount=Decimal("3.67"), total_incl_vat=Decimal("22.00"),
+            currency="EUR", reference=None, seller_legal_entity_id=seller_id, billing_entity="PIANO ACADEMIE",
+        )
+        credit = AdminClientPaymentOut(
+            id=uuid4(), source="MANUAL", occurred_at=datetime(2026, 9, 3, tzinfo=timezone.utc),
+            label="Avoir parrainage", status="COMPLETED", amount_excl_vat=Decimal("-50.00"),
+            vat_rate=Decimal("0.000"), vat_amount=Decimal("0.00"), total_incl_vat=Decimal("-50.00"),
+            currency="EUR", reference="REFERRAL:test", manual_transaction_type="DISCOUNT",
+            category="Parrainage",
+        )
+
+        routed = _invoice_payments_with_routed_referral_credits([purchase, credit])
+
+        self.assertEqual(routed[1].seller_legal_entity_id, seller_id)
+        self.assertEqual(routed[1].billing_entity, "PIANO ACADEMIE")
 
     def test_discounts_are_assigned_to_one_schedule_only(self) -> None:
         activity_id = uuid4()

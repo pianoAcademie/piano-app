@@ -457,6 +457,8 @@ def refresh_duplicate_referral_guard(db: Session, reward: ReferralReward) -> boo
 
     keep = min(active_rewards, key=_referral_keep_key)
     now = utcnow()
+    source_quote = db.scalar(select(Quote).where(Quote.id == reward.quote_id))
+    legal_entity_id = source_quote.legal_entity_id if source_quote is not None else None
     changed = False
     for duplicate in active_rewards:
         if duplicate.id == keep.id:
@@ -982,7 +984,9 @@ def grant_referral_credit(
         total_incl_vat=Decimal("0.00") - amount,
         currency=currency,
         reference=f"REFERRAL:{reward.id}",
-        legal_entity_id=None,
+        # The credit is issued by the same legal entity as the referred
+        # enrollment, so it can be applied to a later invoice from that entity.
+        legal_entity_id=legal_entity_id,
         created_at=now,
         updated_at=now,
     )

@@ -4452,6 +4452,41 @@ def _invoice_payments_with_referral_credit_tax(
     return normalized
 
 
+def _invoice_payments_with_routed_referral_credits(
+    payments: list[AdminClientPaymentOut],
+) -> list[AdminClientPaymentOut]:
+    """Attach entity-less historical referral credits to a unique purchase seller."""
+    routed: list[AdminClientPaymentOut] = []
+    positive_sellers_by_currency: dict[str, dict[UUID, str | None]] = {}
+    for payment in payments:
+        if _is_referral_credit_payment(payment) or Decimal(payment.total_incl_vat or 0) <= 0:
+            continue
+        if payment.seller_legal_entity_id is None:
+            continue
+        currency = _normalize_currency(payment.currency, fallback="EUR")
+        positive_sellers_by_currency.setdefault(currency, {})[payment.seller_legal_entity_id] = payment.billing_entity
+
+    for payment in payments:
+        if not _is_referral_credit_payment(payment) or payment.seller_legal_entity_id is not None:
+            routed.append(payment)
+            continue
+        currency = _normalize_currency(payment.currency, fallback="EUR")
+        sellers = positive_sellers_by_currency.get(currency, {})
+        if len(sellers) != 1:
+            routed.append(payment)
+            continue
+        seller_legal_entity_id, billing_entity = next(iter(sellers.items()))
+        routed.append(
+            payment.model_copy(
+                update={
+                    "seller_legal_entity_id": seller_legal_entity_id,
+                    "billing_entity": billing_entity,
+                }
+            )
+        )
+    return routed
+
+
 def _active_invoice_lock_by_payment_key(
     db: Session,
     *,
@@ -12696,6 +12731,8 @@ def create_admin_client_range_invoice(
     if not payments:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No transactions for this period")
 
+    payments = _invoice_payments_with_routed_referral_credits(payments)
+
     payments_by_entity_group: dict[str, list[AdminClientPaymentOut]] = {}
     entity_group_context: dict[str, tuple[UUID | None, str]] = {}
     for row in payments:
@@ -14391,6 +14428,7 @@ def download_admin_client_range_invoice(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No transactions for this period")
 
     if not frozen_invoice_lines:
+        payments = _invoice_payments_with_routed_referral_credits(payments)
         payments = _invoice_payments_with_referral_credit_tax(payments)
 
     routed_entities = sorted({_payment_billing_entity(row) for row in payments}, key=_billing_entity_sort_key)
