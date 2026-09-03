@@ -258,6 +258,13 @@ class QuoteAdminHoldNoteRequest(BaseModel):
     admin_hold_note: str | None = Field(default=None, max_length=4000)
 
 
+class QuoteBillingIdentityOverrideRequest(BaseModel):
+    enabled: bool = False
+    company_name: str | None = Field(default=None, max_length=255)
+    contact_name: str | None = Field(default=None, max_length=255)
+    billing_address: str | None = Field(default=None, max_length=1000)
+
+
 class QuoteExpirationUpdateRequest(BaseModel):
     expires_at: datetime
 

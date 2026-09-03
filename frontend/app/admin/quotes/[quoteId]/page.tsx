@@ -44,6 +44,7 @@ import {
   updateQuoteExpirationAction,
   updateQuoteLinesAction,
   updateQuoteAdminHoldNoteAction,
+  updateQuoteBillingIdentityAction,
   updateQuotePlanningAction,
   updateQuoteSettingsAction,
 } from "../../../../lib/actions";
@@ -2857,6 +2858,12 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const selfPath = appendQuickScenario(sectionHref(activeSection), quickScenario);
   const adminHoldNote = String(detail.quote.admin_hold_note || "").trim();
   const canAddAdminHoldNote = !adminHoldNote && detail.quote.status === "created";
+  const billingIdentityRaw = readObject((detail.quote.meta || {}).invoice_recipient_override) || {};
+  const billingIdentityEnabled = billingIdentityRaw.enabled === true;
+  const billingCompanyName = String(billingIdentityRaw.company_name || "").trim();
+  const billingContactName = String(billingIdentityRaw.contact_name || "").trim();
+  const billingAddress = String(billingIdentityRaw.billing_address || "").trim();
+  const canEditBillingIdentity = followupTransformationExecutionStatus !== "executed";
   const intakePanelOpen = readParam(searchParams, "intake") === "1";
   const intakePanelHref = appendQueryParam(selfPath, "intake", "1");
   const intakeDetailHref = typeformIntakeId ? withUiLanguage(`/admin/intakes/${encodeURIComponent(typeformIntakeId)}`, language) : "";
@@ -4116,6 +4123,42 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
 	                  ) : null}
 	                </article>
 	              ) : null}
+	              <details className="item top-gap-sm" open={billingIdentityEnabled}>
+	                <summary>
+	                  <strong>Facturer exceptionnellement à une société</strong>
+	                  {billingIdentityEnabled && billingCompanyName ? ` · ${billingCompanyName}` : ""}
+	                </summary>
+	                <p className="muted top-gap-sm">
+	                  Exception réservée au back-office. Elle ne modifie ni le compte du parent, ni celui de l’élève, et n’envoie aucun message.
+	                </p>
+	                <form action={updateQuoteBillingIdentityAction} className="grid cols-2 config-form-grid top-gap-sm">
+	                  <input type="hidden" name="quote_id" value={detail.quote.id} />
+	                  <input type="hidden" name="return_to" value={selfPath} />
+	                  <label>
+	                    Utiliser une identité société sur la facture
+	                    <select name="billing_identity_enabled" defaultValue={billingIdentityEnabled ? "yes" : "no"} disabled={!canEditBillingIdentity}>
+	                      <option value="no">Non — facturation habituelle</option>
+	                      <option value="yes">Oui — exception société</option>
+	                    </select>
+	                  </label>
+	                  <label>
+	                    Raison sociale
+	                    <input type="text" name="billing_company_name" defaultValue={billingCompanyName} maxLength={255} disabled={!canEditBillingIdentity} />
+	                  </label>
+	                  <label>
+	                    Contact (facultatif)
+	                    <input type="text" name="billing_contact_name" defaultValue={billingContactName} maxLength={255} disabled={!canEditBillingIdentity} />
+	                  </label>
+	                  <label>
+	                    Adresse complète de facturation
+	                    <textarea name="billing_address" defaultValue={billingAddress} maxLength={1000} rows={3} disabled={!canEditBillingIdentity} />
+	                  </label>
+	                  <div className="row span-2 top-gap-sm">
+	                    <button type="submit" disabled={!canEditBillingIdentity}>Enregistrer l’identité de facturation</button>
+	                    {!canEditBillingIdentity ? <small className="muted">L’inscription a déjà été créée : la facture doit être annulée puis réémise depuis la fiche client.</small> : null}
+	                  </div>
+	                </form>
+	              </details>
 	              <form action={updateQuoteSettingsAction} className="grid cols-3 config-form-grid top-gap-sm">
           <input type="hidden" name="quote_id" value={detail.quote.id} />
           <input type="hidden" name="return_to" value={selfPath} />

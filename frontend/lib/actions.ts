@@ -14117,6 +14117,48 @@ export async function duplicateQuoteForChildAction(formData: FormData): Promise<
   redirect(withUiMessageCode(detailPath, "ok", "quote_sibling_created", { lang: language }));
 }
 
+export async function updateQuoteBillingIdentityAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+  const language = await ensureAdminAndGetLanguage(token);
+  const quoteId = String(formData.get("quote_id") ?? "").trim();
+  const returnTo = safeAdminQuotesPath(String(formData.get("return_to") ?? "/admin/quotes"));
+  const successReturnTo = withUiLanguage(returnTo, language);
+  if (!quoteId) {
+    redirect(withUiMessageCode(successReturnTo, "error", "quote_not_found", { lang: language }));
+  }
+
+  const enabled = formData.get("billing_identity_enabled") === "yes";
+  const result = await backendRequest<{ quote: { id: string } }>(
+    `/api/v1/quotes/${encodeURIComponent(quoteId)}/billing-identity`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        enabled,
+        company_name: enabled ? String(formData.get("billing_company_name") ?? "").trim() : null,
+        contact_name: enabled ? String(formData.get("billing_contact_name") ?? "").trim() : null,
+        billing_address: enabled ? String(formData.get("billing_address") ?? "").trim() : null,
+      }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(successReturnTo, "error", result.message));
+  }
+  revalidatePath("/admin/quotes");
+  revalidatePath(`/admin/quotes/${quoteId}`);
+  redirect(appendQueryMessage(
+    successReturnTo,
+    "ok",
+    enabled
+      ? "Identité de facturation société enregistrée. Aucun message n’a été envoyé."
+      : "Identité de facturation société désactivée. Aucun message n’a été envoyé.",
+  ));
+}
+
+
 export async function updateQuoteSettingsAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {

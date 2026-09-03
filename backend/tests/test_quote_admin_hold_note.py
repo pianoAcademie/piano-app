@@ -52,12 +52,18 @@ class QuoteAdminHoldNoteTests(unittest.TestCase):
     def test_public_or_duplicated_metadata_excludes_internal_note(self) -> None:
         meta = {
             "admin_hold_note": "Information strictement interne",
+            "invoice_recipient_override": {
+                "enabled": True,
+                "company_name": "Société test",
+                "billing_address": "1 rue du Test",
+            },
             "language": "fr",
         }
 
         sanitized = _quote_meta_without_admin_hold_note(meta)
 
         self.assertNotIn("admin_hold_note", sanitized)
+        self.assertNotIn("invoice_recipient_override", sanitized)
         self.assertEqual(sanitized["language"], "fr")
         self.assertIn("admin_hold_note", meta)
 

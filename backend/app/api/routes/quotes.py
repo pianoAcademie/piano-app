@@ -105,6 +105,7 @@ from app.schemas.quote import (
     ProspectUpdateRequest,
     QuoteCalendarPreviewRequest,
     QuoteAdminHoldNoteRequest,
+    QuoteBillingIdentityOverrideRequest,
     QuoteChangeRequestIn,
     QuoteCancelRequest,
     QuoteCreateRequest,
@@ -219,6 +220,7 @@ QUOTE_FINANCIAL_ADJUSTMENT_CREDIT = "credit"
 QUOTE_FINANCIAL_ADJUSTMENT_DEBT = "debt"
 QUOTE_PRE_REGISTRATION_DEPOSIT_META_KEY = "pre_registration_deposit"
 QUOTE_ADMIN_HOLD_NOTE_META_KEY = "admin_hold_note"
+QUOTE_BILLING_IDENTITY_OVERRIDE_META_KEY = "invoice_recipient_override"
 QUOTE_PRE_REGISTRATION_DEPOSIT_DEFAULT_AMOUNT = Decimal("200.00")
 QUOTE_PUBLIC_RESPONSE_PREVIOUS_STATUS_META_KEY = "public_response_previous_status"
 QUOTE_PUBLIC_RESPONSE_LAST_ACTION_META_KEY = "public_response_last_action"
@@ -302,10 +304,46 @@ def _set_quote_admin_hold_note(quote: Quote, value: object | None) -> bool:
     return previous != next_note
 
 
+def _quote_billing_identity_override(meta: object | None) -> dict[str, str] | None:
+    source = meta if isinstance(meta, dict) else {}
+    raw = source.get(QUOTE_BILLING_IDENTITY_OVERRIDE_META_KEY)
+    if not isinstance(raw, dict) or raw.get("enabled") is not True:
+        return None
+    company_name = str(raw.get("company_name") or "").strip()[:255]
+    contact_name = str(raw.get("contact_name") or "").strip()[:255]
+    billing_address = str(raw.get("billing_address") or "").strip()[:1000]
+    if not company_name or not billing_address:
+        return None
+    return {
+        "company_name": company_name,
+        "contact_name": contact_name,
+        "billing_address": billing_address,
+    }
+
+
+def _invoice_recipient_snapshot_for_quote(
+    quote: Quote,
+    *,
+    fallback: dict[str, str],
+) -> dict[str, str]:
+    override = _quote_billing_identity_override(quote.meta)
+    if override is None:
+        return fallback
+    address_parts = []
+    if override["contact_name"]:
+        address_parts.append(f"A l'attention de {override['contact_name']}")
+    address_parts.append(override["billing_address"])
+    return {
+        "client_name": override["company_name"],
+        "client_billing_address": "\n".join(address_parts),
+    }
+
+
 def _quote_meta_without_admin_hold_note(meta: object | None) -> dict[str, object]:
     next_meta = _normalize_quote_meta(meta)
     next_meta.pop(QUOTE_ADMIN_HOLD_NOTE_META_KEY, None)
     next_meta.pop(ANNUAL_REVIEW_KEY, None)
+    next_meta.pop(QUOTE_BILLING_IDENTITY_OVERRIDE_META_KEY, None)
     return next_meta
 
 
@@ -6922,6 +6960,63 @@ def update_quote_admin_hold_note(
     return _quote_detail_out(db, row)
 
 
+@router.patch("/quotes/{quote_id}/billing-identity", response_model=QuoteDetailOut)
+def update_quote_billing_identity(
+    quote_id: UUID,
+    payload: QuoteBillingIdentityOverrideRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+) -> QuoteDetailOut:
+    row = _load_quote(db, quote_id, lock=True)
+    followup = db.scalar(select(QuoteAcceptanceFollowup).where(QuoteAcceptanceFollowup.quote_id == quote_id))
+    execution = _quote_transformation_execution(followup) if followup is not None else {}
+    if str(execution.get("status") or "").strip().lower() == "executed":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="L'inscription a deja ete creee. Annulez et reemettez la facture depuis la fiche client.",
+        )
+
+    next_meta = _quote_meta_dict(row)
+    previous = _quote_billing_identity_override(next_meta)
+    if payload.enabled:
+        company_name = str(payload.company_name or "").strip()
+        billing_address = str(payload.billing_address or "").strip()
+        if not company_name or not billing_address:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="La raison sociale et l'adresse de facturation sont obligatoires.",
+            )
+        next_meta[QUOTE_BILLING_IDENTITY_OVERRIDE_META_KEY] = {
+            "enabled": True,
+            "company_name": company_name,
+            "contact_name": str(payload.contact_name or "").strip(),
+            "billing_address": billing_address,
+        }
+    else:
+        next_meta.pop(QUOTE_BILLING_IDENTITY_OVERRIDE_META_KEY, None)
+
+    next_override = _quote_billing_identity_override(next_meta)
+    if previous != next_override:
+        row.meta = next_meta
+        row.updated_at = _utcnow()
+        db.add(row)
+        db.add(
+            QuoteEvent(
+                quote_id=row.id,
+                event_type="quote_billing_identity_updated",
+                actor_type="admin",
+                actor_id=current_user.id,
+                payload={
+                    "enabled": next_override is not None,
+                    "company_name": next_override["company_name"] if next_override else None,
+                },
+            )
+        )
+        db.commit()
+        db.refresh(row)
+    return _quote_detail_out(db, row)
+
+
 @router.post("/quotes/{quote_id}/duplicate", response_model=QuoteDetailOut, status_code=status.HTTP_201_CREATED)
 def duplicate_quote(
     quote_id: UUID,
@@ -11265,6 +11360,10 @@ def _create_followup_deposit_invoice(
         currency=currency,
     )
     reusable_payment_total = _q2(Decimal(reusable_payment.total_incl_vat or 0)) if reusable_payment is not None else None
+    recipient_snapshot = _invoice_recipient_snapshot_for_quote(
+        quote,
+        fallback=_invoice_recipient_snapshot_for_client(db, billing),
+    )
 
     transaction = ClientManualTransaction(
         user_id=billing.id,
@@ -11316,6 +11415,13 @@ def _create_followup_deposit_invoice(
         "source_quote_id": str(quote.id),
         "source_quote_number": quote.quote_number,
         "source_school_year_label": (quote.school_year_label or "").strip(),
+        "client_name": recipient_snapshot["client_name"],
+        "client_billing_address": recipient_snapshot["client_billing_address"],
+        "issuer_snapshot": build_company_identity_snapshot(
+            db,
+            legal_entity_id=quote.legal_entity_id,
+            billing_entity=billing_entity,
+        ),
         "public_note": f"Facture d acompte liee au devis {quote.quote_number}.",
         "private_note": f"Transformation devis {quote.quote_number} - acompte preinscription.",
     }
@@ -11623,7 +11729,10 @@ def _create_followup_annual_invoices(
         legacy_due_date=max(issued_date, QUOTE_ANNUAL_INVOICE_DUE_DATE),
     )
     issued_at = _invoice_issued_at_for_date(issued_date=issued_date, now=now)
-    recipient_snapshot = _invoice_recipient_snapshot_for_client(db, billing)
+    recipient_snapshot = _invoice_recipient_snapshot_for_quote(
+        quote,
+        fallback=_invoice_recipient_snapshot_for_client(db, billing),
+    )
     student_name = " ".join(
         part.strip() for part in (student.first_name or "", student.last_name or "") if part.strip()
     ) or student.email

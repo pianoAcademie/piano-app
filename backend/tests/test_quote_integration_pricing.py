@@ -24,6 +24,7 @@ from app.api.routes.quotes import (
     QUOTE_ANNUAL_INVOICE_PERIOD_START,
     _create_followup_booking,
     _create_followup_annual_invoices,
+    _invoice_recipient_snapshot_for_quote,
     _quote_annual_invoice_amounts,
     _quote_annual_invoice_referral_credits_for_invoice,
     _quote_annual_invoice_selected_payments,
@@ -143,6 +144,14 @@ class QuoteIntegrationPricingTests(unittest.TestCase):
             quote_number="DV-TEST-ANNUAL",
             legal_entity_id=seller_id,
             school_year_label="2026-2027",
+            meta={
+                "invoice_recipient_override": {
+                    "enabled": True,
+                    "company_name": "Transparence Consulting",
+                    "contact_name": "Aurélien Bigot",
+                    "billing_address": "91 rue du Faubourg Saint-Honoré, 75008 Paris, France",
+                }
+            },
         )
         student = SimpleNamespace(id=uuid4(), first_name="Lina", last_name="Martin", email="lina@example.test")
         billing = SimpleNamespace(id=uuid4())
@@ -249,7 +258,16 @@ class QuoteIntegrationPricingTests(unittest.TestCase):
         self.assertTrue(all(row.vat_amount == Decimal("-8.33") for row in fake_session.added_rows))
         self.assertTrue(all(row.total_incl_vat == Decimal("-50.00") for row in fake_session.added_rows))
         self.assertEqual(metadata["source_quote_id"], str(quote.id))
+        self.assertEqual(metadata["client_name"], "Transparence Consulting")
+        self.assertIn("Aurélien Bigot", metadata["client_billing_address"])
+        self.assertIn("91 rue du Faubourg", metadata["client_billing_address"])
         self.assertTrue(metadata["annual_invoice_auto_generated"])
+
+    def test_invoice_recipient_snapshot_keeps_regular_recipient_without_override(self) -> None:
+        fallback = {"client_name": "Parent Martin", "client_billing_address": "1 rue de Paris"}
+        quote = SimpleNamespace(meta={})
+
+        self.assertIs(_invoice_recipient_snapshot_for_quote(quote, fallback=fallback), fallback)
 
     def test_annual_invoice_selects_all_quote_items_in_the_fixed_school_period(self) -> None:
         booking_before = uuid4()
