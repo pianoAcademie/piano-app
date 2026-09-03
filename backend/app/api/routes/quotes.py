@@ -807,6 +807,199 @@ def _sync_typeform_planned_quote_line_quantities(
     return changed
 
 
+def _planning_groups_by_activity(
+    calendar_snapshot: object | None,
+) -> dict[str, list[tuple[str, int]]]:
+    snapshot = _json_object(calendar_snapshot)
+    counts: dict[str, dict[str, int]] = {}
+    for raw_session in _json_list(snapshot.get("sessions")):
+        if not isinstance(raw_session, dict):
+            continue
+        activity_id = str(raw_session.get("activity_id") or "").strip()
+        if not activity_id:
+            continue
+        recommendation_key = str(raw_session.get("recommendation_key") or activity_id).strip()
+        activity_counts = counts.setdefault(activity_id, {})
+        activity_counts[recommendation_key] = activity_counts.get(recommendation_key, 0) + 1
+
+    ordered: dict[str, list[tuple[str, int]]] = {}
+    seen: dict[str, set[str]] = {}
+    for raw_block in _json_list(snapshot.get("blocks")):
+        if not isinstance(raw_block, dict):
+            continue
+        activity_id = str(raw_block.get("activity_id") or "").strip()
+        recommendation_key = str(raw_block.get("recommendation_key") or activity_id).strip()
+        if not activity_id or not recommendation_key or recommendation_key in seen.setdefault(activity_id, set()):
+            continue
+        session_count = counts.get(activity_id, {}).get(recommendation_key, 0)
+        if session_count <= 0:
+            continue
+        ordered.setdefault(activity_id, []).append((recommendation_key, session_count))
+        seen[activity_id].add(recommendation_key)
+
+    for activity_id, activity_counts in counts.items():
+        for recommendation_key, session_count in activity_counts.items():
+            if recommendation_key in seen.setdefault(activity_id, set()):
+                continue
+            ordered.setdefault(activity_id, []).append((recommendation_key, session_count))
+            seen[activity_id].add(recommendation_key)
+    return ordered
+
+
+def _apply_planning_group_to_quote_line(
+    line: QuoteLine,
+    *,
+    recommendation_key: str,
+    quantity: int,
+    split_index: int,
+) -> None:
+    normalized_quantity = _q2(Decimal(quantity))
+    meta = {
+        **_json_object(line.meta),
+        "recommendation_key": recommendation_key,
+        "typeform_planned_quantity_applied": True,
+        "typeform_planned_quantity": str(normalized_quantity),
+        "planning_split_index": split_index,
+    }
+    meta.pop("annual_course_key", None)
+    meta.pop("annual_decision", None)
+    line.quantity = normalized_quantity
+    line.amount_ht = _q2(Decimal(line.unit_price_ht or 0) * normalized_quantity)
+    line.amount_vat = _q2(Decimal(line.unit_vat_amount or 0) * normalized_quantity)
+    line.amount_ttc = _q2(line.amount_ht + line.amount_vat)
+    line.meta = meta
+    line.updated_at = _utcnow()
+
+
+def _clone_quote_line_for_planning_group(
+    source: QuoteLine,
+    *,
+    recommendation_key: str,
+    quantity: int,
+    split_index: int,
+) -> QuoteLine:
+    clone = QuoteLine(
+        quote_id=source.quote_id,
+        line_category=source.line_category,
+        line_type=source.line_type,
+        master_item_type=source.master_item_type,
+        master_item_id=source.master_item_id,
+        activity_id=source.activity_id,
+        product_id=source.product_id,
+        kit_id=source.kit_id,
+        code=source.code,
+        title=source.title,
+        description=source.description,
+        duration_minutes=source.duration_minutes,
+        pricing_unit=source.pricing_unit,
+        quantity=source.quantity,
+        vat_rate=source.vat_rate,
+        unit_price_ht=source.unit_price_ht,
+        unit_vat_amount=source.unit_vat_amount,
+        unit_price_ttc=source.unit_price_ttc,
+        amount_ht=source.amount_ht,
+        amount_vat=source.amount_vat,
+        amount_ttc=source.amount_ttc,
+        sort_order=source.sort_order,
+        meta=dict(_json_object(source.meta)),
+    )
+    _apply_planning_group_to_quote_line(
+        clone,
+        recommendation_key=recommendation_key,
+        quantity=quantity,
+        split_index=split_index,
+    )
+    return clone
+
+
+def _split_aggregated_planned_quote_lines(
+    db: Session,
+    lines: list[QuoteLine],
+    *,
+    calendar_snapshot: object | None,
+) -> tuple[list[QuoteLine], bool]:
+    """Split one aggregate service line into one line per planning series.
+
+    The split is deliberately conservative: it applies only when one session-
+    priced line exactly covers all sessions of several disjoint series. Existing
+    multi-line mappings remain under the strict ambiguity checks in
+    ``resolve_line_sessions``.
+    """
+    planning_groups = _planning_groups_by_activity(calendar_snapshot)
+    service_lines_by_activity: dict[str, list[QuoteLine]] = {}
+    for line in lines:
+        if not _quote_line_is_service_item(line) or (line.pricing_unit or "").strip().lower() != "session":
+            continue
+        activity_id = str(line.activity_id or "").strip()
+        service_lines_by_activity.setdefault(activity_id, []).append(line)
+
+    replacements: dict[int, list[QuoteLine]] = {}
+    changed = False
+    for activity_id, groups in planning_groups.items():
+        if len(groups) < 2:
+            continue
+        activity_lines = service_lines_by_activity.get(activity_id) or []
+        if len(activity_lines) != 1:
+            continue
+        source = activity_lines[0]
+        meta = _json_object(source.meta)
+        explicit_key = str(meta.get("recommendation_key") or meta.get("line_recommendation_key") or "").strip()
+        if explicit_key and explicit_key != activity_id:
+            continue
+        if meta.get("annual_decision") or meta.get("annual_course_key"):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Le planning contient plusieurs créneaux pour une ligne déjà tarifée. "
+                    "Recalculez les remises annuelles après avoir enregistré le planning."
+                ),
+            )
+        expected_quantity = _q2(Decimal(sum(count for _, count in groups)))
+        current_quantity = _q2(Decimal(source.quantity or 0))
+        if current_quantity != expected_quantity:
+            if bool(meta.get("typeform_planned_quantity_applied")):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        f"La ligne {source.title} regroupe {current_quantity} séance(s), "
+                        f"mais les créneaux en contiennent {expected_quantity}. "
+                        "Vérifiez le planning avant de recalculer les remises."
+                    ),
+                )
+            continue
+
+        split_lines = [source]
+        first_key, first_count = groups[0]
+        _apply_planning_group_to_quote_line(
+            source,
+            recommendation_key=first_key,
+            quantity=first_count,
+            split_index=1,
+        )
+        for split_index, (recommendation_key, quantity) in enumerate(groups[1:], start=2):
+            clone = _clone_quote_line_for_planning_group(
+                source,
+                recommendation_key=recommendation_key,
+                quantity=quantity,
+                split_index=split_index,
+            )
+            db.add(clone)
+            split_lines.append(clone)
+        replacements[id(source)] = split_lines
+        changed = True
+
+    if not changed:
+        return lines, False
+
+    expanded: list[QuoteLine] = []
+    for line in lines:
+        expanded.extend(replacements.get(id(line), [line]))
+    for sort_order, line in enumerate(expanded):
+        line.sort_order = sort_order
+    db.flush()
+    return expanded, True
+
+
 def _month_key_from_session_date(value: object | None) -> str | None:
     raw = str(value or "").strip()
     if len(raw) < 7:
@@ -6402,10 +6595,15 @@ def update_quote(
         row.selected_solfege_slot = payload.selected_solfege_slot or {}
         document_dirty = True
     if payload.calendar_snapshot is not None:
+        from app.services.quotes.line_sessions import normalize_duplicate_planning_group_keys
+
         lines = _load_quote_lines(db, row.id)
+        normalized_calendar_snapshot, _ = normalize_duplicate_planning_group_keys(
+            _json_object(payload.calendar_snapshot)
+        )
         row.calendar_snapshot = _calendar_snapshot_with_line_recommendation_keys(
             db,
-            _json_object(payload.calendar_snapshot),
+            normalized_calendar_snapshot,
             lines=lines,
         )
         row.calendar_snapshot = _calendar_snapshot_with_planning_sessions(db, row.calendar_snapshot)
@@ -6460,15 +6658,28 @@ def update_quote(
     planned_quantities_changed = False
     planned_amounts_changed = False
     if payload.calendar_snapshot is not None or payload.lines is not None:
+        from app.services.quotes.line_sessions import normalize_duplicate_planning_group_keys
+
+        normalized_calendar_snapshot, planning_keys_changed = normalize_duplicate_planning_group_keys(
+            _json_object(row.calendar_snapshot)
+        )
+        if planning_keys_changed:
+            row.calendar_snapshot = _calendar_snapshot_with_planning_sessions(db, normalized_calendar_snapshot)
+            document_dirty = True
         synchronized_lines = _load_quote_lines(db, row.id)
         previous_planned_lines_total = _q2(
             sum((Decimal(line.amount_ttc or 0) for line in synchronized_lines), Decimal("0.00"))
+        )
+        synchronized_lines, planned_lines_split = _split_aggregated_planned_quote_lines(
+            db,
+            synchronized_lines,
+            calendar_snapshot=row.calendar_snapshot,
         )
         planned_quantities_changed = _sync_typeform_planned_quote_line_quantities(
             synchronized_lines,
             calendar_snapshot=row.calendar_snapshot,
         )
-        if planned_quantities_changed:
+        if planned_quantities_changed or planned_lines_split:
             db.flush()
             lines_total = _quote_lines_total_ttc(db, quote_id=row.id)
             planned_amounts_changed = lines_total != previous_planned_lines_total

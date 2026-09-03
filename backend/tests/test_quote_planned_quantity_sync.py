@@ -9,9 +9,13 @@ from uuid import uuid4
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from app.api.routes.quotes import _sync_typeform_planned_quote_line_quantities
+from app.api.routes.quotes import (
+    _split_aggregated_planned_quote_lines,
+    _sync_typeform_planned_quote_line_quantities,
+)
 from fastapi import HTTPException
-from app.services.quotes.line_sessions import resolve_line_sessions
+from app.models.quote import QuoteLine
+from app.services.quotes.line_sessions import normalize_duplicate_planning_group_keys, resolve_line_sessions
 from app.services.quotes.quote_documents import _calendar_snapshot_with_line_recommendation_keys
 
 
@@ -178,6 +182,85 @@ class QuotePlannedQuantitySyncTests(unittest.TestCase):
         self.assertTrue(changed)
         self.assertEqual(first.quantity, Decimal("2.00"))
         self.assertEqual(second.quantity, Decimal("3.00"))
+
+    def test_splits_one_aggregate_line_into_two_planning_series(self) -> None:
+        activity_id = uuid4()
+        quote_id = uuid4()
+        aggregate = QuoteLine(
+            quote_id=quote_id,
+            line_category="service",
+            line_type="item",
+            activity_id=activity_id,
+            title="Cours de piano collectif en presentiel (1h)",
+            pricing_unit="session",
+            quantity=Decimal("65.00"),
+            vat_rate=Decimal("20.000"),
+            unit_price_ht=Decimal("31.67"),
+            unit_vat_amount=Decimal("6.33"),
+            unit_price_ttc=Decimal("38.00"),
+            amount_ht=Decimal("2058.55"),
+            amount_vat=Decimal("411.45"),
+            amount_ttc=Decimal("2470.00"),
+            sort_order=0,
+            meta={
+                "recommendation_key": str(activity_id),
+                "typeform_planned_quantity_applied": True,
+                "typeform_planned_quantity": "65.00",
+            },
+        )
+        snapshot = {
+            "blocks": [
+                {
+                    "activity_id": str(activity_id),
+                    "series_key": "tuesday-series",
+                    "recommendation_key": str(activity_id),
+                    "weekday": 1,
+                    "start_time": "18:00",
+                },
+                {
+                    "activity_id": str(activity_id),
+                    "series_key": "thursday-series",
+                    "weekday": 3,
+                    "start_time": "18:00",
+                },
+            ],
+            "sessions": [
+                {
+                    "activity_id": str(activity_id),
+                    "series_key": series_key,
+                    "recommendation_key": str(activity_id),
+                    "date": f"session-{series_key}-{index}",
+                }
+                for series_key, count in (("tuesday-series", 33), ("thursday-series", 32))
+                for index in range(count)
+            ],
+        }
+        normalized, changed = normalize_duplicate_planning_group_keys(snapshot)
+
+        class FakeDb:
+            def __init__(self):
+                self.added = []
+
+            def add(self, row):
+                self.added.append(row)
+
+            def flush(self):
+                return None
+
+        db = FakeDb()
+        split_lines, split = _split_aggregated_planned_quote_lines(
+            db,
+            [aggregate],
+            calendar_snapshot=normalized,
+        )
+
+        self.assertTrue(changed)
+        self.assertTrue(split)
+        self.assertEqual([line.quantity for line in split_lines], [Decimal("33.00"), Decimal("32.00")])
+        self.assertEqual([line.amount_ttc for line in split_lines], [Decimal("1254.00"), Decimal("1216.00")])
+        self.assertEqual(sum((line.amount_ttc for line in split_lines), Decimal("0.00")), Decimal("2470.00"))
+        self.assertEqual(len({line.meta["recommendation_key"] for line in split_lines}), 2)
+        self.assertEqual(len(db.added), 1)
 
 
 if __name__ == "__main__":
