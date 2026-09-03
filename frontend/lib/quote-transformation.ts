@@ -1539,7 +1539,10 @@ export function buildSessionMatches(
         locationName: session.locationName || uiText(language, "admin.quote_transform.location_not_defined"),
         teacher: session.teacherDisplayName || uiText(language, "admin.quote_transform.to_define"),
         seatsRemaining: session.seatsRemaining,
-        status: session.statusLabel,
+        // Keep the stable API status code for all validation decisions. The
+        // localized label (for example "Planifie") is display-only and must
+        // never be compared with the enum value "SCHEDULED".
+        status: session.status,
         recurrenceGroupId: session.recurrenceGroupId,
         courseTypeId: session.courseTypeId,
         locationId: session.locationId,

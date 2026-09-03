@@ -97,6 +97,36 @@ test("only scheduled sessions can be proposed for a quote transformation", () =>
   assert.equal(options[0].timezone, "Europe/Paris");
 });
 
+test("localized status labels never turn scheduled options into false blockers", () => {
+  const scheduled = session("scheduled-localized", "SCHEDULED", "2026-09-30T16:35:00Z");
+  scheduled.statusLabel = "Planifie";
+  const row = {
+    rowId: "row-localized",
+    lineId: "line-localized",
+    scheduleKey: `${activityId}:online_solfege`,
+    activityId,
+    matchingActivityIds: [activityId],
+    activityName: "Solfège niveau 2",
+    locationName: "Online",
+    pricingUnit: "session",
+    quantity: 26,
+    durationMinutes: 45,
+    expectedTtc: 0,
+    baseRateTtc: 0,
+    currentSystemTtc: 0,
+    discountTtc: 0,
+    supplementTtc: 0,
+    deltaTtc: 0,
+    status: "ok",
+    reason: "alignement devis/systeme",
+  };
+
+  const options = buildSessionMatches(row, [scheduled], locationId, new Map(), "live");
+
+  assert.equal(options.length, 1);
+  assert.equal(options[0].status, "SCHEDULED");
+});
+
 test("a session without a valid local timezone is never proposed", () => {
   const invalid = session("missing-timezone", "SCHEDULED", "2026-09-16T16:05:00Z");
   invalid.timezone = "";
