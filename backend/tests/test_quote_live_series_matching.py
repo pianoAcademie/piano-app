@@ -18,6 +18,7 @@ from app.api.routes.quotes import (
     _missing_dates_are_after_live_series_tail,
     _missing_expected_live_session_dates,
     _planning_session_limit_from_quote_line,
+    _quote_booking_pricing_source,
     _quote_line_schedule_key,
     _quote_transform_schedule_key_candidates,
     _recover_approved_undated_solfege_expected_dates,
@@ -104,6 +105,24 @@ def _session(
 
 
 class QuoteLiveSeriesMatchingTests(unittest.TestCase):
+    def test_quote_booking_pricing_source_is_bounded_and_keeps_duplicate_line_identity(self) -> None:
+        quote_id = uuid4()
+        first_line_id = uuid4()
+        second_line_id = uuid4()
+
+        first_source = _quote_booking_pricing_source(
+            quote_id=quote_id,
+            quote_service_lines=[SimpleNamespace(id=first_line_id)],
+        )
+        second_source = _quote_booking_pricing_source(
+            quote_id=quote_id,
+            quote_service_lines=[SimpleNamespace(id=second_line_id)],
+        )
+
+        self.assertLessEqual(len(first_source), 120)
+        self.assertNotEqual(first_source, second_source)
+        self.assertIn(str(first_line_id), first_source)
+
     def test_recovers_legacy_undated_solfege_from_exact_approved_series(self) -> None:
         activity_id = uuid4()
         location_id = uuid4()

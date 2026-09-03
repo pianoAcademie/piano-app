@@ -9896,6 +9896,19 @@ def _validated_quote_transform_expected_dates(
     return limited_dates
 
 
+def _quote_booking_pricing_source(*, quote_id: UUID, quote_service_lines: list[QuoteLine]) -> str:
+    """Build a stable booking pricing source that fits the persisted 120 chars.
+
+    A schedule key may contain both an activity UUID and a quote-line UUID. The
+    former implementation appended that compound key to the quote UUID and
+    could exceed Booking.pricing_source_snapshot's database limit. The quote
+    line already identifies the exact duplicated course unambiguously.
+    """
+    if quote_service_lines:
+        return f"quote:{quote_id}:line:{quote_service_lines[0].id}"
+    return f"quote:{quote_id}"
+
+
 def _serialize_uuid_list(values: list[UUID]) -> list[str]:
     return [str(value) for value in values]
 
@@ -12155,7 +12168,10 @@ def _execute_quote_followup_transformation(
                 student_start_time_local=student_start_time_local,
                 student_end_time_local=student_end_time_local,
                 pricing_snapshot_override=pricing_override,
-                pricing_source=f"quote:{quote.id}:schedule:{schedule_key}",
+                pricing_source=_quote_booking_pricing_source(
+                    quote_id=quote.id,
+                    quote_service_lines=quote_service_lines,
+                ),
                 annual_decision=annual_decision,
             )
 
