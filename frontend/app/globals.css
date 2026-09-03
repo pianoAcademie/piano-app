@@ -7199,6 +7199,68 @@ button.danger:focus-visible {
   width: 100%;
 }
 
+.teacher-repertoire-form.is-saved {
+  border-left: 3px solid #31a765;
+  padding-left: 10px;
+}
+
+.teacher-repertoire-save-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+
+.teacher-repertoire-save-button:disabled {
+  cursor: wait;
+  opacity: 0.78;
+}
+
+.teacher-repertoire-save-button.is-saved {
+  border-color: #31a765;
+  background: #eaf8ee;
+  color: #17683a;
+}
+
+.teacher-save-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 999px;
+  animation: teacher-save-spin 700ms linear infinite;
+}
+
+.teacher-repertoire-saved {
+  display: grid;
+  gap: 3px;
+  padding: 11px 12px;
+  border: 1px solid #9bd9b2;
+  border-radius: 12px;
+  background: #eefaf2;
+  color: #17683a;
+  font-size: 13px;
+}
+
+.teacher-repertoire-saved span {
+  color: #355f46;
+}
+
+.teacher-repertoire-save-error {
+  padding: 11px 12px;
+  border: 1px solid #e6aaa5;
+  border-radius: 12px;
+  background: #fff1f0;
+  color: #8f2720;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+@keyframes teacher-save-spin {
+  to { transform: rotate(360deg); }
+}
+
 .teacher-attendance-accordion {
   border: 1px solid #e6e8ee;
   border-radius: 14px;

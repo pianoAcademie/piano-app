@@ -34,6 +34,7 @@ import ProfessorLocalIntakeRequestModal from "../../components/professor-local-i
 import PageHeaderMobile from "../../components/teacher-ui/page-header-mobile";
 import PortalBrandLockup from "../../components/portal-brand-lockup";
 import SectionAccordion from "../../components/teacher-ui/section-accordion";
+import RepertoireSaveButton from "../../components/teacher-ui/repertoire-save-button";
 import StatCard from "../../components/teacher-ui/stat-card";
 import StatChip from "../../components/teacher-ui/stat-chip";
 import StickyActionBar from "../../components/teacher-ui/sticky-action-bar";
@@ -403,6 +404,7 @@ function buildProfHref(params: {
   attendanceFilter?: string | null;
   planningScope?: PlanningScope;
   intakeDetail?: string | null;
+  repertoireFocus?: string | null;
 }): string {
   const query = new URLSearchParams();
   query.set("tab", params.tab);
@@ -425,6 +427,9 @@ function buildProfHref(params: {
   }
   if (params.intakeDetail) {
     query.set("intake_detail", params.intakeDetail);
+  }
+  if (params.repertoireFocus) {
+    query.set("repertoire_focus", params.repertoireFocus);
   }
   return `/prof?${query.toString()}`;
 }
@@ -775,6 +780,9 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
     : false;
   const selectedMessageId = readParam(searchParams, "message_id");
   const sentMessageId = readParam(searchParams, "sent_message_id");
+  const repertoireFocusId = readParam(searchParams, "repertoire_focus");
+  const repertoireSavedAt = readParam(searchParams, "repertoire_saved_at");
+  const repertoireSavedId = repertoireSavedAt ? repertoireFocusId : "";
 
   const pendingRows = pendingResult.ok ? pendingResult.data : [];
   const pendingCount = pendingRows.reduce((sum, row) => sum + row.pending_students_count, 0);
@@ -1853,7 +1861,11 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                               <span className="status-pill status-scheduled">{student.repertoire[0].title} · Modifier</span>
                             </summary>
                             {student.repertoire.map((assignment) => (
-                              <form key={assignment.id} action={professorUpdateRepertoireAction} className="teacher-student-note-form">
+                              <form
+                                key={assignment.id}
+                                action={professorUpdateRepertoireAction}
+                                className={`teacher-student-note-form teacher-repertoire-form${repertoireSavedId === assignment.id ? " is-saved" : ""}`}
+                              >
                                 <input type="hidden" name="student_id" value={student.user_id} />
                                 <input type="hidden" name="assignment_id" value={assignment.id} />
                                 <input
@@ -1866,6 +1878,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                                     sessionId: selectedSession.id,
                                     attendanceFilter,
                                     planningScope,
+                                    repertoireFocus: assignment.id,
                                   })}
                                 />
                                 <div>
@@ -1900,7 +1913,21 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                                   Note pédagogique
                                   <textarea name="internal_note" rows={2} defaultValue={assignment.internal_note ?? ""} />
                                 </label>
-                                <button type="submit" className="ghost">Enregistrer la progression</button>
+                                <RepertoireSaveButton saved={repertoireSavedId === assignment.id} />
+                                {repertoireSavedId === assignment.id ? (
+                                  <div className="teacher-repertoire-saved" role="status" aria-live="polite">
+                                    <strong>✓ Progression enregistrée{repertoireSavedAt ? ` à ${formatTime(repertoireSavedAt, language)}` : ""}</strong>
+                                    <span>{assignment.title}</span>
+                                    <span>
+                                      {assignment.pieces.find((piece) => piece.id === assignment.current_piece_id)?.title
+                                        ? `Morceau : ${assignment.pieces.find((piece) => piece.id === assignment.current_piece_id)?.title}`
+                                        : "Morceau : à définir"}
+                                    </span>
+                                  </div>
+                                ) : null}
+                                {repertoireFocusId === assignment.id && errorMessage ? (
+                                  <div className="teacher-repertoire-save-error" role="alert">{errorMessage}</div>
+                                ) : null}
                                 {assignment.status === "IN_PROGRESS" ? (
                                   <small className="muted">En la passant à « Terminée », la prochaine partition démarrera automatiquement sur son premier morceau.</small>
                                 ) : null}

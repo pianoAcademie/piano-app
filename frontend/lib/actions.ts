@@ -2630,7 +2630,13 @@ export async function professorUpdateRepertoireAction(formData: FormData): Promi
     redirect(appendQueryMessage(returnTo, "error", result.message));
   }
   revalidatePath("/prof");
-  redirect(appendQueryMessage(returnTo, "ok", "Progression musicale enregistrée."));
+  redirect(
+    appendQueryMessage(
+      appendQueryMessage(returnTo, "ok", "Progression musicale enregistrée."),
+      "repertoire_saved_at",
+      new Date().toISOString(),
+    ),
+  );
 }
 
 export async function professorAddRepertoireAction(formData: FormData): Promise<void> {
