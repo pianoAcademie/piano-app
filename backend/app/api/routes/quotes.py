@@ -10581,6 +10581,8 @@ def _create_followup_booking(
     pricing_snapshot_override: tuple[Decimal, Decimal, Decimal, Decimal, str] | None = None,
     pricing_source: str | None = None,
     annual_decision: dict | None = None,
+    approved_quote_capacity_override: bool = False,
+    capacity_override_booking_ids: list[UUID] | None = None,
 ) -> Booking | None:
     existing = db.scalar(
         select(Booking)
@@ -10602,7 +10604,8 @@ def _create_followup_booking(
         )
 
     booked_count = _count_booked(db, session_obj.id)
-    if booked_count >= int(session_obj.capacity_max or 0):
+    capacity_exceeded = booked_count >= int(session_obj.capacity_max or 0)
+    if capacity_exceeded and not approved_quote_capacity_override:
         zone = _safe_zoneinfo(session_obj.timezone)
         local_start = session_obj.start_at_utc.astimezone(zone)
         full_slot_label = f"{session_obj.title} le {local_start.strftime('%d/%m/%Y')} a {local_start.strftime('%H:%M')}"
@@ -10676,10 +10679,18 @@ def _create_followup_booking(
         **pricing_fields,
         student_start_at_utc=student_start_at_utc,
         student_end_at_utc=student_end_at_utc,
+        internal_note=(
+            "Dépassement de capacité autorisé automatiquement pour honorer le créneau exact "
+            "d'un devis validé."
+            if capacity_exceeded and approved_quote_capacity_override
+            else None
+        ),
     )
     db.add(booking)
     db.flush()
     created_booking_ids.append(booking.id)
+    if capacity_exceeded and approved_quote_capacity_override and capacity_override_booking_ids is not None:
+        capacity_override_booking_ids.append(booking.id)
     _mark_first_course_if_needed(student, session_obj)
     if not is_completed_occurrence:
         ensure_booking_reminder(db, booking=booking, session_obj=session_obj, now=now)
@@ -10690,6 +10701,59 @@ def _create_followup_booking(
             occurred_at=now,
         )
     return booking
+
+
+def _approved_quote_contains_selected_series(
+    *,
+    quote: Quote,
+    calendar_snapshot: dict[str, object],
+    activity_id: UUID,
+    schedule_key_candidates: list[str],
+    selected_series_key: str,
+) -> bool:
+    """Return whether the selected live series is exactly the one accepted by the client.
+
+    A validated quote already consumes projected capacity in the planning simulation.
+    Transformation must therefore honour that reservation even if another integration
+    has filled the physical series in the meantime.  Alternatives merely suggested by
+    the wizard never qualify for this controlled override.
+    """
+    if str(quote.status or "").strip().lower() != "approved" or quote.approved_at is None:
+        return False
+    hold_released = _quote_meta_dict(quote).get(QUOTE_PLANNING_HOLD_RELEASED_META_KEY)
+    if hold_released is True or str(hold_released or "").strip().lower() in {"1", "true", "yes"}:
+        return False
+    normalized_series_key = str(selected_series_key or "").strip()
+    if not normalized_series_key:
+        return False
+    accepted_schedule_keys = {str(item or "").strip() for item in schedule_key_candidates if str(item or "").strip()}
+    for collection_name in ("blocks", "sessions"):
+        for raw in _json_list(calendar_snapshot.get(collection_name)):
+            row = _json_object(raw)
+            row_series_key = str(row.get("series_key") or row.get("recurrence_group_id") or "").strip()
+            if row_series_key != normalized_series_key:
+                continue
+            recommendation_key = str(row.get("recommendation_key") or "").strip()
+            row_activity_id = _parse_uuid_value(row.get("activity_id"))
+            if row_activity_id == activity_id or recommendation_key in accepted_schedule_keys:
+                return True
+    return False
+
+
+def _quote_transformation_review_warning(
+    db: Session,
+    *,
+    quote: Quote,
+    lines: list[QuoteLine],
+) -> str | None:
+    """Keep stale-review diagnostics without blocking an already accepted contract."""
+    try:
+        check_review_current(db, quote, lines)
+    except HTTPException as exc:
+        if str(quote.status or "").strip().lower() != "approved" or quote.approved_at is None:
+            raise
+        return exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+    return None
 
 
 def _apply_followup_forfait_discount_rows(
@@ -11861,7 +11925,13 @@ def _execute_quote_followup_transformation(
     followup: QuoteAcceptanceFollowup,
     current_user: User,
 ) -> dict[str, object]:
-    check_review_current(db, quote, _load_quote_lines(db, quote.id))
+    if str(quote.status or "").strip().lower() != "approved" or quote.approved_at is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Seul un devis validé par le client peut être transformé en inscription.",
+        )
+    accepted_quote_lines = _load_quote_lines(db, quote.id)
+    review_warning = _quote_transformation_review_warning(db, quote=quote, lines=accepted_quote_lines)
     transformation_payload = _quote_transformation_payload(followup)
     if not transformation_payload:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Aucun payload de transformation a executer")
@@ -11873,6 +11943,7 @@ def _execute_quote_followup_transformation(
     created_family_link_ids: list[UUID] = []
     created_subscription_ids: list[UUID] = []
     created_booking_ids: list[UUID] = []
+    capacity_override_booking_ids: list[UUID] = []
     created_transaction_ids: list[UUID] = []
     created_invoice_note_ids: list[UUID] = []
     created_annual_invoice_note_ids: list[UUID] = []
@@ -11994,11 +12065,7 @@ def _execute_quote_followup_transformation(
         for item in _json_list(activity_resolution.get("offPlanningActivityIds"))
         if str(item).strip()
     }
-    quote_lines = db.scalars(
-        select(QuoteLine)
-        .where(QuoteLine.quote_id == quote.id)
-        .order_by(QuoteLine.sort_order.asc(), QuoteLine.created_at.asc(), QuoteLine.id.asc())
-    ).all()
+    quote_lines = accepted_quote_lines
     duplicate_service_activity_ids = _duplicate_service_activity_ids(quote_lines)
     session_limit_by_key: dict[str, int] = {}
     service_lines_by_schedule_key: dict[str, list[QuoteLine]] = {}
@@ -12090,6 +12157,13 @@ def _execute_quote_followup_transformation(
         selected_session_start_local = selected_session.start_at_utc.astimezone(selected_session_zone)
         selected_series_key = str(getattr(selected_session, "recurrence_group_id", None) or selected_session.id)
         selected_weekday = selected_session_start_local.weekday()
+        approved_quote_series = _approved_quote_contains_selected_series(
+            quote=quote,
+            calendar_snapshot=calendar_snapshot_for_transform,
+            activity_id=activity_id,
+            schedule_key_candidates=schedule_key_candidates,
+            selected_series_key=selected_series_key,
+        )
 
         def _expected_dates_for_candidates(
             *,
@@ -12312,9 +12386,19 @@ def _execute_quote_followup_transformation(
         annual_decision = annual_decisions[0] if annual_decisions else None
         bind_contract_course(subscription, annual_decision, live_sessions, pricing_overrides)
         for session_obj, pricing_override in zip(live_sessions, pricing_overrides):
+            locked_session_obj = db.scalar(
+                select(CourseSession)
+                .where(CourseSession.id == session_obj.id)
+                .with_for_update()
+            )
+            if locked_session_obj is None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Une occurrence du créneau sélectionné n'existe plus. Rechargez la transformation.",
+                )
             _create_followup_booking(
                 db,
-                session_obj=session_obj,
+                session_obj=locked_session_obj,
                 student=student,
                 subscription=subscription,
                 plan=plan,
@@ -12328,6 +12412,8 @@ def _execute_quote_followup_transformation(
                     quote_service_lines=quote_service_lines,
                 ),
                 annual_decision=annual_decision,
+                approved_quote_capacity_override=approved_quote_series,
+                capacity_override_booking_ids=capacity_override_booking_ids,
             )
 
     if fixed_monthly_card_billing:
@@ -12435,6 +12521,8 @@ def _execute_quote_followup_transformation(
         "created_family_link_ids": _serialize_uuid_list(created_family_link_ids),
         "created_subscription_ids": _serialize_uuid_list(created_subscription_ids),
         "created_booking_ids": _serialize_uuid_list(created_booking_ids),
+        "capacity_override_booking_ids": _serialize_uuid_list(capacity_override_booking_ids),
+        "review_warning": review_warning,
         "created_transaction_ids": _serialize_uuid_list(created_transaction_ids),
         "created_invoice_note_ids": _serialize_uuid_list(created_invoice_note_ids),
         "created_annual_invoice_note_ids": _serialize_uuid_list(created_annual_invoice_note_ids),
@@ -12462,6 +12550,9 @@ def _execute_quote_followup_transformation(
                 "student_client_id": str(student.id),
                 "billing_client_id": str(billing.id),
                 "booking_count": len(created_booking_ids),
+                "capacity_override_count": len(capacity_override_booking_ids),
+                "capacity_override_booking_ids": _serialize_uuid_list(capacity_override_booking_ids),
+                "review_warning": review_warning,
                 "transaction_count": len(created_transaction_ids),
                 "invoice_count": len(created_invoice_note_ids),
                 "annual_invoice_count": len(created_annual_invoice_note_ids),

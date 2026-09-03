@@ -23,6 +23,7 @@ from app.api.routes.quotes import (
     QUOTE_ANNUAL_INVOICE_PERIOD_END,
     QUOTE_ANNUAL_INVOICE_PERIOD_START,
     _create_followup_booking,
+    _approved_quote_contains_selected_series,
     _create_followup_annual_invoices,
     _invoice_recipient_snapshot_for_quote,
     _quote_annual_invoice_amounts,
@@ -30,6 +31,7 @@ from app.api.routes.quotes import (
     _quote_annual_invoice_selected_payments,
     _quote_per_course_discounts_by_schedule_key,
     _quote_transform_discount_lines,
+    _quote_transformation_review_warning,
 )
 from app.schemas.admin import AdminClientPaymentOut
 
@@ -114,6 +116,148 @@ class QuoteIntegrationPricingTests(unittest.TestCase):
         self.assertTrue(booking.pricing_snapshot_locked)
         self.assertEqual(booking.total_incl_vat_snapshot, Decimal("22.00"))
         self.assertEqual(fake_db.added, [booking])
+
+    def test_full_exact_approved_quote_series_is_created_and_audited(self) -> None:
+        class _FakeSession:
+            def __init__(self):
+                self.scalar_results = iter([None, None])
+                self.added = []
+
+            def scalar(self, _statement):
+                return next(self.scalar_results)
+
+            def add(self, row):
+                self.added.append(row)
+
+            def flush(self):
+                return None
+
+        fake_db = _FakeSession()
+        created_booking_ids = []
+        override_booking_ids = []
+        with patch("app.api.routes.quotes._count_booked", return_value=6), patch(
+            "app.api.routes.quotes._mark_first_course_if_needed"
+        ), patch("app.api.routes.quotes.ensure_booking_reminder"), patch(
+            "app.api.routes.quotes.schedule_booking_created_notifications"
+        ):
+            booking = _create_followup_booking(
+                fake_db,
+                session_obj=SimpleNamespace(id=uuid4(), course_type_id=uuid4(), capacity_max=6),
+                student=SimpleNamespace(id=uuid4()),
+                subscription=None,
+                plan=None,
+                now=datetime(2026, 9, 3, tzinfo=timezone.utc),
+                created_booking_ids=created_booking_ids,
+                pricing_snapshot_override=(
+                    Decimal("31.67"), Decimal("20.000"), Decimal("6.33"), Decimal("38.00"), "EUR"
+                ),
+                approved_quote_capacity_override=True,
+                capacity_override_booking_ids=override_booking_ids,
+            )
+
+        self.assertIsNotNone(booking)
+        self.assertEqual(override_booking_ids, [booking.id])
+        self.assertIn("devis validé", booking.internal_note)
+
+    def test_full_series_still_blocks_without_an_exact_approved_quote(self) -> None:
+        class _FakeSession:
+            def scalar(self, _statement):
+                return None
+
+        with patch("app.api.routes.quotes._count_booked", return_value=6):
+            with self.assertRaises(HTTPException) as caught:
+                _create_followup_booking(
+                    _FakeSession(),
+                    session_obj=SimpleNamespace(
+                        id=uuid4(),
+                        title="Cours collectif",
+                        course_type_id=uuid4(),
+                        capacity_max=6,
+                        timezone="Europe/Paris",
+                        start_at_utc=datetime(2026, 9, 9, 12, tzinfo=timezone.utc),
+                    ),
+                    student=SimpleNamespace(id=uuid4()),
+                    subscription=None,
+                    plan=None,
+                    now=datetime(2026, 9, 3, tzinfo=timezone.utc),
+                    created_booking_ids=[],
+                )
+
+        self.assertEqual(caught.exception.status_code, 409)
+        self.assertIn("est complet", caught.exception.detail)
+
+    def test_capacity_override_is_limited_to_the_exact_approved_series(self) -> None:
+        activity_id = uuid4()
+        approved_series_id = uuid4()
+        quote = SimpleNamespace(
+            status="approved",
+            approved_at=datetime(2026, 9, 3, tzinfo=timezone.utc),
+            meta={},
+        )
+        snapshot = {
+            "blocks": [{
+                "activity_id": str(activity_id),
+                "recommendation_key": f"{activity_id}:primary",
+                "series_key": str(approved_series_id),
+            }],
+            "sessions": [],
+        }
+
+        self.assertTrue(_approved_quote_contains_selected_series(
+            quote=quote,
+            calendar_snapshot=snapshot,
+            activity_id=activity_id,
+            schedule_key_candidates=[f"{activity_id}:primary"],
+            selected_series_key=str(approved_series_id),
+        ))
+        self.assertFalse(_approved_quote_contains_selected_series(
+            quote=quote,
+            calendar_snapshot=snapshot,
+            activity_id=activity_id,
+            schedule_key_candidates=[f"{activity_id}:primary"],
+            selected_series_key=str(uuid4()),
+        ))
+        quote.meta = {"planning_hold_released": "true"}
+        self.assertFalse(_approved_quote_contains_selected_series(
+            quote=quote,
+            calendar_snapshot=snapshot,
+            activity_id=activity_id,
+            schedule_key_candidates=[f"{activity_id}:primary"],
+            selected_series_key=str(approved_series_id),
+        ))
+
+    def test_stale_pricing_review_becomes_audit_warning_after_client_approval(self) -> None:
+        quote = SimpleNamespace(
+            status="approved",
+            approved_at=datetime(2026, 9, 3, tzinfo=timezone.utc),
+        )
+        with patch(
+            "app.api.routes.quotes.check_review_current",
+            side_effect=HTTPException(status_code=409, detail="Recalcul requis"),
+        ):
+            warning = _quote_transformation_review_warning(
+                SimpleNamespace(),
+                quote=quote,
+                lines=[],
+            )
+
+        self.assertEqual(warning, "Recalcul requis")
+
+    def test_stale_pricing_review_still_blocks_before_client_approval(self) -> None:
+        quote = SimpleNamespace(status="sent", approved_at=None)
+        with patch(
+            "app.api.routes.quotes.check_review_current",
+            side_effect=HTTPException(status_code=409, detail="Recalcul requis"),
+        ):
+            with self.assertRaises(HTTPException) as caught:
+                _quote_transformation_review_warning(
+                    SimpleNamespace(),
+                    quote=quote,
+                    lines=[],
+                )
+
+        self.assertEqual(caught.exception.status_code, 409)
+        self.assertEqual(caught.exception.detail, "Recalcul requis")
 
     def test_annual_invoice_metadata_freezes_quote_lines_period_and_deposit(self) -> None:
         class _FakeScalars:

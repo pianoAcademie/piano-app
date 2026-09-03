@@ -124,6 +124,9 @@ export function quoteTransformFinancialAdjustmentFromMeta(
 
 export type QuoteScheduleHint = {
   activityId: string | null;
+  seriesKey: string | null;
+  locationId: string | null;
+  selectedSessionId: string | null;
   startDate: string | null;
   weekday: number | null;
   startTime: string | null;
@@ -194,6 +197,7 @@ export type SessionMatchOption = {
   seriesSize?: number;
   usesSeriesAvailability?: boolean;
   hasFullSeriesSession?: boolean;
+  approvedQuoteSelection?: boolean;
   recurrenceGroupId: string | null;
   courseTypeId: string;
   locationId: string;
@@ -1153,6 +1157,14 @@ function matchScore(
     reasons.push("lieu compatible");
   }
 
+  if (
+    hint?.selectedSessionId === session.id
+    || (hint?.seriesKey && hint.seriesKey === session.recurrenceGroupId)
+  ) {
+    score += 120;
+    reasons.push("creneau exact du devis valide");
+  }
+
   if (session.status.toUpperCase() === "SCHEDULED") {
     score += 14;
     reasons.push("creneau planifie");
@@ -1359,6 +1371,7 @@ function groupRecurringSessionOptions(
     );
     const groupSize = relevantGroup.length;
     const hasFullSeriesSession = Number.isFinite(minSeatsRemaining) && minSeatsRemaining <= 0;
+    const approvedQuoteSelection = group.some((option) => option.approvedQuoteSelection === true);
     const quantityDelta = expectedSessionCount === null ? null : Math.abs(groupSize - expectedSessionCount);
     const quantityScore = quantityDelta === null
       ? 0
@@ -1392,17 +1405,19 @@ function groupRecurringSessionOptions(
       ...representative,
       dateLabel: `${recurringSlotLabel(representative.session, representative.localParts, locale)} · ${groupSize} ${sessionWord}${groupSize > 1 ? "s" : ""}`,
       seatsRemaining: Number.isFinite(minSeatsRemaining) ? minSeatsRemaining : representative.seatsRemaining,
-      score: representative.score + quantityScore + (hasFullSeriesSession ? -60 : 0),
+      score: representative.score + quantityScore + (hasFullSeriesSession ? -60 : 0) + (approvedQuoteSelection ? 120 : 0),
       reasons: [...representativeReasons, recurrentReason, ...(availabilityReason ? [availabilityReason] : []), ...(quantityReason ? [quantityReason] : [])],
       seriesSize: groupSize,
       usesSeriesAvailability: groupSize > 1,
       hasFullSeriesSession,
+      approvedQuoteSelection,
     };
   });
 
   const sortedGroupedOptions = groupedOptions.sort(compareSessionMatchDrafts);
+  const approvedIndex = sortedGroupedOptions.findIndex((option) => option.approvedQuoteSelection === true);
   const firstUsableIndex = sortedGroupedOptions.findIndex((option) => option.seatsRemaining > 0);
-  const recommendedIndex = firstUsableIndex >= 0 ? firstUsableIndex : 0;
+  const recommendedIndex = approvedIndex >= 0 ? approvedIndex : firstUsableIndex >= 0 ? firstUsableIndex : 0;
   return sortedGroupedOptions.map((option, index) => ({
     ...option,
     recommended: index === recommendedIndex,
@@ -1568,6 +1583,22 @@ export function buildSessionMatches(
           ...(selectionModeRef.value === "nearest_date_time" ? ["date la plus proche"] : []),
           ...(selectionModeRef.value === "nearest_date" ? ["date la plus proche (horaire approche)"] : []),
         ],
+        approvedQuoteSelection: Boolean(
+          hint
+          && (
+            hint.selectedSessionId === session.id
+            || (hint.seriesKey && hint.seriesKey === session.recurrenceGroupId)
+            || (
+              !hint.seriesKey
+              && !hint.selectedSessionId
+              && Boolean(hint.locationId)
+              && hint.locationId === session.locationId
+              && hint.weekday === localParts.weekday
+              && Boolean(hint.startTime)
+              && (hint.startTime === localParts.timeKey || sessionContainsHintTime(session, hint))
+            )
+          )
+        ),
         session,
         localParts,
       } satisfies SessionMatchDraft;
@@ -1766,6 +1797,9 @@ export function deriveScheduleHints(calendarSnapshot: Record<string, unknown>): 
     const computedWeekday = startDate ? weekdayFromDateKey(startDate) : null;
     const candidate: QuoteScheduleHint = {
       activityId: scheduleKey,
+      seriesKey: readString(block.series_key ?? block.recurrence_group_id) || null,
+      locationId: readString(block.location_id) || null,
+      selectedSessionId: readString(block.selected_session_id) || null,
       startDate,
       weekday: weekdayFromBlock ?? computedWeekday,
       startTime: isHhmm(startTimeRaw) ? startTimeRaw : null,
@@ -1819,6 +1853,9 @@ export function deriveScheduleHints(calendarSnapshot: Record<string, unknown>): 
     if (!existing) {
       hints.set(scheduleKey, {
         activityId: scheduleKey,
+        seriesKey: readString(session.series_key ?? session.recurrence_group_id) || null,
+        locationId: readString(session.location_id) || null,
+        selectedSessionId: readString(session.session_id ?? session.id) || null,
         startDate: isIsoDate(isoDate) ? isoDate : null,
         weekday,
         startTime: isHhmm(startTime) ? startTime : null,
@@ -1829,6 +1866,15 @@ export function deriveScheduleHints(calendarSnapshot: Record<string, unknown>): 
 
     if (!existing.startDate && isIsoDate(isoDate)) {
       existing.startDate = isoDate;
+    }
+    if (!existing.seriesKey) {
+      existing.seriesKey = readString(session.series_key ?? session.recurrence_group_id) || null;
+    }
+    if (!existing.locationId) {
+      existing.locationId = readString(session.location_id) || null;
+    }
+    if (!existing.selectedSessionId) {
+      existing.selectedSessionId = readString(session.session_id ?? session.id) || null;
     }
     if (existing.weekday === null && weekday !== null) {
       existing.weekday = weekday;
@@ -2102,7 +2148,7 @@ export function analyzeQuoteQuickTransformStatus(input: QuoteQuickTransformAnaly
 
   const activityLocationNameById = deriveActivityLocationNameById(input.calendarSnapshot);
   const activityLocationIdById = deriveActivityLocationIdById(input.calendarSnapshot);
-  const activityRows = buildActivityPricingRows(
+  const catalogActivityRows = buildActivityPricingRows(
     input.lines,
     activitiesById,
     activityLocationNameById,
@@ -2110,6 +2156,16 @@ export function analyzeQuoteQuickTransformStatus(input: QuoteQuickTransformAnaly
     scenario,
     input.calendarSnapshot,
   );
+  const acceptedQuoteIsAuthoritative = String(input.quote.status || "").trim().toLowerCase() === "approved";
+  const activityRows = catalogActivityRows.map((row) => acceptedQuoteIsAuthoritative
+    ? {
+        ...row,
+        currentSystemTtc: row.expectedTtc,
+        deltaTtc: 0,
+        status: "ok" as const,
+        reason: "tarif contractuel du devis valide",
+      }
+    : row);
 
   if (activityRows.length === 0) {
     pushWarning(2, "Aucune activite planifiable detectee sur le devis.");
@@ -2163,9 +2219,35 @@ export function analyzeQuoteQuickTransformStatus(input: QuoteQuickTransformAnaly
       continue;
     }
 
+    const approvedSelection = options.find((option) => option.approvedQuoteSelection === true);
     const available = options.filter((option) => option.seatsRemaining > 0);
     if (available.length === 0) {
       const first = options[0];
+      if (acceptedQuoteIsAuthoritative && approvedSelection) {
+        autoAssignableCount += 1;
+        pushWarning(3, `${row.activityName}: le creneau valide est complet; le devis sera honore avec tracabilite.`);
+        proposedScheduleAssignments.push({
+          activityId: row.scheduleKey,
+          activityName: row.activityName,
+          status: "auto_assigned",
+          sessionId: approvedSelection.sessionId,
+          sessionLabel: `${approvedSelection.label} · ${approvedSelection.dateLabel}`,
+          seatsRemaining: approvedSelection.seatsRemaining,
+          warning: "Devis valide a honorer",
+          seriesAssignment: {
+            sessionId: approvedSelection.sessionId,
+            recurrenceGroupId: approvedSelection.recurrenceGroupId,
+            courseTypeId: approvedSelection.courseTypeId,
+            locationId: approvedSelection.locationId,
+            timezone: approvedSelection.timezone,
+            localWeekday: approvedSelection.localWeekday,
+            localStartTime: approvedSelection.localStartTime,
+            localEndTime: approvedSelection.localEndTime,
+            expectedQuantity: row.quantity,
+          },
+        });
+        continue;
+      }
       pushBlocked(3, `${row.activityName}: creneau complet sans alternative.`);
       proposedScheduleAssignments.push({
         activityId: row.scheduleKey,
@@ -2179,10 +2261,12 @@ export function analyzeQuoteQuickTransformStatus(input: QuoteQuickTransformAnaly
       continue;
     }
 
-    const recommended = available[0];
-    if (available.length === 1) {
+    const recommended = approvedSelection || available[0];
+    if (approvedSelection || available.length === 1) {
       autoAssignableCount += 1;
-      pushOk(3, `${row.activityName}: creneau unique auto-assignable.`);
+      pushOk(3, approvedSelection
+        ? `${row.activityName}: creneau exact du devis valide auto-assigne.`
+        : `${row.activityName}: creneau unique auto-assignable.`);
       proposedScheduleAssignments.push({
         activityId: row.scheduleKey,
         activityName: row.activityName,

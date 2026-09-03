@@ -27,7 +27,7 @@ class QuoteTransformationInvoiceDueDatesTests(unittest.TestCase):
         self.db.add.side_effect = lambda row: setattr(row, "id", row.id or uuid4())
         self.quote = SimpleNamespace(
             id=uuid4(), quote_number="DV-TEST-DUE-DATE", legal_entity_id=uuid4(),
-            currency="EUR", school_year_label="2026-2027",
+            currency="EUR", school_year_label="2026-2027", meta={},
             # An old quote transformed today must receive the new terms too.
             created_at=datetime(2026, 5, 1, tzinfo=timezone.utc),
         )
@@ -84,6 +84,8 @@ class QuoteTransformationInvoiceDueDatesTests(unittest.TestCase):
                 ("_quote_deposit_invoice_breakdown", (Decimal("200.00"), Decimal("166.67"), Decimal("20.000"), Decimal("33.33"))),
                 ("_resolve_configured_product_category", "PRE_REGISTRATION_DEPOSIT"),
                 ("_find_reusable_followup_deposit_payment", payment),
+                ("_invoice_recipient_snapshot_for_client", {"client_name": "Test", "client_billing_address": ""}),
+                ("build_company_identity_snapshot", {}),
             ):
                 stack.enter_context(patch(f"app.api.routes.quotes.{name}", return_value=result))
             return _create_followup_deposit_invoice(

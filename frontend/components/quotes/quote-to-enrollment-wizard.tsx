@@ -209,6 +209,12 @@ function defaultSessionAssignment(
   options: SessionMatchOption[],
   scenario: QuoteTransformScenario,
 ): string | null {
+  const approvedSelection = options.find(
+    (option) => option.status.toUpperCase() === "SCHEDULED" && option.approvedQuoteSelection === true,
+  );
+  if (approvedSelection) {
+    return approvedSelection.sessionId;
+  }
   const firstUsable = options.find((option) => option.status.toUpperCase() === "SCHEDULED" && option.seatsRemaining > 0);
   const shouldAutoAssign = scenario === "A" || options.length === 1;
   return shouldAutoAssign && firstUsable ? firstUsable.sessionId : null;
@@ -455,7 +461,8 @@ export default function QuoteToEnrollmentWizard({
 
   const activityRows = useMemo(
     () => baseActivityRows.map((row) => {
-      if (!alignedActivityIds.has(row.scheduleKey)) {
+      const acceptedQuoteIsAuthoritative = String(quote.status || "").trim().toLowerCase() === "approved";
+      if (!acceptedQuoteIsAuthoritative && !alignedActivityIds.has(row.scheduleKey)) {
         return row;
       }
       return {
@@ -463,10 +470,12 @@ export default function QuoteToEnrollmentWizard({
         currentSystemTtc: row.expectedTtc,
         deltaTtc: 0,
         status: "ok" as const,
-        reason: "alignement manuel sur devis",
+        reason: acceptedQuoteIsAuthoritative
+          ? (language === "en" ? "accepted quote contract price" : "tarif contractuel du devis validé")
+          : (language === "en" ? "manually aligned with quote" : "alignement manuel sur devis"),
       };
     }),
-    [baseActivityRows, alignedActivityIds],
+    [baseActivityRows, alignedActivityIds, quote.status, language],
   );
 
   const scheduleHints = useMemo(() => deriveScheduleHints(calendarSnapshot), [calendarSnapshot]);
@@ -818,19 +827,25 @@ export default function QuoteToEnrollmentWizard({
         issues.push({
           issueId: `step3-session-count-mismatch-${row.scheduleKey}`,
           step: 3,
-          level: "blocked",
-          message: `${row.activityName} : le planning approuvé contient ${approvedSessionCount} séance(s), mais ${billedSessionCount} sont facturées. Corrigez le devis ou le planning avant la transformation.`,
+          level: "warning",
+          message: language === "en"
+            ? `${row.activityName}: the accepted quote bills ${billedSessionCount} session(s). This contractual quantity will be applied despite the ${approvedSessionCount} occurrence(s) currently materialized.`
+            : `${row.activityName} : le devis validé facture ${billedSessionCount} séance(s). Cette quantité contractuelle sera appliquée malgré les ${approvedSessionCount} occurrence(s) actuellement matérialisée(s).`,
           canOverride: false,
         });
-        continue;
       }
 
       if (selectedOption.seatsRemaining <= 0) {
+        const approvedSelection = selectedOption.approvedQuoteSelection === true;
         issues.push({
           issueId: `step3-session-full-${row.scheduleKey}`,
           step: 3,
-          level: "blocked",
-          message: t("admin.quote_transform.issue_session_full", { activity: row.activityName }),
+          level: approvedSelection ? "warning" : "blocked",
+          message: approvedSelection
+            ? language === "en"
+              ? `${row.activityName}: the exact slot accepted in the quote is now full. The enrollment will still be honored and the capacity exception will be audited.`
+              : `${row.activityName} : le créneau exact du devis validé est désormais complet. L'inscription sera néanmoins honorée et le dépassement sera tracé.`
+            : t("admin.quote_transform.issue_session_full", { activity: row.activityName }),
           canOverride: false,
         });
       } else if (options.length > 1) {

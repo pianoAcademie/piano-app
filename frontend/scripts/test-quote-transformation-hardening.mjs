@@ -213,3 +213,68 @@ test("stable series metadata survives draft reload", () => {
   assert.equal(draft.scheduleResolution.seriesAssignmentsByActivityId[activityId].localStartTime, "18:05");
   assert.equal(draft.scheduleResolution.seriesAssignmentsByActivityId[activityId].expectedQuantity, 26);
 });
+
+test("the exact series accepted in the quote remains recommended even when it became full", () => {
+  const approvedSeriesId = "44444444-4444-4444-8444-444444444444";
+  const alternativeSeriesId = "55555555-5555-4555-8555-555555555555";
+  const pompeId = "66666666-6666-4666-8666-666666666666";
+  const schefferId = "77777777-7777-4777-8777-777777777777";
+  const row = {
+    rowId: "row-approved-full",
+    lineId: "line-approved-full",
+    scheduleKey: activityId,
+    activityId,
+    matchingActivityIds: [activityId],
+    activityName: "Cours collectif enfants",
+    locationName: "Rue de la Pompe",
+    pricingUnit: "session",
+    quantity: 2,
+    durationMinutes: 60,
+    expectedTtc: 76,
+    baseRateTtc: 38,
+    currentSystemTtc: 76,
+    discountTtc: 0,
+    supplementTtc: 0,
+    deltaTtc: 0,
+    status: "ok",
+    reason: "tarif contractuel",
+  };
+  const makeSession = (id, seriesId, locationIdValue, locationName, seatsRemaining) => ({
+    ...session(id, "SCHEDULED", "2026-09-09T12:00:00Z"),
+    recurrenceGroupId: seriesId,
+    locationId: locationIdValue,
+    locationName,
+    capacityMax: 6,
+    bookedCount: 6 - seatsRemaining,
+    seatsRemaining,
+  });
+  const hints = new Map([[activityId, {
+    activityId,
+    seriesKey: approvedSeriesId,
+    locationId: pompeId,
+    selectedSessionId: null,
+    startDate: "2026-09-09",
+    weekday: 2,
+    startTime: "14:00",
+    endTime: "15:00",
+  }]]);
+
+  const options = buildSessionMatches(
+    row,
+    [
+      makeSession("approved-1", approvedSeriesId, pompeId, "Rue de la Pompe", 0),
+      makeSession("approved-2", approvedSeriesId, pompeId, "Rue de la Pompe", 0),
+      makeSession("alternative-1", alternativeSeriesId, schefferId, "Rue Scheffer", 3),
+      makeSession("alternative-2", alternativeSeriesId, schefferId, "Rue Scheffer", 3),
+    ],
+    pompeId,
+    hints,
+    "live",
+  );
+
+  assert.equal(options[0].recurrenceGroupId, approvedSeriesId);
+  assert.equal(options[0].approvedQuoteSelection, true);
+  assert.equal(options[0].recommended, true);
+  assert.equal(options[0].seatsRemaining, 0);
+  assert.notEqual(options[1].approvedQuoteSelection, true);
+});
