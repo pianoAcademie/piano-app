@@ -20,6 +20,7 @@ from app.api.routes.quotes import (
     _planning_session_limit_from_quote_line,
     _quote_line_schedule_key,
     _quote_transform_schedule_key_candidates,
+    _recover_approved_undated_solfege_expected_dates,
     _resolve_envelope_session_for_student_time,
     _resolve_scheduled_quote_transform_assignment_session,
     _validated_quote_transform_expected_dates,
@@ -68,6 +69,18 @@ class _FakeEnvelopeSession:
         return _FakeScalarResult(self._sessions)
 
 
+class _FakeSolfegeRecoverySession:
+    def __init__(self, course_type: object, location: object, sessions: list[object]) -> None:
+        self._scalar_values = [course_type, location]
+        self._sessions = sessions
+
+    def scalar(self, _statement) -> object:
+        return self._scalar_values.pop(0)
+
+    def scalars(self, _statement) -> _FakeScalarResult:
+        return _FakeScalarResult(self._sessions)
+
+
 def _session(
     *,
     session_id: str,
@@ -91,6 +104,96 @@ def _session(
 
 
 class QuoteLiveSeriesMatchingTests(unittest.TestCase):
+    def test_recovers_legacy_undated_solfege_from_exact_approved_series(self) -> None:
+        activity_id = uuid4()
+        location_id = uuid4()
+        recurrence_id = uuid4()
+        sessions = [
+            _session(
+                session_id=str(uuid4()),
+                course_type_id=activity_id,
+                location_id=location_id,
+                start_at_utc=datetime(2026, 10, 1, 17, 0, tzinfo=timezone.utc) + timedelta(weeks=index),
+                end_at_utc=datetime(2026, 10, 1, 17, 45, tzinfo=timezone.utc) + timedelta(weeks=index),
+                recurrence_group_id=recurrence_id,
+            )
+            for index in range(26)
+        ]
+        quote = SimpleNamespace(
+            school_year_label="2026-2027",
+            selected_solfege_slot={
+                "weekday": 3,
+                "start_time": "19:00",
+                "end_time": "19:45",
+                "location_id": str(location_id),
+            },
+            calendar_snapshot={
+                "blocks": [{"activity_id": str(activity_id), "activity_label": "Solfège niveau 4"}],
+                "sessions": [],
+            },
+        )
+        db = _FakeSolfegeRecoverySession(
+            SimpleNamespace(mode="ONLINE"),
+            SimpleNamespace(name="Online", timezone="Europe/Paris"),
+            sessions,
+        )
+
+        recovered = _recover_approved_undated_solfege_expected_dates(
+            db,
+            quote=quote,
+            activity_id=activity_id,
+            selected_session=sessions[0],
+            session_limit=26,
+        )
+
+        self.assertEqual(len(recovered), 26)
+        self.assertEqual(recovered[0], date(2026, 10, 1))
+
+    def test_does_not_recover_undated_solfege_when_approved_slot_differs(self) -> None:
+        activity_id = uuid4()
+        location_id = uuid4()
+        recurrence_id = uuid4()
+        sessions = [
+            _session(
+                session_id=str(uuid4()),
+                course_type_id=activity_id,
+                location_id=location_id,
+                start_at_utc=datetime(2026, 10, 1, 17, 0, tzinfo=timezone.utc) + timedelta(weeks=index),
+                end_at_utc=datetime(2026, 10, 1, 17, 45, tzinfo=timezone.utc) + timedelta(weeks=index),
+                recurrence_group_id=recurrence_id,
+            )
+            for index in range(26)
+        ]
+        quote = SimpleNamespace(
+            school_year_label="2026-2027",
+            selected_solfege_slot={
+                "weekday": 0,
+                "start_time": "18:50",
+                "end_time": "19:35",
+                "location_id": str(location_id),
+            },
+            calendar_snapshot={
+                "blocks": [{"activity_id": str(activity_id), "activity_label": "Solfège niveau 4"}],
+                "sessions": [],
+            },
+        )
+        db = _FakeSolfegeRecoverySession(
+            SimpleNamespace(mode="ONLINE"),
+            SimpleNamespace(name="Online", timezone="Europe/Paris"),
+            sessions,
+        )
+
+        self.assertEqual(
+            _recover_approved_undated_solfege_expected_dates(
+                db,
+                quote=quote,
+                activity_id=activity_id,
+                selected_session=sessions[0],
+                session_limit=26,
+            ),
+            [],
+        )
+
     def test_expected_dates_fall_back_to_planning_blocks(self) -> None:
         activity_id = uuid4()
         quote = SimpleNamespace(

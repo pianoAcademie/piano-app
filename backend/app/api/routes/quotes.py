@@ -9564,6 +9564,69 @@ def _load_live_series_sessions(
     return _dedupe_same_local_slot(filtered)
 
 
+def _recover_approved_undated_solfege_expected_dates(
+    db: Session,
+    *,
+    quote: Quote,
+    activity_id: UUID,
+    selected_session: CourseSession,
+    session_limit: int | None,
+    student_start_time_local: str | None = None,
+    student_end_time_local: str | None = None,
+) -> list[date]:
+    """Recover legacy solfege dates only from the exact client-approved slot.
+
+    Some approved legacy quotes persisted the selected solfege slot and billed
+    quantity but did not materialise the occurrence dates in the calendar
+    snapshot. The transformation must not interpret that storage gap as an
+    empty course. Recovery stays deliberately strict: the selected live
+    session must match the approved day, local times and location, and the live
+    recurrence must contain exactly the billed number of school-year sessions.
+    """
+    if session_limit is None or session_limit <= 0:
+        return []
+    if not _quote_snapshot_activity_is_solfege(quote, activity_id=activity_id):
+        return []
+    selected_slot = _quote_selected_solfege_slot(quote)
+    if not selected_slot:
+        return []
+
+    course_type = db.scalar(select(CourseType).where(CourseType.id == activity_id))
+    location = db.scalar(select(Location).where(Location.id == selected_session.location_id))
+    if course_type is None or location is None:
+        return []
+    if not _session_matches_quote_selected_solfege_slot(
+        selected_session,
+        course_type=course_type,
+        location=location,
+        selected_slot=selected_slot,
+        expected_date_set=set(),
+    ):
+        return []
+
+    school_year_bounds = _school_year_bounds_from_label(quote.school_year_label or "")
+    if school_year_bounds is None:
+        return []
+    school_year_start, school_year_end = school_year_bounds
+    live_sessions = _load_live_series_sessions(
+        db,
+        selected_session=selected_session,
+        expected_dates=[],
+        student_start_time_local=student_start_time_local,
+        student_end_time_local=student_end_time_local,
+    )
+    recovered_dates = []
+    for session_obj in live_sessions:
+        zone = _safe_zoneinfo(session_obj.timezone)
+        local_date = session_obj.start_at_utc.astimezone(zone).date()
+        if school_year_start <= local_date <= school_year_end:
+            recovered_dates.append(local_date)
+    recovered_dates = sorted(set(recovered_dates))
+    if len(recovered_dates) != session_limit:
+        return []
+    return recovered_dates
+
+
 def _create_missing_live_sessions_from_quote_schedule(
     db: Session,
     *,
@@ -11937,6 +12000,16 @@ def _execute_quote_followup_transformation(
                     block_dates = fallback_block_dates
             if len(block_dates) > len(expected_dates):
                 expected_dates = block_dates
+        if session_limit is not None and not expected_dates:
+            expected_dates = _recover_approved_undated_solfege_expected_dates(
+                db,
+                quote=quote,
+                activity_id=activity_id,
+                selected_session=selected_session,
+                session_limit=session_limit,
+                student_start_time_local=student_start_time_local,
+                student_end_time_local=student_end_time_local,
+            )
         # Count approved dates without the selected series filter only to explain
         # a mismatch. This must never bypass the strict series/date validation.
         approved_dates_count = None
