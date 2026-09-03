@@ -28,6 +28,7 @@ from app.api.routes.quotes import (
     _quote_annual_invoice_referral_credits_for_invoice,
     _quote_annual_invoice_selected_payments,
     _quote_per_course_discounts_by_schedule_key,
+    _quote_transform_discount_lines,
 )
 from app.schemas.admin import AdminClientPaymentOut
 
@@ -477,6 +478,35 @@ class QuoteIntegrationPricingTests(unittest.TestCase):
 
         self.assertEqual(result[f"{activity_id}:line:{primary.id}"], [family])
         self.assertEqual(result[f"{activity_id}:second_piano_course"], [second_family])
+
+    def test_duplicate_course_does_not_inherit_sibling_discount_from_fallback_candidates(self) -> None:
+        activity_id = uuid4()
+        primary = _service(activity_id=activity_id, quantity="33", amount="1254")
+        second = _service(activity_id=activity_id, quantity="32", amount="1024")
+        loyalty = _discount(
+            title="Remise fidélité",
+            quantity="33",
+            amount="-66",
+            code="REMISE_FIDELITE",
+        )
+        duplicate_ids = {str(activity_id)}
+        discounts = _quote_per_course_discounts_by_schedule_key(
+            [primary, second, loyalty],
+            duplicate_ids,
+        )
+        primary_key = f"{activity_id}:line:{primary.id}"
+        second_key = f"{activity_id}:line:{second.id}"
+
+        resolved = _quote_transform_discount_lines(
+            selected_schedule_key=second_key,
+            activity_id=activity_id,
+            quote_service_lines=[second],
+            duplicate_activity_ids=duplicate_ids,
+            schedule_key_candidates=[second_key, primary_key, str(activity_id)],
+            discounts_by_schedule_key=discounts,
+        )
+
+        self.assertEqual(resolved, [])
 
     def test_second_course_label_wins_when_quantities_differ(self) -> None:
         activity_id = uuid4()

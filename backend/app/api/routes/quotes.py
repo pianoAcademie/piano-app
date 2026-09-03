@@ -1196,6 +1196,36 @@ def _quote_per_course_discounts_by_schedule_key(
     return discounts_by_schedule_key
 
 
+def _quote_transform_discount_lines(
+    *,
+    selected_schedule_key: str,
+    activity_id: UUID,
+    quote_service_lines: list[QuoteLine],
+    duplicate_activity_ids: set[str],
+    schedule_key_candidates: list[str],
+    discounts_by_schedule_key: dict[str, list[QuoteLine]],
+) -> list[QuoteLine]:
+    """Resolve discounts without leaking one duplicate course into another."""
+    exact_keys: list[str] = [selected_schedule_key]
+    for line in quote_service_lines:
+        line_key = _quote_line_schedule_key(line, duplicate_activity_ids)
+        if line_key and line_key not in exact_keys:
+            exact_keys.append(line_key)
+    for key in exact_keys:
+        if discounts := discounts_by_schedule_key.get(key):
+            return discounts
+
+    # For duplicated activities, broad snapshot aliases may contain the key of
+    # the sibling course. Falling back to those aliases would apply the same
+    # loyalty/family discount twice. Exact line identity is mandatory here.
+    if str(activity_id) in duplicate_activity_ids:
+        return []
+    for key in schedule_key_candidates:
+        if discounts := discounts_by_schedule_key.get(key):
+            return discounts
+    return []
+
+
 def _build_payment_terms_snapshot_from_plan(
     *,
     db: Session | None = None,
@@ -12124,11 +12154,14 @@ def _execute_quote_followup_transformation(
                     f"({displayed_dates}{hidden_suffix}). Regenerer ou corriger le planning avant integration."
                 ),
             )
-        quote_discount_lines: list[QuoteLine] = []
-        for candidate_schedule_key in schedule_key_candidates:
-            quote_discount_lines = discount_lines_by_schedule_key.get(candidate_schedule_key, [])
-            if quote_discount_lines:
-                break
+        quote_discount_lines = _quote_transform_discount_lines(
+            selected_schedule_key=schedule_key,
+            activity_id=activity_id,
+            quote_service_lines=quote_service_lines,
+            duplicate_activity_ids=duplicate_service_activity_ids,
+            schedule_key_candidates=schedule_key_candidates,
+            discounts_by_schedule_key=discount_lines_by_schedule_key,
+        )
         quote_pricing_lines = [*quote_service_lines, *quote_discount_lines]
         pricing_overrides: list[tuple[Decimal, Decimal, Decimal, Decimal, str] | None] = [None for _ in live_sessions]
         if quote_pricing_lines and live_sessions:
