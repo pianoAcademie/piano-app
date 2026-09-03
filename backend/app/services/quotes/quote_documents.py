@@ -3395,6 +3395,22 @@ def _product_long_descriptions_by_id(*, db: Session | None, products: list[Quote
     return result
 
 
+def _quote_product_description(
+    line: QuoteLine,
+    catalog_long_description: Any,
+    *,
+    language: str | None = None,
+) -> str:
+    """Return customer-facing copy without exposing pedagogical repertoire details."""
+    product_identity = _searchable_text(" ".join((str(line.title or ""), str(line.code or ""))))
+    if any(token in {"partition", "partitions"} for token in product_identity.split()):
+        return _localized_catalog_text("Avec son cahier de travail.", language=language)
+    return _localized_catalog_text(
+        "\n".join(_unique_text_parts(line.description, catalog_long_description)),
+        language=language,
+    )
+
+
 def _kit_long_descriptions_by_id(*, db: Session | None, kits: list[QuoteLine]) -> dict[Any, str]:
     if db is None:
         return {}
@@ -5362,13 +5378,9 @@ def _build_template_values(
                     "html": (
                         f"<div>{escape(_quote_line_display_title(line, language=language))}</div>"
                         + _small_description_html(
-                            _localized_catalog_text(
-                                "\n".join(
-                                    _unique_text_parts(
-                                        line.description,
-                                        product_long_descriptions.get(line.product_id),
-                                    )
-                                ),
+                            _quote_product_description(
+                                line,
+                                product_long_descriptions.get(line.product_id),
                                 language=language,
                             )
                         )
@@ -7144,15 +7156,14 @@ def _render_quote_pdf_blocks(
         [
             {
                 "text": _quote_line_display_title(line, language=language),
-                "subtext": "\n".join(
-                    _unique_text_parts(
-                        line.description,
-                        (
-                            str(product_long_descriptions.get(line.product_id) or "").strip()
-                            if line.product_id is not None
-                            else ""
-                        ),
-                    )
+                "subtext": _quote_product_description(
+                    line,
+                    (
+                        str(product_long_descriptions.get(line.product_id) or "").strip()
+                        if line.product_id is not None
+                        else ""
+                    ),
+                    language=language,
                 ),
             },
             _compact_quantity_label(line.quantity),

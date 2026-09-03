@@ -34,6 +34,7 @@ from app.services.quotes.quote_documents import (
     _planning_blocks_table_html,
     _normalise_check_schedule_deposit_months,
     _quote_line_display_title,
+    _quote_product_description,
     _rebalance_payment_schedule_amounts,
     _quote_template_disables_pass_recup,
     _quote_template_allows_end_year_concert,
@@ -63,6 +64,40 @@ class _FakeExecuteSession:
 
 
 class QuoteDocumentMarkupTests(unittest.TestCase):
+    def test_partition_description_hides_repertoire_in_customer_documents(self) -> None:
+        line = SimpleNamespace(
+            title="Partitions Ados",
+            code="PARTITION-ADOS",
+            description="Avec son cahier de travail.\nSommaire :\n- I Will Survive\n- Dernière Danse",
+        )
+
+        description = _quote_product_description(
+            line,
+            "Avec son cahier de travail.\nSommaire :\n- Another Love",
+            language="fr",
+        )
+
+        self.assertEqual(description, "Avec son cahier de travail.")
+        self.assertNotIn("Sommaire", description)
+
+    def test_partition_description_is_compact_in_english_customer_documents(self) -> None:
+        line = SimpleNamespace(
+            title="Partition degré 6",
+            code="PARTITION-DEGRE-6",
+            description="Sommaire :\n- Printemps",
+        )
+
+        description = _quote_product_description(line, "Sommaire :\n- Automne", language="en")
+
+        self.assertEqual(description, "Includes its workbook.")
+
+    def test_non_partition_product_keeps_its_description(self) -> None:
+        line = SimpleNamespace(title="Métronome", code="METRONOME", description="Modèle compact")
+
+        description = _quote_product_description(line, "Piles incluses", language="fr")
+
+        self.assertEqual(description, "Modèle compact\nPiles incluses")
+
     def test_child_quote_uses_current_billing_parent_address_over_typeform_address(self) -> None:
         child_id = uuid4()
         child = SimpleNamespace(
