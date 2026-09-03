@@ -61,8 +61,12 @@ def run(*, apply: bool) -> dict:
 
         lines = list(db.scalars(select(QuoteLine).where(QuoteLine.quote_id == QUOTE_ID)).all())
         activity_lines = [line for line in lines if line.activity_id == ACTIVITY_ID]
-        require(len(activity_lines) == 1, "Expected exactly one Friday activity line")
-        require(activity_lines[0].quantity == Decimal("32"), "The commercial quantity is no longer 32")
+        # The admin may remove and re-add the commercial line while correcting
+        # the draft. Planning repair must remain possible without inventing a
+        # financial line or price.
+        require(len(activity_lines) <= 1, "Several Friday activity lines are present")
+        if activity_lines:
+            require(activity_lines[0].quantity == Decimal("32"), "The commercial quantity is no longer 32")
 
         snapshot = deepcopy(quote.calendar_snapshot or {})
         rows = list(snapshot.get("sessions") or [])
@@ -140,6 +144,7 @@ def run(*, apply: bool) -> dict:
             "removed_cancelled_date": "2026-09-04",
             "restored_dates": sorted(set(dates) - EXPECTED_OLD_DATES),
             "emails_sent": 0,
+            "commercial_line_present": bool(activity_lines),
         }
         if apply:
             event = QuoteEvent(
@@ -154,6 +159,7 @@ def run(*, apply: bool) -> dict:
                     "old_sessions": 30,
                     "new_sessions": 32,
                     "emails_sent": 0,
+                    "commercial_line_present": bool(activity_lines),
                 },
             )
             quote.calendar_snapshot = after
