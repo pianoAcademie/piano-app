@@ -698,7 +698,6 @@ export default async function TeacherStatementsPage({
                   {t("teacher.external_invoice_already_sent", {
                     payor: statement.payor_legal_entity_name,
                     date: formatDateTimeLabel(statement.external_invoice_sent_at || "", language),
-                    file: statement.external_invoice_file_name || t("teacher.invoice_pdf"),
                   })}
                 </AlertCard>
               ))}
