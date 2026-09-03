@@ -9237,7 +9237,7 @@ def _load_live_series_sessions(
             .where(
                 CourseSession.course_type_id == selected_session.course_type_id,
                 CourseSession.location_id == selected_session.location_id,
-                CourseSession.status == SessionStatus.SCHEDULED,
+                CourseSession.status.in_([SessionStatus.SCHEDULED, SessionStatus.COMPLETED]),
                 CourseSession.start_at_utc >= start_floor_local.astimezone(timezone.utc),
                 CourseSession.start_at_utc <= end_ceil_local.astimezone(timezone.utc),
             )
@@ -9256,7 +9256,7 @@ def _load_live_series_sessions(
         select(CourseSession)
         .where(
             CourseSession.recurrence_group_id == selected_session.recurrence_group_id,
-            CourseSession.status == SessionStatus.SCHEDULED,
+            CourseSession.status.in_([SessionStatus.SCHEDULED, SessionStatus.COMPLETED]),
         )
         .order_by(CourseSession.start_at_utc.asc())
         .with_for_update()
@@ -9321,7 +9321,7 @@ def _create_missing_live_sessions_from_quote_schedule(
             .where(
                 CourseSession.course_type_id == template_session.course_type_id,
                 CourseSession.location_id == template_session.location_id,
-                CourseSession.status == SessionStatus.SCHEDULED,
+                CourseSession.status.in_([SessionStatus.SCHEDULED, SessionStatus.COMPLETED]),
                 CourseSession.start_at_utc >= day_start_utc,
                 CourseSession.start_at_utc <= day_end_utc,
                 CourseSession.start_at_utc == start_utc,
@@ -10165,11 +10165,12 @@ def _create_followup_booking(
             start_time_local=student_start_time_local,
             end_time_local=student_end_time_local,
         )
+    is_completed_occurrence = session_obj.status == SessionStatus.COMPLETED
     booking = Booking(
         session_id=session_obj.id,
         user_id=student.id,
         client_plan_subscription_id=subscription.id if subscription is not None else None,
-        status=BookingStatus.BOOKED,
+        status=BookingStatus.ATTENDED if is_completed_occurrence else BookingStatus.BOOKED,
         booked_at=now,
         **pricing_fields,
         student_start_at_utc=student_start_at_utc,
@@ -10179,13 +10180,14 @@ def _create_followup_booking(
     db.flush()
     created_booking_ids.append(booking.id)
     _mark_first_course_if_needed(student, session_obj)
-    ensure_booking_reminder(db, booking=booking, session_obj=session_obj, now=now)
-    schedule_booking_created_notifications(
-        db,
-        booking=booking,
-        actor_user_id=student.id,
-        occurred_at=now,
-    )
+    if not is_completed_occurrence:
+        ensure_booking_reminder(db, booking=booking, session_obj=session_obj, now=now)
+        schedule_booking_created_notifications(
+            db,
+            booking=booking,
+            actor_user_id=student.id,
+            occurred_at=now,
+        )
     return booking
 
 

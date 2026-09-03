@@ -59,7 +59,7 @@ function session(id, status, startAtUtc) {
   };
 }
 
-test("only scheduled sessions can be proposed for a quote transformation", () => {
+test("completed recurring occurrences count toward the series without becoming the actionable slot", () => {
   const row = {
     rowId: "row",
     lineId: "line",
@@ -93,6 +93,8 @@ test("only scheduled sessions can be proposed for a quote transformation", () =>
   );
 
   assert.deepEqual(options.map((option) => option.sessionId), ["scheduled"]);
+  assert.equal(options[0].seriesSize, 2);
+  assert.equal(options[0].status, "SCHEDULED");
   assert.equal(options[0].localStartTime, "18:05");
   assert.equal(options[0].timezone, "Europe/Paris");
 });

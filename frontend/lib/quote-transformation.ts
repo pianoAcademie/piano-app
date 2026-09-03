@@ -1347,8 +1347,16 @@ function groupRecurringSessionOptions(
     const relevantGroup = expectedSessionCount === null
       ? chronologicalGroup
       : chronologicalGroup.slice(0, expectedSessionCount);
-    const representative = relevantGroup[0] || chronologicalGroup[0];
-    const minSeatsRemaining = relevantGroup.reduce((acc, option) => Math.min(acc, option.seatsRemaining), Number.POSITIVE_INFINITY);
+    // A completed occurrence still belongs to the approved annual series and
+    // therefore counts toward its quantity. The actionable representative and
+    // availability, however, must come from a future scheduled occurrence.
+    const scheduledGroup = relevantGroup.filter((option) => option.status.toUpperCase() === "SCHEDULED");
+    const representative = scheduledGroup[0] || relevantGroup[0] || chronologicalGroup[0];
+    const availabilityGroup = scheduledGroup.length > 0 ? scheduledGroup : relevantGroup;
+    const minSeatsRemaining = availabilityGroup.reduce(
+      (acc, option) => Math.min(acc, option.seatsRemaining),
+      Number.POSITIVE_INFINITY,
+    );
     const groupSize = relevantGroup.length;
     const hasFullSeriesSession = Number.isFinite(minSeatsRemaining) && minSeatsRemaining <= 0;
     const quantityDelta = expectedSessionCount === null ? null : Math.abs(groupSize - expectedSessionCount);
@@ -1413,9 +1421,13 @@ export function buildSessionMatches(
   const hint = hintsByActivityId.get(activityRow.scheduleKey) ?? hintsByActivityId.get(activityRow.activityId) ?? null;
   const selectionModeRef: { value: "exact_date_time" | "exact_date" | "nearest_date_time" | "nearest_date" | "all" } = { value: "all" };
   const locationScopedSessions = sessions.filter(
-    (session) => session.status.toUpperCase() === "SCHEDULED"
+    (session) => {
+      const normalizedStatus = session.status.toUpperCase();
+      const belongsToRecurringHistory = activityRow.quantity > 1 && normalizedStatus === "COMPLETED";
+      return (normalizedStatus === "SCHEDULED" || belongsToRecurringHistory)
       && Boolean(isoPartsInTimezone(session.startAtUtc, session.timezone).timeKey)
-      && isLocationCompatible(session, expectedLocationId, activityRow.locationName),
+      && isLocationCompatible(session, expectedLocationId, activityRow.locationName);
+    },
   );
   const scopedSessions = (() => {
     if (!hint || !hint.startDate) {
