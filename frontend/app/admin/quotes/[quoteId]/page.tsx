@@ -50,6 +50,7 @@ import {
 import { backendRequest } from "../../../../lib/backend";
 import { hasAdminPermission } from "../../../../lib/admin-access";
 import { loadLivePlanningMatchForBlock, type LivePlanningBlockInput } from "../../../../lib/quote-planning-live";
+import { selectCohesiveRecurringRows } from "../../../../lib/quote-recurring-series";
 import {
   analyzeQuoteQuickTransformStatus,
   deriveCalendarSnapshotActivityIds,
@@ -1264,11 +1265,19 @@ async function loadLivePlanningSeriesOptions({
       ...(activity?.exclude_holidays_in_recurrence === false ? [] : (preset?.holiday_dates ?? [])),
       ...(activity?.exclude_school_vacations_in_recurrence === false ? [] : (preset?.closure_dates ?? [])),
     ]);
-    const seenFilteredRows = new Set<string>();
-    const filteredRows = rows.filter((row) => {
+    const eligibleRows = rows.filter((row) => {
       if (excludedDates.has(row.local.date)) {
         return false;
       }
+      return true;
+    });
+    const activityLabel = activity?.name || session.type_label || null;
+    const seriesTeachingEndDate = schoolYearTeachingEndDateFromLabel(schoolYearLabel, session.location_label) ?? liveSeriesEndDate;
+    const cohesiveRows = selectCohesiveRecurringRows(
+      eligibleRows.filter((row) => row.local.date <= seriesTeachingEndDate),
+    );
+    const seenFilteredRows = new Set<string>();
+    const cappedFilteredRows = cohesiveRows.filter((row) => {
       const rowKey = [
         row.local.date,
         row.local.start_time,
@@ -1282,14 +1291,6 @@ async function loadLivePlanningSeriesOptions({
       seenFilteredRows.add(rowKey);
       return true;
     });
-    const firstFiltered = filteredRows[0];
-    const lastFiltered = filteredRows[filteredRows.length - 1];
-    if (!firstFiltered || !lastFiltered) {
-      continue;
-    }
-    const activityLabel = activity?.name || session.type_label || null;
-    const seriesTeachingEndDate = schoolYearTeachingEndDateFromLabel(schoolYearLabel, session.location_label) ?? liveSeriesEndDate;
-    const cappedFilteredRows = filteredRows.filter((row) => row.local.date <= seriesTeachingEndDate);
     const firstCapped = cappedFilteredRows[0];
     const lastCapped = cappedFilteredRows[cappedFilteredRows.length - 1];
     if (!firstCapped || !lastCapped) {

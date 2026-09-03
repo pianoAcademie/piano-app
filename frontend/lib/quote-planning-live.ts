@@ -1,6 +1,7 @@
 "use server";
 
 import { backendRequest } from "./backend";
+import { selectCohesiveRecurringRows } from "./quote-recurring-series";
 import type { AdminSessionOut } from "./types";
 
 export type LivePlanningBlockInput = {
@@ -265,12 +266,12 @@ export async function loadLivePlanningMatchForBlock({
 
   let matched = buildMatches(true, block.end_date);
   if (shouldWidenLivePlanningBlock(block)) {
-    const widenedMatches = buildMatches(false, widenedEndDate);
+    const widenedMatches = selectCohesiveRecurringRows(buildMatches(false, widenedEndDate));
     if (widenedMatches.length > matched.length) {
       matched = widenedMatches;
     }
   } else if (sessionLimit > 0 && blockSeriesKey && matched.length < sessionLimit) {
-    const widenedMatches = buildMatches(false, block.end_date);
+    const widenedMatches = selectCohesiveRecurringRows(buildMatches(false, block.end_date));
     if (widenedMatches.length > matched.length) {
       matched = widenedMatches;
     }

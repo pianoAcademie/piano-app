@@ -8,12 +8,14 @@ const pageUrl = new URL("../../app/admin/quotes/[quoteId]/page.tsx", import.meta
 const editorUrl = new URL("../../components/quote-planning-editor.tsx", import.meta.url);
 const actionsUrl = new URL("../../lib/actions.ts", import.meta.url);
 const liveUrl = new URL("../../lib/quote-planning-live.ts", import.meta.url);
+const recurringUrl = new URL("../../lib/quote-recurring-series.ts", import.meta.url);
 const weekdays = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"].map(x => "common.weekday_" + x);
 const editor = sourceFunctions(editorUrl, ["applyLiveSeriesToBlock", "parseInitialBlocks", "parseSnapshotSessions", "estimateSessionDates", "selectedLivePlanningOptionKey", "editablePlanningBlockChanged", "displayedPlanningSessionDates"], { WEEKDAY_UNSET: -1 });
 
 function pageFor(sessions = fixture.sessions) {
   return sourceFunctions(pageUrl, ["loadLivePlanningSeriesOptions", "quoteLinePlanningLimit"], {
     uiText, QUOTE_PLANNING_WEEKDAY_KEYS: weekdays,
+    selectCohesiveRecurringRows: sourceFunctions(recurringUrl, ["selectCohesiveRecurringRows"]).selectCohesiveRecurringRows,
     backendRequest: async (url) => {
       const query = new URL(url, "http://fixture.local").searchParams;
       assert.equal(query.get("status"), "SCHEDULED");
@@ -47,7 +49,8 @@ function saveHarness(sessions = fixture.sessions) {
     }
     throw new Error("Unexpected IO: " + url);
   };
-  const live = sourceFunctions(liveUrl, ["loadLivePlanningMatchForBlock"], { backendRequest });
+  const liveHelpers = sourceFunctions(recurringUrl, ["selectCohesiveRecurringRows"]);
+  const live = sourceFunctions(liveUrl, ["loadLivePlanningMatchForBlock"], { backendRequest, ...liveHelpers });
   actions = sourceFunctions(actionsUrl, ["parsePlanningBlocksJson", "buildCalendarSnapshotFromBlocks", "buildLocalPlanningRowsForBlock"], {
     backendRequest, ...live,
     redirect: (url) => { throw new Error("Unexpected redirect: " + url); },

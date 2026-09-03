@@ -127,8 +127,20 @@ test("duplicate occurrences and fragmented recurrence IDs do not inflate the ser
   const [option] = await slots({}, rows);
   assert.equal(option.sessions_count, 32);
   assert.equal(option.end_date, "2027-06-16");
+  assert.equal(option.series_key, fixture.sessions[0].recurrence_group_id);
   const fragmented = fixture.sessions.map((s, i) => ({ ...s, recurrence_group_id: i % 2 ? "one" : "two" }));
   assert.equal((await slots({}, fragmented))[0].series_key, "");
+});
+
+test("overlapping obsolete and partial recurrence groups never get stitched into one slot", async () => {
+  const obsolete = fixture.sessions.slice(0, 26).map((row) => ({ ...row, id: `obsolete-${row.id}`, recurrence_group_id: "obsolete" }));
+  const partialTail = fixture.sessions.slice(-4).map((row) => ({ ...row, id: `tail-${row.id}`, recurrence_group_id: "partial-tail" }));
+
+  const [option] = await slots({}, [...obsolete, ...partialTail, ...fixture.sessions]);
+
+  assert.equal(option.sessions_count, 32);
+  assert.equal(option.series_key, fixture.sessions[0].recurrence_group_id);
+  assert.deepEqual(option.session_dates, fixture.sessions.map((row) => row.start_at_utc.slice(0, 10)));
 });
 
 test("school closures and actual location-specific teaching ends are respected", async () => {
