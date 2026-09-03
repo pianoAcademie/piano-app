@@ -63,7 +63,7 @@ class QuoteType(Base):
     code: Mapped[str] = mapped_column(String(60), nullable=False)
     name: Mapped[str] = mapped_column(String(180), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    default_expiry_days: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("10"))
+    default_expiry_days: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("3"))
     formula_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("plans.id", ondelete="SET NULL"),
@@ -539,7 +539,7 @@ class Quote(Base):
     )
     currency: Mapped[str] = mapped_column(String(3), nullable=False, server_default=text("'EUR'"))
     total_ttc: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, server_default=text("0"))
-    expiry_days: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("10"))
+    expiry_days: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("3"))
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

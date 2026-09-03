@@ -161,8 +161,7 @@ type WizardLine = {
 
 const WEEKDAY_UNSET = -1;
 const DEFAULT_QUOTE_SCHOOL_YEAR = "2026-2027";
-const DEFAULT_EXPIRY_DAYS = "7";
-const PARIS_DEFAULT_EXPIRY_DAYS = "5";
+const DEFAULT_EXPIRY_DAYS = "3";
 const DEFAULT_QUOTE_TEMPLATE_CODE = "TEMPLATE_COURS_COLLECTIF_ENFANT";
 const DEFAULT_QUOTE_TEMPLATE_NAME = "Template cours collectif enfant";
 const WEEKDAY_SHORT_LABELS: Record<UiLanguage, string[]> = {
@@ -471,14 +470,7 @@ function isDefaultQuoteTypeCandidate(item: QuoteTypeOption): boolean {
   return name.includes("forfait") && (name.includes(DEFAULT_QUOTE_SCHOOL_YEAR) || schoolYear === DEFAULT_QUOTE_SCHOOL_YEAR);
 }
 
-function isParisLocation(item: LocationOption | null | undefined): boolean {
-  return normalizeSearchValue(item?.city ?? "") === "paris";
-}
-
-function expiryDaysForContext(quoteType: QuoteTypeOption | null | undefined, location: LocationOption | null | undefined): string {
-  if (isParisLocation(location)) {
-    return PARIS_DEFAULT_EXPIRY_DAYS;
-  }
+function expiryDaysForContext(quoteType: QuoteTypeOption | null | undefined): string {
   return String(quoteType?.default_expiry_days ?? DEFAULT_EXPIRY_DAYS);
 }
 
@@ -663,7 +655,7 @@ export default function QuoteWizardForm({
   const [selectedClientId, setSelectedClientId] = useState<string>("");
   const [recipientQuery, setRecipientQuery] = useState<string>("");
   const [selectedQuoteTypeId, setSelectedQuoteTypeId] = useState<string>(initialQuoteTypeId);
-  const [expiryDaysInput, setExpiryDaysInput] = useState<string>(expiryDaysForContext(initialQuoteType, null));
+  const [expiryDaysInput, setExpiryDaysInput] = useState<string>(expiryDaysForContext(initialQuoteType));
   const [expiryDaysTouched, setExpiryDaysTouched] = useState<boolean>(false);
   const [schoolYearLabelInput, setSchoolYearLabelInput] = useState<string>(DEFAULT_QUOTE_SCHOOL_YEAR);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>(defaultQuoteTemplate?.id ?? "");
@@ -890,8 +882,8 @@ export default function QuoteWizardForm({
     if (expiryDaysTouched) {
       return;
     }
-    setExpiryDaysInput(expiryDaysForContext(selectedQuoteType, selectedPlanningLocation));
-  }, [expiryDaysTouched, selectedPlanningLocation, selectedQuoteType]);
+    setExpiryDaysInput(expiryDaysForContext(selectedQuoteType));
+  }, [expiryDaysTouched, selectedQuoteType]);
 
   function lineKindLabel(kind: LineKind): string {
     if (kind === "activity") return t("admin.quote_new.line_kind_activity");
@@ -992,7 +984,7 @@ export default function QuoteWizardForm({
                   setSelectedQuoteTypeId(nextQuoteTypeId);
                   const nextQuoteType = quoteTypes.find((item) => item.id === nextQuoteTypeId) ?? null;
                   setExpiryDaysTouched(false);
-                  setExpiryDaysInput(expiryDaysForContext(nextQuoteType, selectedPlanningLocation));
+                  setExpiryDaysInput(expiryDaysForContext(nextQuoteType));
                   setSchoolYearLabelInput(nextQuoteType?.school_year_label ?? "");
                 }}
               >

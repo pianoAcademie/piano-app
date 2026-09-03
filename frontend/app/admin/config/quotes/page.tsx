@@ -1157,7 +1157,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
             </label>
             <label>
               {t("admin.quote_config.expiry_days")}
-              <input type="number" name="default_expiry_days" min={1} max={120} defaultValue={10} required />
+              <input type="number" name="default_expiry_days" min={1} max={120} defaultValue={3} required />
             </label>
             <label>
               {t("admin.quote_config.default_school_year")}

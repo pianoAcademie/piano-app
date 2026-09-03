@@ -212,8 +212,7 @@ from app.services.subscriptions import add_months_utc, default_next_payment_at
 
 router = APIRouter()
 
-PARIS_QUOTE_DEFAULT_EXPIRY_DAYS = 5
-QUOTE_FALLBACK_EXPIRY_DAYS = 10
+QUOTE_FALLBACK_EXPIRY_DAYS = 3
 QUOTE_FINANCIAL_ADJUSTMENT_META_KEY = "financial_adjustment"
 QUOTE_FINANCIAL_ADJUSTMENT_NONE = "none"
 QUOTE_FINANCIAL_ADJUSTMENT_CREDIT = "credit"
@@ -2467,7 +2466,7 @@ def _quote_out(
         parent_quote_id=row.parent_quote_id,
         currency=row.currency,
         total_ttc=_q2(Decimal(row.total_ttc or 0)),
-        expiry_days=int(row.expiry_days or 10),
+        expiry_days=int(row.expiry_days or QUOTE_FALLBACK_EXPIRY_DAYS),
         expires_at=row.expires_at,
         sent_at=row.sent_at,
         approved_at=row.approved_at,
@@ -2803,7 +2802,7 @@ def _quote_type_out(row: QuoteType, *, formula_name: str | None = None) -> Quote
         code=row.code,
         name=row.name,
         description=row.description,
-        default_expiry_days=int(row.default_expiry_days or 10),
+        default_expiry_days=int(row.default_expiry_days or QUOTE_FALLBACK_EXPIRY_DAYS),
         formula_id=row.formula_id,
         formula_name=formula_name,
         school_year_label=row.school_year_label,
@@ -5266,20 +5265,12 @@ def _quote_type_default_expiry_days(quote_type: QuoteType | object | None) -> in
     return int(getattr(quote_type, "default_expiry_days", None) or QUOTE_FALLBACK_EXPIRY_DAYS)
 
 
-def _is_paris_location_city(city: object | None) -> bool:
-    return str(city or "").strip().casefold() == "paris"
-
-
 def _quote_expiry_days_for_context(
     db: Session,
     *,
     quote_type: QuoteType | object | None,
     location_id: UUID | object | None,
 ) -> int:
-    if location_id is not None:
-        city = db.scalar(select(Location.city).where(Location.id == location_id).limit(1))
-        if _is_paris_location_city(city):
-            return PARIS_QUOTE_DEFAULT_EXPIRY_DAYS
     return _quote_type_default_expiry_days(quote_type)
 
 
@@ -5311,9 +5302,9 @@ def _mark_quote_sent_for_first_delivery(quote: Quote, *, sent_at: datetime) -> N
     quote.status = "sent"
     if quote.sent_at is None:
         quote.sent_at = sent_at
-        quote.expires_at = sent_at + timedelta(days=int(quote.expiry_days or 10))
+        quote.expires_at = sent_at + timedelta(days=int(quote.expiry_days or QUOTE_FALLBACK_EXPIRY_DAYS))
     elif quote.expires_at is None:
-        quote.expires_at = quote.sent_at + timedelta(days=int(quote.expiry_days or 10))
+        quote.expires_at = quote.sent_at + timedelta(days=int(quote.expiry_days or QUOTE_FALLBACK_EXPIRY_DAYS))
 
 
 def _quote_meta_without_public_response(meta: dict[str, object] | None) -> dict[str, object]:

@@ -415,7 +415,7 @@ class QuoteTypeUpsertRequest(BaseModel):
     code: str | None = Field(default=None, min_length=1, max_length=60)
     name: str = Field(min_length=1, max_length=180)
     description: str | None = None
-    default_expiry_days: int = Field(default=10, ge=1, le=120)
+    default_expiry_days: int = Field(default=3, ge=1, le=120)
     formula_id: UUID | None = None
     school_year_label: str | None = Field(default=None, max_length=40)
     is_active: bool = True

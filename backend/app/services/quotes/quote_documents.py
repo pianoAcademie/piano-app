@@ -1123,7 +1123,7 @@ def _date_label(value: datetime | None) -> str:
 def display_quote_expires_at(quote: Quote, *, reference_at: datetime | None = None) -> datetime | None:
     if quote.expires_at is not None:
         return quote.expires_at
-    expiry_days = int(getattr(quote, "expiry_days", None) or 10)
+    expiry_days = int(getattr(quote, "expiry_days", None) or 3)
     if quote.sent_at is not None:
         return quote.sent_at + timedelta(days=expiry_days)
     normalized_status = str(getattr(quote, "status", "") or "").strip().lower()
