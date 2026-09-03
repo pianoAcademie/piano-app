@@ -117,6 +117,17 @@ function blockIsOnline(block: LivePlanningBlockInput): boolean {
   return haystack.includes("online") || haystack.includes("ligne");
 }
 
+function blockIsSolfege(block: LivePlanningBlockInput): boolean {
+  const haystack = [block.activity_label, block.activity_code, block.activity_service_code]
+    .filter((item) => item !== null && item !== undefined)
+    .map((item) => String(item))
+    .join(" ")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+  return haystack.includes("solfege");
+}
+
 function normalizedLocationText(value: unknown): string {
   return String(value ?? "")
     .normalize("NFD")
@@ -163,6 +174,9 @@ function shouldWidenLivePlanningBlock(block: LivePlanningBlockInput): boolean {
     return false;
   }
   const locationEndDate = schoolYearEndDateFromBlock(block);
+  if (String(block.source || "").trim().toLowerCase() === "live_planning" && !blockIsSolfege(block)) {
+    return Boolean(locationEndDate && block.end_date < locationEndDate);
+  }
   const defaultEndDate = defaultSchoolYearEndDateFromBlock(block);
   if (!locationEndDate || !defaultEndDate || locationEndDate <= defaultEndDate) {
     return false;
@@ -198,7 +212,8 @@ export async function loadLivePlanningMatchForBlock({
   }
 
   const rawLimit = Number.parseInt(String(block.planning_session_limit ?? ""), 10);
-  const sessionLimit = Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : 0;
+  const isSavedLiveSeries = String(block.source || "").trim().toLowerCase() === "live_planning" && !blockIsSolfege(block);
+  const sessionLimit = !isSavedLiveSeries && Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : 0;
   const excludedDates = new Set(
     [...(Array.isArray(block.holiday_dates) ? block.holiday_dates : []), ...(Array.isArray(block.closure_dates) ? block.closure_dates : [])]
       .map((item) => String(item).trim())
@@ -302,6 +317,7 @@ export async function loadLivePlanningMatchForBlock({
     sessions_count: limited.length,
     source: "live_planning",
   };
+  delete nextBlock.planning_session_limit;
 
   return {
     block: nextBlock,

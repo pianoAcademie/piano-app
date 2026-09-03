@@ -14739,6 +14739,18 @@ function normalizePlanningBlockSessionLimit(
   block: QuotePlanningBlockInput,
   quoteLines: QuotePlanningLineInput[],
 ): QuotePlanningBlockInput {
+  const normalizedActivityLabel = String(block.activity_label ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+  if (
+    String(block.source ?? "").trim().toLowerCase() === "live_planning"
+    && !normalizedActivityLabel.includes("solfege")
+  ) {
+    return positiveInt(block.planning_session_limit) > 0
+      ? { ...block, planning_session_limit: null }
+      : block;
+  }
   if (block.custom_period) {
     return positiveInt(block.planning_session_limit) > 0
       ? { ...block, planning_session_limit: null }
@@ -14921,10 +14933,14 @@ async function buildCalendarSnapshotFromBlocks({
         ? localRows
         : previewLimitedRows;
 
+    const liveBlock = {
+      ...block,
+      calendar_school_year: String(resolvedCalendar.calendar?.school_year_label ?? inferredSchoolYearLabel ?? ""),
+    };
     const liveMatch = block.custom_period
       ? null
       : await loadLivePlanningMatchForBlock({
-          block: block as LivePlanningBlockInput,
+          block: liveBlock as LivePlanningBlockInput,
           token,
         });
     if (liveMatch && liveMatch.sessions.length > 0) {

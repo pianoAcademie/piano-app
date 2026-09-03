@@ -2068,7 +2068,13 @@ def _sessions_from_planning_block(db: Session, block: dict[str, Any]) -> list[di
         expected_sessions, _ = _filter_sessions_blocked_by_quote_school_calendar(db, expected_sessions)
         if len(expected_sessions) > len(sessions):
             sessions = expected_sessions
-    if session_limit > 0:
+    # A saved live-planning block represents the real recurring series, not a
+    # fixed-size pack.  Its previous quantity may be stale after a series was
+    # extended or after a sibling quote changed weekday.  Capping here would
+    # make that stale quantity self-perpetuating (for example 31 instead of the
+    # 33 scheduled sessions).  Custom periods and non-live packs keep their
+    # explicit limit semantics.
+    if session_limit > 0 and (not is_live_planning_block or _is_solfege_planning_block(block)):
         sessions = sessions[:session_limit]
     return sessions
 
@@ -2627,7 +2633,11 @@ def _calendar_snapshot_with_planning_sessions(db: Session | None, calendar_snaps
             ):
                 block["end_date"] = last_refreshed_date
                 changed = True
-            if refreshed_block_sessions and _is_solfege_planning_block(block) and not _planning_block_has_custom_period(block):
+            if (
+                refreshed_block_sessions
+                and (_planning_block_is_live(block) or _is_solfege_planning_block(block))
+                and not _planning_block_has_custom_period(block)
+            ):
                 first_refreshed_date = str(refreshed_block_sessions[0].get("date") or "").strip()
                 refreshed_count = len(refreshed_block_sessions)
                 refreshed_series_key = str(refreshed_block_sessions[0].get("series_key") or "").strip()
@@ -2637,9 +2647,16 @@ def _calendar_snapshot_with_planning_sessions(db: Session | None, calendar_snaps
                 if block.get("sessions_count") != refreshed_count:
                     block["sessions_count"] = refreshed_count
                     changed = True
-                if _planning_session_limit_from_block(block) != refreshed_count:
-                    block["planning_session_limit"] = refreshed_count
-                    changed = True
+                if _is_solfege_planning_block(block):
+                    if _planning_session_limit_from_block(block) != refreshed_count:
+                        block["planning_session_limit"] = refreshed_count
+                        changed = True
+                else:
+                    # Do not freeze a live piano series to today's count.  The
+                    # next save must pick up corrected/materialized dates.
+                    if "planning_session_limit" in block:
+                        block.pop("planning_session_limit", None)
+                        changed = True
                 if refreshed_series_key and str(block.get("series_key") or "").strip() != refreshed_series_key:
                     block["series_key"] = refreshed_series_key
                     changed = True

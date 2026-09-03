@@ -14,6 +14,7 @@ from fastapi import HTTPException
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.api.routes.quotes import (
+    _add_duplicated_child_quote_lines,
     _cancel_unselected_quote_variants,
     _create_quote_revision_from_change_request,
     _quote_admin_stats,
@@ -522,6 +523,7 @@ class QuoteDuplicationTests(unittest.TestCase):
         child_id = uuid4()
         source_meta = {
             "source": "typeform_intake",
+            "annual_pricing_review": {"student_id": str(uuid4()), "decisions": [{"line_id": str(uuid4())}]},
             "recipient_email": "parent@example.com",
             "typeform_intake": {
                 "intake_id": str(uuid4()),
@@ -559,6 +561,68 @@ class QuoteDuplicationTests(unittest.TestCase):
         self.assertEqual(normalized["requested_times"], ["18:00"])
         self.assertEqual(meta["duplicated_from"], str(source_id))
         self.assertEqual(meta["duplicated_for_child_client_id"], str(child_id))
+        self.assertNotIn("annual_pricing_review", meta)
+
+    def test_duplicate_child_lines_drop_source_pricing_audit_and_remap_line_planning_key(self) -> None:
+        source_line_id = uuid4()
+        activity_id = uuid4()
+        source_key = f"{activity_id}:line:{source_line_id}"
+        source_line = SimpleNamespace(
+            id=source_line_id,
+            line_category="service",
+            line_type="item",
+            master_item_type="activity",
+            master_item_id=None,
+            activity_id=activity_id,
+            product_id=None,
+            kit_id=None,
+            code="PIANO_GROUP_ONSITE_1H",
+            title="Cours collectif",
+            description=None,
+            duration_minutes=60,
+            pricing_unit="session",
+            quantity=Decimal("33.00"),
+            vat_rate=Decimal("20.000"),
+            unit_price_ht=Decimal("31.67"),
+            unit_vat_amount=Decimal("6.33"),
+            unit_price_ttc=Decimal("38.00"),
+            amount_ht=Decimal("1045.11"),
+            amount_vat=Decimal("208.89"),
+            amount_ttc=Decimal("1254.00"),
+            sort_order=0,
+            meta={
+                "recommendation_key": source_key,
+                "annual_course_key": str(source_line_id),
+                "annual_decision": {"line_id": str(source_line_id)},
+            },
+        )
+        clone = Quote(
+            id=uuid4(),
+            quote_number="DV-CHILD",
+            context_type="acquisition",
+            status="created",
+            calendar_snapshot={
+                "blocks": [{"activity_id": str(activity_id), "recommendation_key": source_key}],
+                "sessions": [{"activity_id": str(activity_id), "recommendation_key": source_key}],
+            },
+        )
+        db = _FakeSession()
+
+        _add_duplicated_child_quote_lines(
+            db,
+            source_lines=[source_line],
+            clone=clone,
+            now=datetime(2026, 9, 3, tzinfo=timezone.utc),
+        )
+
+        copied = next(item for item in db.added if isinstance(item, QuoteLine))
+        copied_key = copied.meta["recommendation_key"]
+        self.assertNotEqual(copied_key, source_key)
+        self.assertIn(str(copied.id), copied_key)
+        self.assertNotIn("annual_course_key", copied.meta)
+        self.assertNotIn("annual_decision", copied.meta)
+        self.assertEqual(clone.calendar_snapshot["blocks"][0]["recommendation_key"], copied_key)
+        self.assertEqual(clone.calendar_snapshot["sessions"][0]["recommendation_key"], copied_key)
 
 
 if __name__ == "__main__":

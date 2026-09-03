@@ -7104,6 +7104,11 @@ def _quote_meta_for_duplicated_child(
 ) -> dict[str, object]:
     meta = deepcopy(_json_object(source_meta))
     meta.pop(QUOTE_ADMIN_HOLD_NOTE_META_KEY, None)
+    # Eligibility and annual discount decisions belong to the source child.
+    # Reusing that audited payload on a sibling quote leaves source line ids and
+    # the source student id embedded in the clone, making later planning edits
+    # impossible to reconcile safely.
+    meta.pop(ANNUAL_REVIEW_KEY, None)
     full_name = _quote_join_name(child_first_name, child_last_name) or child_first_name or child_last_name
     birth_date_text = child_birth_date.isoformat() if isinstance(child_birth_date, date) else (str(child_birth_date).strip() if child_birth_date else None)
     typeform_meta = _json_object(meta.get("typeform_intake"))
@@ -7129,6 +7134,81 @@ def _quote_meta_for_duplicated_child(
         meta["typeform_intake"] = typeform_meta
     meta.update(extra)
     return meta
+
+
+def _add_duplicated_child_quote_lines(
+    db: Session,
+    *,
+    source_lines: list[QuoteLine],
+    clone: Quote,
+    now: datetime,
+) -> None:
+    """Copy sibling lines without carrying source-child audit identifiers."""
+
+    planning_key_map: dict[str, str] = {}
+    for line in source_lines:
+        clone_line_id = uuid4()
+        line_meta = deepcopy(line.meta or {})
+        line_meta.pop("annual_decision", None)
+        line_meta.pop("annual_course_key", None)
+        if line_meta.pop("annual_auto_discount", None) is not None:
+            # Keep the amount as an editable imported discount until the new
+            # child's eligibility is explicitly reviewed.
+            line_meta.pop("target_course_key", None)
+
+        for key_name in ("recommendation_key", "line_recommendation_key"):
+            old_key = str(line_meta.get(key_name) or "").strip()
+            if not old_key or str(line.id) not in old_key:
+                continue
+            new_key = old_key.replace(str(line.id), str(clone_line_id))
+            line_meta[key_name] = new_key
+            planning_key_map[old_key] = new_key
+
+        db.add(
+            QuoteLine(
+                id=clone_line_id,
+                quote_id=clone.id,
+                line_category=line.line_category,
+                line_type=line.line_type,
+                master_item_type=line.master_item_type,
+                master_item_id=line.master_item_id,
+                activity_id=line.activity_id,
+                product_id=line.product_id,
+                kit_id=line.kit_id,
+                code=line.code,
+                title=line.title,
+                description=line.description,
+                duration_minutes=line.duration_minutes,
+                pricing_unit=line.pricing_unit,
+                quantity=line.quantity,
+                vat_rate=line.vat_rate,
+                unit_price_ht=line.unit_price_ht,
+                unit_vat_amount=line.unit_vat_amount,
+                unit_price_ttc=line.unit_price_ttc,
+                amount_ht=line.amount_ht,
+                amount_vat=line.amount_vat,
+                amount_ttc=line.amount_ttc,
+                sort_order=line.sort_order,
+                meta=line_meta,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+
+    if planning_key_map:
+        snapshot = deepcopy(clone.calendar_snapshot or {})
+        for collection_name in ("blocks", "sessions"):
+            rows = snapshot.get(collection_name)
+            if not isinstance(rows, list):
+                continue
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                old_key = str(row.get("recommendation_key") or "").strip()
+                if old_key in planning_key_map:
+                    row["recommendation_key"] = planning_key_map[old_key]
+        clone.calendar_snapshot = snapshot
+        db.add(clone)
 
 
 @router.post("/quotes/{quote_id}/duplicate-for-child", response_model=QuoteDetailOut, status_code=status.HTTP_201_CREATED)
@@ -7236,36 +7316,7 @@ def duplicate_quote_for_child(
         db.add(clone)
         db.flush()
 
-        for line in lines:
-            db.add(
-                QuoteLine(
-                    quote_id=clone.id,
-                    line_category=line.line_category,
-                    line_type=line.line_type,
-                    master_item_type=line.master_item_type,
-                    master_item_id=line.master_item_id,
-                    activity_id=line.activity_id,
-                    product_id=line.product_id,
-                    kit_id=line.kit_id,
-                    code=line.code,
-                    title=line.title,
-                    description=line.description,
-                    duration_minutes=line.duration_minutes,
-                    pricing_unit=line.pricing_unit,
-                    quantity=line.quantity,
-                    vat_rate=line.vat_rate,
-                    unit_price_ht=line.unit_price_ht,
-                    unit_vat_amount=line.unit_vat_amount,
-                    unit_price_ttc=line.unit_price_ttc,
-                    amount_ht=line.amount_ht,
-                    amount_vat=line.amount_vat,
-                    amount_ttc=line.amount_ttc,
-                    sort_order=line.sort_order,
-                    meta=deepcopy(line.meta or {}),
-                    created_at=now,
-                    updated_at=now,
-                )
-            )
+        _add_duplicated_child_quote_lines(db, source_lines=lines, clone=clone, now=now)
 
         db.add(
             QuoteEvent(
@@ -7379,36 +7430,7 @@ def duplicate_quote_for_child(
         sibling_prospect_id=child.id,
     )
 
-    for line in lines:
-        db.add(
-            QuoteLine(
-                quote_id=clone.id,
-                line_category=line.line_category,
-                line_type=line.line_type,
-                master_item_type=line.master_item_type,
-                master_item_id=line.master_item_id,
-                activity_id=line.activity_id,
-                product_id=line.product_id,
-                kit_id=line.kit_id,
-                code=line.code,
-                title=line.title,
-                description=line.description,
-                duration_minutes=line.duration_minutes,
-                pricing_unit=line.pricing_unit,
-                quantity=line.quantity,
-                vat_rate=line.vat_rate,
-                unit_price_ht=line.unit_price_ht,
-                unit_vat_amount=line.unit_vat_amount,
-                unit_price_ttc=line.unit_price_ttc,
-                amount_ht=line.amount_ht,
-                amount_vat=line.amount_vat,
-                amount_ttc=line.amount_ttc,
-                sort_order=line.sort_order,
-                meta=deepcopy(line.meta or {}),
-                created_at=now,
-                updated_at=now,
-            )
-        )
+    _add_duplicated_child_quote_lines(db, source_lines=lines, clone=clone, now=now)
 
     db.add(
         QuoteEvent(

@@ -84,7 +84,7 @@ test("saved truncated/custom periods are not silently presented as the complete 
   assert.equal(editor.editablePlanningBlockChanged({ ...complete, sessions_count: 31 }, complete), true);
 });
 
-test("repairing a saved 31-date block displays 32 actual dates before saving, without changing untouched saved blocks", async () => {
+test("a saved live block with a stale 31-date cap is healed from the authoritative series", async () => {
   const [option] = await slots();
   const server = saveHarness();
   const selected = editor.applyLiveSeriesToBlock({ ...fixture.calendar }, option);
@@ -94,12 +94,15 @@ test("repairing a saved 31-date block displays 32 actual dates before saving, wi
   });
   const [saved] = editor.parseInitialBlocks(legacy);
   const snapshotRows = editor.parseSnapshotSessions(legacy);
-  assert.equal(editor.displayedPlanningSessionDates(saved, snapshotRows, [option]).length, 31);
+  assert.equal(legacy.sessions.length, 32);
+  assert.equal(legacy.blocks[0].sessions_count, 32);
+  assert.equal(legacy.blocks[0].planning_session_limit, null);
+  assert.equal(editor.displayedPlanningSessionDates(saved, snapshotRows, [option]).length, 32);
   const repaired = { ...editor.applyLiveSeriesToBlock(saved, option), dirty: true };
   const displayed = editor.displayedPlanningSessionDates(repaired, snapshotRows, [option]);
   assert.equal(displayed.length, 32);
   assert.equal(displayed.at(-1), "2027-06-16");
-  assert.equal(legacy.sessions.length, 31);
+  assert.equal(legacy.sessions.length, 32);
 });
 
 test("a new live draft displays actual dates, not a theoretical lesson cancelled in the middle of the year", async () => {

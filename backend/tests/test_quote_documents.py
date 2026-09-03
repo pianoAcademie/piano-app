@@ -1660,6 +1660,53 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
         self.assertEqual(hydrated["sessions_count"], 4)
         self.assertEqual(hydrated["blocks"][0]["end_date"], "2027-06-18")
 
+    def test_live_planning_block_ignores_stale_session_limit_and_refreshes_count(self) -> None:
+        activity_id = uuid4()
+        location_id = uuid4()
+        recurrence_id = uuid4()
+        paris = ZoneInfo("Europe/Paris")
+
+        def live_row(iso_date: str):
+            local_day = date.fromisoformat(iso_date)
+            local_start = datetime.combine(local_day, time(18, 0), tzinfo=paris)
+            return (
+                SimpleNamespace(
+                    id=uuid4(), course_type_id=activity_id, location_id=location_id,
+                    status="SCHEDULED", start_at_utc=local_start.astimezone(timezone.utc),
+                    end_at_utc=(local_start + timedelta(hours=1)).astimezone(timezone.utc),
+                    timezone="Europe/Paris", recurrence_group_id=recurrence_id,
+                ),
+                SimpleNamespace(id=activity_id, name="Cours collectif", mode="ONSITE"),
+                SimpleNamespace(id=location_id, name="Rue de la Pompe", timezone="Europe/Paris", is_online=False),
+            )
+
+        rows = [live_row("2026-09-08"), live_row("2027-06-01"), live_row("2027-06-08"), live_row("2027-06-15")]
+        fake_db = SimpleNamespace(
+            scalar=lambda _query: None,
+            execute=lambda _query: SimpleNamespace(all=lambda: rows),
+        )
+        snapshot = {
+            "blocks": [{
+                "source": "live_planning", "activity_id": str(activity_id),
+                "activity_label": "Cours collectif", "location_id": str(location_id),
+                "location_label": "Rue de la Pompe", "weekday": 1, "weekday_label": "Mardi",
+                "start_date": "2026-09-08", "end_date": "2027-06-01",
+                "start_time": "18:00", "end_time": "19:00",
+                "series_key": str(recurrence_id), "calendar_school_year": "2026-2027",
+                "planning_session_limit": 2, "sessions_count": 2, "selection_pending": False,
+            }],
+            "sessions": [],
+        }
+
+        hydrated = _calendar_snapshot_with_planning_sessions(fake_db, snapshot)
+
+        self.assertEqual([item["date"] for item in hydrated["sessions"]], [
+            "2026-09-08", "2027-06-01", "2027-06-08", "2027-06-15",
+        ])
+        self.assertEqual(hydrated["blocks"][0]["sessions_count"], 4)
+        self.assertEqual(hydrated["blocks"][0]["end_date"], "2027-06-15")
+        self.assertNotIn("planning_session_limit", hydrated["blocks"][0])
+
     def test_live_planning_block_removes_cancelled_session_from_existing_snapshot(self) -> None:
         activity_id = uuid4()
         location_id = uuid4()
