@@ -427,7 +427,12 @@ def _invoice_note_for_booking(db: Session, *, booking_id: UUID) -> tuple[ClientN
             continue
         if str(metadata.get("invoice_status") or "").strip().upper() == "CANCELLED":
             continue
-        if not is_final_booking_invoice_metadata(metadata):
+        # Any live invoice that already freezes this booking is authoritative.
+        # A monthly/annual range invoice is just as much an invoice as the
+        # per-service document generated when attendance is recorded. Limiting
+        # this guard to SERVICE_COMPLETED/PAYMENT_CONFIRMED metadata allowed the
+        # same booking to be invoiced a second time after the lesson.
+        if str(metadata.get("document_type") or "INVOICE").strip().upper() == "CREDIT_NOTE":
             continue
         return note, metadata
     return None

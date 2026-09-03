@@ -17,6 +17,7 @@ from app.services.invoice_documents import CompanyIdentity, preview_invoice_numb
 from app.services.payment_receipts import (
     BookingReceiptSnapshot,
     _format_receipt_number,
+    _invoice_note_for_booking,
     build_final_invoice_metadata,
     generate_final_invoice_for_booking,
     mark_payment_receipt_completed,
@@ -276,6 +277,24 @@ class PaymentReceiptsFlowTests(unittest.TestCase):
         self.assertIs(note, existing_note)
         self.assertEqual(metadata["invoice_number"], "PA26-0009")
         self.assertFalse(created)
+
+    def test_range_invoice_is_recognized_as_existing_booking_invoice(self) -> None:
+        existing_note = SimpleNamespace(id=uuid4(), message="existing monthly invoice")
+        existing_metadata = {
+            "invoice_number": "PA26-0853",
+            "invoice_status": "PAID",
+            "generation_mode": "MANUAL",
+            "document_type": "INVOICE",
+        }
+        fake_db = _FakeSession(rows=[existing_note.id], scalar_values=[existing_note])
+        with patch("app.services.payment_receipts._parse_invoice_range_note_entry", return_value=existing_metadata):
+            resolved = _invoice_note_for_booking(fake_db, booking_id=self.booking_id)
+
+        self.assertIsNotNone(resolved)
+        assert resolved is not None
+        note, metadata = resolved
+        self.assertIs(note, existing_note)
+        self.assertEqual(metadata["invoice_number"], "PA26-0853")
 
     def test_completed_service_generates_final_invoice_with_zero_balance_when_fully_paid(self) -> None:
         reconciled_ids = [uuid4(), uuid4()]
