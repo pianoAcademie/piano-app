@@ -1845,12 +1845,6 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const bookingOwnerMember = bookingOwnerId === FAMILY_BOOKING_OWNER
     ? null
     : members.find((member) => member.id === bookingOwnerId) ?? members[0] ?? null;
-  const bookingOwnerLabel =
-    bookingOwnerId === FAMILY_BOOKING_OWNER
-      ? hasMultipleVisibleMembers
-        ? t("client.whole_family")
-        : members[0]?.display_name ?? t("client.account_self")
-      : bookingOwnerMember?.display_name ?? "-";
   const filteredContentCourses = contentCourses.filter((course) =>
     contentMemberFilter === "ALL"
       ? true
@@ -2319,11 +2313,6 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   });
 
   const siteScopedSessions = sessions.filter((session) => eligibleBookingLocationIds.has(session.location.id));
-  const bookingCategoryCounts = new Map<ClientBookingCategory, number>();
-  for (const session of siteScopedSessions) {
-    const category = clientBookingCategoryForSession(session);
-    bookingCategoryCounts.set(category, (bookingCategoryCounts.get(category) ?? 0) + 1);
-  }
   const filteredSessions = siteScopedSessions.filter((session) => {
     if (clientBookingCategoryForSession(session) !== selectedBookingCategory) {
       return false;
@@ -3139,7 +3128,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       sessions: day.sessions.filter((session) => {
         const sessionState = planningStateForSession(session);
         if (planningSlotFilter === "AVAILABLE") {
-          return sessionState.canCheckout || sessionState.canJoinWaitlist;
+          return sessionState.canCheckout || sessionState.canJoinWaitlist || sessionState.alreadyReserved || sessionState.paymentPending;
         }
         if (planningSlotFilter === "ALREADY_BOOKED") {
           return sessionState.alreadyReserved || sessionState.paymentPending;
@@ -3148,12 +3137,6 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       }),
     }))
     .filter((day) => day.sessions.length > 0);
-  const agendaSessionCount = visibleAgendaDays.reduce((sum, day) => sum + day.sessions.length, 0);
-  const visibleBookingLocations = Array.from(
-    new Map(
-      visibleAgendaDays.flatMap((day) => day.sessions).map((session) => [session.location.id, session.location]),
-    ).values(),
-  ).sort((left, right) => left.name.localeCompare(right.name, language));
   const bookingLocationColors = new Map(
     Array.from(
       new Map(siteScopedSessions.map((session) => [session.location.id, session.location])).values(),
@@ -3161,13 +3144,6 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       .sort((left, right) => left.name.localeCompare(right.name, language))
       .map((location, index) => [location.id, SESSION_ACCENT_COLORS[index % SESSION_ACCENT_COLORS.length]]),
   );
-  const advancedFiltersOpen =
-    Boolean(selectedCourseType) ||
-    Boolean(selectedCoachId) ||
-    selectedTimeBucket !== "ALL" ||
-    rawPlanningSlotFilter !== "ALL" ||
-    timezone !== (me.timezone || DEFAULT_TIMEZONE) ||
-    bookingOwnerId !== FAMILY_BOOKING_OWNER;
 
   const allBookingStatuses = Array.from(new Set(allBookings.map((row) => normalizeStatus(row.status)))).sort();
   const allPaymentSources = Array.from(new Set(payments.map((row) => normalizeStatus(row.source)))).sort();
@@ -3902,192 +3878,6 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                   </a>
                 </div>
 
-                {planningMode === "book" ? (
-                <>
-                <form method="get" action="#client-week-navigation" className="client-planning-filter-form">
-                  <input type="hidden" name="tab" value="planning" />
-                  <input type="hidden" name="planning_mode" value="book" />
-                  <input type="hidden" name="agenda_view" value="week" />
-                  <input type="hidden" name="booking_category" value={selectedBookingCategory} />
-                  <input type="hidden" name="favorite_location_ids" value={Array.from(effectiveFavoriteLocationIds).join(",")} />
-
-                  <div className="client-planning-hero">
-                    <ClientBookingLocationPreferences
-                      accountId={me.id}
-                      language={language}
-                      locations={eligiblePhysicalBookingLocations.map((location) => ({ id: location.id, name: location.name }))}
-                      selectedLocationIds={Array.from(effectiveFavoriteLocationIds)}
-                      hasExplicitSelection={requestedFavoriteLocationIds.length > 0}
-                    />
-
-                    <label className="client-planning-pill client-planning-pill-date">
-                      <span><ClientNavigationIcon name="calendar" /> Date</span>
-                      <AutoSubmitInput
-                        type="date"
-                        name="agenda_date"
-                        defaultValue={agendaDate}
-                        min={defaultAgendaDate}
-                        ariaLabel={t("client.schedule_date")}
-                      />
-                    </label>
-
-                    <div className="client-planning-toolbar-actions">
-                      <a
-                        className="client-planning-reset"
-                        href={withUpdatedQuery(rawParams, {
-                          tab: "planning",
-                          planning_mode: "book",
-                          course_type_id: null,
-                          location_id: null,
-                          coach_id: null,
-                          time_bucket: null,
-                          planning_slot_filter: null,
-                          booking_category: "PIANO",
-                          timezone: me.timezone || DEFAULT_TIMEZONE,
-                          agenda_view: "week",
-                          agenda_date: todayKeyInTimezone(timezone),
-                          booking_owner_id: FAMILY_BOOKING_OWNER,
-                          session_id: null,
-                          session_member_id: null,
-                        })}
-                        title={t("common.reset")}
-                      >
-                        ↺
-                      </a>
-                    </div>
-                  </div>
-
-                  <DrawerFilters title={`⚙ ${t("client.advanced_filters")}`} className={`client-planning-advanced ${advancedFiltersOpen ? "has-active" : ""}`} defaultOpen={false}>
-                    <div className="client-planning-advanced-grid">
-                      <label>
-                        {t("client.activity")}
-                        <AutoSubmitSelect
-                          name="course_type_id"
-                          defaultValue={selectedCourseType}
-                          options={[
-                            { value: "", label: t("common.all") },
-                            ...courseTypes.map((courseType) => ({ value: courseType.id, label: courseType.name })),
-                          ]}
-                        />
-                      </label>
-
-                      <label>
-                        {t("client.coach")}
-                        <AutoSubmitSelect
-                          name="coach_id"
-                          defaultValue={selectedCoachId}
-                          options={[
-                            { value: "", label: t("common.all") },
-                            ...coachOptions.map((coach) => ({ value: coach.id, label: coach.name })),
-                          ]}
-                        />
-                      </label>
-
-                      <label>
-                        {t("client.time_label")}
-                        <AutoSubmitSelect
-                          name="time_bucket"
-                          defaultValue={selectedTimeBucket}
-                          options={[
-                            { value: "ALL", label: t("client.all_hours") },
-                            { value: "MORNING", label: t("client.morning") },
-                            { value: "AFTERNOON", label: t("client.afternoon") },
-                            { value: "EVENING", label: t("client.evening") },
-                          ]}
-                        />
-                      </label>
-
-                      <label>
-                        {t("client.timezone_label")}
-                        <AutoSubmitSelect
-                          name="timezone"
-                          defaultValue={timezone}
-                          options={timezoneOptions.map((item) => ({ value: item.value, label: item.label }))}
-                        />
-                      </label>
-
-                      {hasMultipleVisibleMembers ? (
-                      <label>
-                        {t("client.booking_for")}
-                          <AutoSubmitSelect
-                            name="booking_owner_id"
-                            defaultValue={bookingOwnerId}
-                            options={[
-                              { value: FAMILY_BOOKING_OWNER, label: t("client.whole_family") },
-                              ...members.map((member) => ({ value: member.id, label: member.display_name })),
-                            ]}
-                          />
-                        </label>
-                      ) : (
-                        <input type="hidden" name="booking_owner_id" value={bookingOwnerId} />
-                      )}
-
-                      <label>
-                        {t("client.slot_status")}
-                        <AutoSubmitSelect
-                          name="planning_slot_filter"
-                          defaultValue={planningSlotFilter}
-                          options={[
-                            { value: "ALL", label: t("common.all") },
-                            { value: "AVAILABLE", label: t("client.available_only") },
-                            { value: "ALREADY_BOOKED", label: t("client.already_booked") },
-                          ]}
-                        />
-                      </label>
-                    </div>
-                  </DrawerFilters>
-                </form>
-
-                <div id="client-week-navigation" className="client-week-toolbar">
-                  <div className="client-week-toolbar-head client-week-navigation-explicit">
-                    <div className="client-week-title-group">
-                      <span className="badge">{bookingOwnerLabel}</span>
-                      <strong>{agendaRange.title}</strong>
-                      <small>{hasMultipleVisibleMembers ? t("client.week_toolbar_family_help") : t("client.week_toolbar_single_help")}</small>
-                    </div>
-                    <div className="client-week-toolbar-actions">
-                      {agendaDate > defaultAgendaDate ? (
-                        <a
-                          className="client-date-nav-btn"
-                          href={`${withUpdatedQuery(rawParams, { tab: "planning", planning_mode: "book", agenda_date: previousAgendaDate, agenda_view: "week" })}#client-week-navigation`}
-                          aria-label={t("client.previous_week")}
-                        >
-                          ← {language === "fr" ? "Précédent" : "Previous"}
-                        </a>
-                      ) : <span className="client-date-nav-btn" aria-disabled="true">← {language === "fr" ? "Précédent" : "Previous"}</span>}
-                      <a className="mode-link" href={`${withUpdatedQuery(rawParams, { tab: "planning", planning_mode: "book", agenda_date: todayKeyInTimezone(timezone), agenda_view: "week" })}#client-week-navigation`}>
-                        {t("client.today")}
-                      </a>
-                      <a
-                        className="client-date-nav-btn"
-                        href={`${withUpdatedQuery(rawParams, { tab: "planning", planning_mode: "book", agenda_date: shiftDateKeyByDays(agendaDate, 7), agenda_view: "week" })}#client-week-navigation`}
-                        aria-label={t("client.next_week")}
-                      >
-                        {language === "fr" ? "Suivant" : "Next"} →
-                      </a>
-                    </div>
-                  </div>
-                  <div className="client-week-legend" hidden>
-                    <span className="client-week-legend-item">
-                      <span className="client-week-legend-swatch reserved" />
-                      {t("client.my_bookings")}
-                    </span>
-                    <span className="client-week-legend-item">
-                      <span className="client-week-legend-swatch available" />
-                      {t("client.planning_status_available")}
-                    </span>
-                    <span className="client-week-legend-item">
-                      <span className="client-week-legend-swatch full" />
-                      {t("client.planning_status_full")}
-                    </span>
-                    <span className="client-week-legend-item">
-                      <span className="client-week-legend-swatch closed" />
-                      {t("client.planning_status_closed")}
-                    </span>
-                  </div>
-                </div>
-                </>
-                ) : null}
               </Card>
 
               {planningMode === "reservations" ? (
@@ -4218,9 +4008,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
               <Card className="client-available-section client-week-planning-board">
                 <div className="row spread">
                   <h2>{t("client.additional_booking_week")}</h2>
-                  <span className="badge">{agendaSessionCount}</span>
                 </div>
-                <p className="client-booking-filter-help">{language === "fr" ? "Les cours complets avec liste d’attente sont également affichés. Les jours sans créneau correspondant aux filtres sont masqués." : "Full classes with a waiting list are also shown. Days with no slots matching your filters are hidden."}</p>
                 <nav className="client-booking-category-switch" aria-label={t("client.booking_category_label")}>
                   {([
                     { key: "PIANO", icon: "♩", label: t("client.booking_category_piano"), help: t("client.booking_category_piano_help") },
@@ -4229,6 +4017,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                   ] as Array<{ key: ClientBookingCategory; icon: string; label: string; help: string }>).map((category) => (
                     <a
                       key={category.key}
+                      aria-label={category.label}
+                      aria-current={selectedBookingCategory === category.key ? "page" : undefined}
                       className={selectedBookingCategory === category.key ? "active" : ""}
                       href={withUpdatedQuery(rawParams, {
                         tab: "planning",
@@ -4242,49 +4032,176 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     >
                       <span className="client-booking-category-icon" aria-hidden="true">{category.icon}</span>
                       <span>
-                        <strong>{category.label}</strong>
-                        <small>{category.help}</small>
+                        <strong>{category.key === "PIANO" ? "Piano" : category.key === "REHEARSAL_STUDIO" ? "Studio" : language === "fr" ? "Solfège" : "Music theory"}</strong>
                       </span>
-                      <span className="badge">{bookingCategoryCounts.get(category.key) ?? 0}</span>
                     </a>
                   ))}
                 </nav>
-                <form method="get" className="client-planning-quick-filter-form">
+                <details className="client-booking-filters-disclosure">
+                  <summary>{language === "fr" ? "Mes lieux · Filtres" : "My locations · Filters"}</summary>
+                  <form method="get" action="#client-week-navigation" className="client-planning-filter-form">
                   <input type="hidden" name="tab" value="planning" />
                   <input type="hidden" name="planning_mode" value="book" />
                   <input type="hidden" name="agenda_view" value="week" />
-                  <input type="hidden" name="agenda_date" value={agendaDate} />
-                  <input type="hidden" name="location_id" value={selectedLocation} />
-                  <input type="hidden" name="course_type_id" value={selectedCourseType} />
-                  <input type="hidden" name="coach_id" value={selectedCoachId} />
-                  <input type="hidden" name="time_bucket" value={selectedTimeBucket} />
-                  <input type="hidden" name="timezone" value={timezone} />
-                  <input type="hidden" name="booking_owner_id" value={bookingOwnerId} />
                   <input type="hidden" name="booking_category" value={selectedBookingCategory} />
                   <input type="hidden" name="favorite_location_ids" value={Array.from(effectiveFavoriteLocationIds).join(",")} />
-                  <label className="client-planning-quick-filter-label">
-                    <span>{t("client.show")}</span>
-                    <AutoSubmitSelect
-                      name="planning_slot_filter"
-                      defaultValue={planningSlotFilter}
-                      options={[
-                        { value: "ALL", label: t("client.all_slots") },
-                        { value: "AVAILABLE", label: t("client.book_now") },
-                        { value: "ALREADY_BOOKED", label: t("client.my_bookings") },
-                      ]}
+
+                  <div className="client-planning-hero">
+                    <ClientBookingLocationPreferences
+                      accountId={me.id}
+                      language={language}
+                      locations={eligiblePhysicalBookingLocations.map((location) => ({ id: location.id, name: location.name }))}
+                      selectedLocationIds={Array.from(effectiveFavoriteLocationIds)}
+                      hasExplicitSelection={requestedFavoriteLocationIds.length > 0}
                     />
-                  </label>
-                </form>
-                {visibleBookingLocations.length > 1 ? (
-                  <div className="client-booking-location-legend" aria-label="Couleurs des locaux">
-                    {visibleBookingLocations.map((location) => (
-                      <span key={location.id}>
-                        <i style={{ backgroundColor: bookingLocationColors.get(location.id) }} aria-hidden="true" />
-                        {location.name}
-                      </span>
-                    ))}
+
+                    <label className="client-planning-pill client-planning-pill-date">
+                      <span><ClientNavigationIcon name="calendar" /> Date</span>
+                      <AutoSubmitInput
+                        type="date"
+                        name="agenda_date"
+                        defaultValue={agendaDate}
+                        min={defaultAgendaDate}
+                        ariaLabel={t("client.schedule_date")}
+                      />
+                    </label>
+
+                    <div className="client-planning-toolbar-actions">
+                      <a
+                        className="client-planning-reset"
+                        href={withUpdatedQuery(rawParams, {
+                          tab: "planning",
+                          planning_mode: "book",
+                          course_type_id: null,
+                          location_id: null,
+                          coach_id: null,
+                          time_bucket: null,
+                          planning_slot_filter: null,
+                          booking_category: "PIANO",
+                          timezone: me.timezone || DEFAULT_TIMEZONE,
+                          agenda_view: "week",
+                          agenda_date: todayKeyInTimezone(timezone),
+                          booking_owner_id: FAMILY_BOOKING_OWNER,
+                          session_id: null,
+                          session_member_id: null,
+                        })}
+                        title={t("common.reset")}
+                      >
+                        ↺
+                      </a>
+                    </div>
                   </div>
-                ) : null}
+
+                  <div className="client-planning-advanced">
+                    <div className="client-planning-advanced-grid">
+                      <label>
+                        {t("client.activity")}
+                        <AutoSubmitSelect
+                          name="course_type_id"
+                          defaultValue={selectedCourseType}
+                          options={[
+                            { value: "", label: t("common.all") },
+                            ...courseTypes.map((courseType) => ({ value: courseType.id, label: courseType.name })),
+                          ]}
+                        />
+                      </label>
+
+                      <label>
+                        {t("client.coach")}
+                        <AutoSubmitSelect
+                          name="coach_id"
+                          defaultValue={selectedCoachId}
+                          options={[
+                            { value: "", label: t("common.all") },
+                            ...coachOptions.map((coach) => ({ value: coach.id, label: coach.name })),
+                          ]}
+                        />
+                      </label>
+
+                      <label>
+                        {t("client.time_label")}
+                        <AutoSubmitSelect
+                          name="time_bucket"
+                          defaultValue={selectedTimeBucket}
+                          options={[
+                            { value: "ALL", label: t("client.all_hours") },
+                            { value: "MORNING", label: t("client.morning") },
+                            { value: "AFTERNOON", label: t("client.afternoon") },
+                            { value: "EVENING", label: t("client.evening") },
+                          ]}
+                        />
+                      </label>
+
+                      <label>
+                        {t("client.timezone_label")}
+                        <AutoSubmitSelect
+                          name="timezone"
+                          defaultValue={timezone}
+                          options={timezoneOptions.map((item) => ({ value: item.value, label: item.label }))}
+                        />
+                      </label>
+
+                      {hasMultipleVisibleMembers ? (
+                      <label>
+                        {t("client.booking_for")}
+                          <AutoSubmitSelect
+                            name="booking_owner_id"
+                            defaultValue={bookingOwnerId}
+                            options={[
+                              { value: FAMILY_BOOKING_OWNER, label: t("client.whole_family") },
+                              ...members.map((member) => ({ value: member.id, label: member.display_name })),
+                            ]}
+                          />
+                        </label>
+                      ) : (
+                        <input type="hidden" name="booking_owner_id" value={bookingOwnerId} />
+                      )}
+
+                      <label>
+                        {t("client.slot_status")}
+                        <AutoSubmitSelect
+                          name="planning_slot_filter"
+                          defaultValue={planningSlotFilter}
+                          options={[
+                            { value: "ALL", label: t("common.all") },
+                            { value: "AVAILABLE", label: language === "fr" ? "Réservables et réservés" : "Bookable and booked" },
+                            { value: "ALREADY_BOOKED", label: t("client.already_booked") },
+                          ]}
+                        />
+                      </label>
+                    </div>
+                  </div>
+                </form>
+                </details>
+                <div id="client-week-navigation" className="client-week-toolbar">
+                  <div className="client-week-toolbar-head client-week-navigation-explicit">
+                    <div className="client-week-title-group">
+                      <strong>{agendaRange.title}</strong>
+                    </div>
+                    <div className="client-week-toolbar-actions">
+                      {agendaDate > defaultAgendaDate ? (
+                        <a
+                          className="client-date-nav-btn"
+                          href={`${withUpdatedQuery(rawParams, { tab: "planning", planning_mode: "book", agenda_date: previousAgendaDate, agenda_view: "week" })}#client-week-navigation`}
+                          aria-label={t("client.previous_week")}
+                        >
+                          ← {language === "fr" ? "Précédent" : "Previous"}
+                        </a>
+                      ) : <span className="client-date-nav-btn" aria-disabled="true">← {language === "fr" ? "Précédent" : "Previous"}</span>}
+                      <a className="mode-link" href={`${withUpdatedQuery(rawParams, { tab: "planning", planning_mode: "book", agenda_date: todayKeyInTimezone(timezone), agenda_view: "week" })}#client-week-navigation`}>
+                        {t("client.today")}
+                      </a>
+                      <a
+                        className="client-date-nav-btn"
+                        href={`${withUpdatedQuery(rawParams, { tab: "planning", planning_mode: "book", agenda_date: shiftDateKeyByDays(agendaDate, 7), agenda_view: "week" })}#client-week-navigation`}
+                        aria-label={t("client.next_week")}
+                      >
+                        {language === "fr" ? "Suivant" : "Next"} →
+                      </a>
+                    </div>
+                  </div>
+                </div>
+
                 <div className={`agenda-grid client-agenda-grid agenda-grid-${agendaView}`}>
                   {visibleAgendaDays.map((day) => {
                     return (
@@ -4387,7 +4304,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                     {compactAgendaCard ? <small className="event-meta">🕒 {formatTimeInTimezone(session.start_at_utc, timezone, language)} - {formatTimeInTimezone(session.end_at_utc, timezone, language)}</small> : null}
                                     <small className="event-meta">🎵 {session.course_type.name}</small>
                                     <div className="row">
-                                      <span className="occ-badge">{session.booked_count}/{session.capacity_max}</span>
+                                      {session.capacity_max > session.booked_count ? (
+                                        <small className="event-meta">{language === "fr"
+                                          ? `${session.capacity_max - session.booked_count} place${session.capacity_max - session.booked_count > 1 ? "s" : ""} restante${session.capacity_max - session.booked_count > 1 ? "s" : ""}`
+                                          : `${session.capacity_max - session.booked_count} place${session.capacity_max - session.booked_count > 1 ? "s" : ""} left`}</small>
+                                      ) : null}
                                       <small className="event-meta">⏱ {durationMinutes} min</small>
                                     </div>
                                     {session.professor || session.effective_teacher_display_name ? (

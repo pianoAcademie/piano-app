@@ -10935,6 +10935,18 @@ button.danger:focus-visible {
   border-color: transparent;
 }
 .client-week-bottom-navigation { display: grid; gap: 8px; margin-top: 20px; }
+.client-week-planning-board .client-week-toolbar { margin: 12px 0 0; padding: 0; border: 0; background: transparent; }
+.client-week-planning-board .client-week-toolbar-actions { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 4px; }
+.client-week-planning-board .client-week-toolbar-actions > .mode-link { grid-column: auto; grid-row: auto; min-width: 0; padding: 8px 4px; align-self: center; font-size: 13px; }
+.client-booking-filters-disclosure { margin: 8px 0; }
+.client-booking-filters-disclosure > summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; gap: 8px; color: #685640; font-size: 14px; }
+.client-booking-filters-disclosure > summary::before { content: "+"; }
+.client-booking-filters-disclosure[open] > summary::before { content: "−"; }
+.client-week-planning-board .client-booking-category-switch > a { grid-template-columns: auto minmax(0, 1fr); }
+@media (max-width: 760px) {
+  .client-week-planning-board .client-booking-category-switch > a { grid-template-columns: minmax(0, 1fr); min-height: 44px; }
+  .client-week-planning-board .client-date-nav-btn { font-size: 12px; padding: 8px 4px; }
+}
 .client-booking-filter-help { font-size: 13px; line-height: 1.5; color: #685640; }
 .client-week-planning-board .client-session-card .client-agenda-event {
   border: 1px solid #ded8cd;
