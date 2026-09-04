@@ -6,8 +6,10 @@ sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from app.db.session import SessionLocal
 from app.models.catalog import Booking,CourseSession
 from app.models.user import User,UserRole
-from app.api.routes.admin import BOOKING_STATUSES_ACTIVE,preview_planning_reorganization_booking_move,move_planning_reorganization_booking
-from app.schemas.admin import AdminPlanningReorganizationMovePreviewRequest,AdminPlanningReorganizationMoveRequest
+from app.api.routes.admin import BOOKING_STATUSES_ACTIVE,_checked_move_version,_bind_moved_contract,_move_planning_reorganization_booking_occurrence
+from app.models.client_record import StudentQuoteChange
+from datetime import datetime,timezone
+from decimal import Decimal
 
 TARGET=UUID('0933a274-a0a2-56d5-a050-8ec12bbafd01')
 STUDENTS={
@@ -20,19 +22,25 @@ def main():
  ap=argparse.ArgumentParser();ap.add_argument('--apply',action='store_true');a=ap.parse_args()
  with SessionLocal() as db:
   actor=db.scalar(select(User).where(User.role==UserRole.ADMIN).order_by(User.created_at).limit(1))
-  target_first=db.scalar(select(CourseSession).where(CourseSession.recurrence_group_id==TARGET).order_by(CourseSession.start_at_utc).limit(1))
-  if not actor or not target_first: raise RuntimeError('identity_guard')
+  target_sessions=list(db.scalars(select(CourseSession).where(CourseSession.recurrence_group_id==TARGET).order_by(CourseSession.start_at_utc)).all())
+  if not actor or len(target_sessions)!=32: raise RuntimeError('identity_guard')
   for student,source_group in STUDENTS.items():
    source=group_bookings(db,student,source_group); target=group_bookings(db,student,TARGET)
    if not source and len(target)==32:
     print(f'HADDAD_MOVE|already_moved|student={student}');continue
    if len(source)!=32 or target: raise RuntimeError(f'count_guard_{student}_{len(source)}_{len(target)}')
-   preview=preview_planning_reorganization_booking_move(AdminPlanningReorganizationMovePreviewRequest(booking_id=source[0].id,target_session_id=target_first.id,scope='series_future'),db=db,_=actor)
-   if preview.affected_bookings!=32: raise RuntimeError(f'preview_count_{student}_{preview.affected_bookings}')
-   print(f'HADDAD_MOVE|audit|student={student}|count=32|price_change={preview.price_change}|apply={a.apply}')
+   source_sessions=[db.get(CourseSession,b.session_id) for b in source]
+   pairs=list(zip(source,source_sessions,target_sessions,strict=True))
+   version,occurrences=_checked_move_version(db,pairs,0,[],datetime.now(timezone.utc))
+   print(f'HADDAD_MOVE|audit|student={student}|count=32|version={version}|apply={a.apply}')
    if a.apply:
-    out=move_planning_reorganization_booking(AdminPlanningReorganizationMoveRequest(booking_id=source[0].id,target_session_id=target_first.id,scope='series_future',price_policy='keep_source',expected_version=preview.version),db=db,actor=actor)
-    if out.moved_count!=32: raise RuntimeError(f'move_count_{student}_{out.moved_count}')
+    now=datetime.now(timezone.utc)
+    for booking,source_session,target_session in pairs:
+     _bind_moved_contract(db,booking,target_session,'series_future')
+     moved,detail=_move_planning_reorganization_booking_occurrence(db,booking=booking,source_session=source_session,target_session=target_session,now=now,target_price_snapshot=None,lock_price_snapshot=True)
+     if not moved: raise RuntimeError(f'move_failed_{student}_{detail}')
+    db.add(StudentQuoteChange(user_id=student,student_user_id=student,actor_user_id=actor.id,change_type='SLOT_CHANGE',status='VALIDATED',effective_date=target_sessions[0].start_at_utc.date(),title='Déplacement de 32 séances vers le cours de Rosana — tarif conservé',description='Transfert annuel vers mercredi 15 h, rue Scheffer, sans notification ni modification de facture.',before_snapshot={'occurrences':occurrences},after_snapshot={'target_sessions':[str(s.id) for s in target_sessions]},financial_impact_ttc=Decimal('0.00'),currency=str(source[0].currency_snapshot),billing_action='NONE'))
+    db.commit()
   if not a.apply: db.rollback();return
  with SessionLocal() as verify:
   for student,source_group in STUDENTS.items():
