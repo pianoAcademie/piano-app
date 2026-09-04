@@ -18,7 +18,6 @@ from app.api.routes.admin import (
     _bind_moved_contract,
     _checked_move_version,
     _move_planning_reorganization_booking_occurrence,
-    _planning_reorganization_move_pairs,
 )
 from app.api.routes.admin_clients import create_admin_client_range_invoice
 from app.db.session import SessionLocal
@@ -135,12 +134,13 @@ def main() -> int:
             abort(f"unexpected_counts_source_{len(source)}_target_{len(targets)}_already_{len(already_target)}")
         if local(targets[0]).isoformat() != "2026-09-10T17:00:00+02:00":
             abort(f"unexpected_first_target_{local(targets[0]).isoformat()}")
-        first_source_session = db.get(CourseSession, source[0].session_id)
-        pairs, skipped, details = _planning_reorganization_move_pairs(
-            db, source_booking=source[0], source_session=first_source_session,
-            target_session=targets[0], scope="series_future",
-        )
-        _checked_move_version(db, pairs, skipped, details, datetime.now(timezone.utc))
+        source_sessions = [db.get(CourseSession, booking.session_id) for booking in source]
+        # The Bar-le-Duc calendars are not week-isomorphic: the Monday series has
+        # a lesson in the week of 3 May while the Thursday series is closed. The
+        # requested annual destination is therefore the ordered set of 33 actual
+        # Thursday lessons, not a same-week recurrence projection.
+        pairs = list(zip(source, source_sessions, targets[:EXPECTED_SOURCE_COUNT], strict=True))
+        _checked_move_version(db, pairs, 0, [], datetime.now(timezone.utc))
         if len(pairs) != EXPECTED_SOURCE_COUNT:
             abort(f"pair_count_{len(pairs)}")
         mapped = {target.id for _, _, target in pairs}
