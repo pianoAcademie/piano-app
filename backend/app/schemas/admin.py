@@ -2637,6 +2637,7 @@ class AdminPlanningReorganizationBookingOut(BaseModel):
 
 class AdminPlanningReorganizationSessionOut(BaseModel):
     id: UUID
+    course_type_id: UUID
     title: str
     type_label: str
     location_id: UUID

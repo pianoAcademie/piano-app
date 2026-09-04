@@ -745,6 +745,7 @@ def _planning_reorganization_session_out(
 ) -> AdminPlanningReorganizationSessionOut:
     return AdminPlanningReorganizationSessionOut(
         id=session_obj.id,
+        course_type_id=session_obj.course_type_id,
         title=session_obj.title,
         type_label=_session_type_label(session_obj, course_type=course_type, location=location),
         location_id=session_obj.location_id,

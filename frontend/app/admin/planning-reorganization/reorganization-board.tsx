@@ -18,6 +18,7 @@ export type PlanningReorganizationBooking = {
 
 export type PlanningReorganizationSession = {
   id: string;
+  course_type_id: string;
   title: string;
   type_label: string;
   location_id: string;
@@ -116,6 +117,18 @@ export function PlanningReorganizationBoard({
   const [seriesConfirmation, setSeriesConfirmation] = useState<PendingSeriesConfirmation | null>(null);
   const [interactionError, setInteractionError] = useState("");
   const [isPending, startTransition] = useTransition();
+
+  function isCompatibleTarget(sourceSessionId: string, target: PlanningReorganizationSession): boolean {
+    const source = sessions.find((session) => session.id === sourceSessionId);
+    if (!source) return false;
+    return (
+      source.course_type_id === target.course_type_id
+      && source.location_id === target.location_id
+      && new Date(source.end_at_utc).getTime() - new Date(source.start_at_utc).getTime()
+        === new Date(target.end_at_utc).getTime() - new Date(target.start_at_utc).getTime()
+      && target.booked_count < target.capacity_max
+    );
+  }
 
   function submitMove(
     bookingToMove: DraggedBooking,
@@ -220,7 +233,9 @@ export function PlanningReorganizationBoard({
         {sessions.map((session) => {
           const capacityRatio = session.capacity_max > 0 ? session.booked_count / session.capacity_max : 0;
           const tone = capacityRatio >= 1 ? "full" : capacityRatio >= 0.8 ? "busy" : "available";
-          const isDropTarget = dragged !== null && dragged.sourceSessionId !== session.id;
+          const activeBooking = dragged ?? selected;
+          const isCompatible = activeBooking !== null && isCompatibleTarget(activeBooking.sourceSessionId, session);
+          const isDropTarget = dragged !== null && dragged.sourceSessionId !== session.id && isCompatible;
           return (
             <article
               className={`reorg-slot ${dragOverSessionId === session.id ? "drag-over" : ""} ${isDropTarget ? "drop-enabled" : ""}`}
@@ -246,7 +261,7 @@ export function PlanningReorganizationBoard({
                 </div>
                 <span className={`reorg-capacity ${tone}`}>{session.booked_count}/{session.capacity_max}</span>
               </header>
-              {selected && selected.sourceSessionId !== session.id ? (
+              {selected && selected.sourceSessionId !== session.id && isCompatible ? (
                 <button type="button" className="button-link reorg-mobile-move-button" onClick={() => moveToSession(session.id)}>
                   {language === "en" ? `Move ${selected.label} here` : `Deplacer ${selected.label} ici`}
                 </button>
