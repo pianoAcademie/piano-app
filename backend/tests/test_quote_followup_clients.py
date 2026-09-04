@@ -11,7 +11,12 @@ from fastapi import HTTPException
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from app.api.routes.quotes import _create_quote_client, _resolve_followup_clients, _resolve_parent_contact_data
+from app.api.routes.quotes import (
+    _create_quote_client,
+    _ensure_pending_client_from_prospect,
+    _resolve_followup_clients,
+    _resolve_parent_contact_data,
+)
 from app.models.family import ClientFamilyLink
 from app.models.user import ClientKind, ClientStatus
 
@@ -32,6 +37,31 @@ class _FakeSession:
 
 
 class QuoteFollowupClientsTests(unittest.TestCase):
+    def test_child_approval_does_not_link_parent_account_by_shared_email(self) -> None:
+        child_prospect_id = uuid4()
+        parent_id = uuid4()
+        quote = SimpleNamespace(
+            context_type="acquisition",
+            prospect_id=child_prospect_id,
+            client_id=parent_id,
+        )
+        prospect = SimpleNamespace(
+            id=child_prospect_id,
+            email="parent@example.com",
+            linked_client_id=parent_id,
+            meta={"prospect_type": "child"},
+        )
+        parent = SimpleNamespace(id=parent_id, client_kind=ClientKind.ADULT)
+        db = _FakeSession()
+        db.scalar = lambda _statement: prospect
+        db.get = lambda _model, identifier: parent if identifier == parent_id else None
+
+        result = _ensure_pending_client_from_prospect(db, quote)
+
+        self.assertIsNone(result)
+        self.assertEqual(quote.client_id, parent_id)
+        self.assertEqual(prospect.linked_client_id, parent_id)
+
     def test_create_quote_client_accepts_address_fields(self) -> None:
         db = _FakeSession()
 
@@ -197,6 +227,7 @@ class QuoteFollowupClientsTests(unittest.TestCase):
             linked_client_id=quote.client_id,
             status="converted",
             updated_at=None,
+            meta={},
         )
         billing = SimpleNamespace(id=quote.client_id, client_kind=ClientKind.ADULT)
         student = SimpleNamespace(id=uuid4())
@@ -219,6 +250,9 @@ class QuoteFollowupClientsTests(unittest.TestCase):
             return student
 
         with patch(
+            "app.api.routes.quotes.review_prospect_for_transformation",
+            return_value=quote_prospect,
+        ), patch(
             "app.api.routes.quotes._load_prospect_for_update",
             return_value=quote_prospect,
         ), patch(

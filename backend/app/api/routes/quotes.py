@@ -8285,14 +8285,29 @@ def _ensure_followup(db: Session, quote: Quote) -> QuoteAcceptanceFollowup:
 def _ensure_pending_client_from_prospect(db: Session, quote: Quote) -> UUID | None:
     if quote.context_type != "acquisition":
         return quote.client_id
-    if quote.client_id is not None:
-        return quote.client_id
     if quote.prospect_id is None:
-        return None
+        return quote.client_id
 
     prospect = db.scalar(select(Prospect).where(Prospect.id == quote.prospect_id).with_for_update())
     if prospect is None:
+        return quote.client_id
+    prospect_is_child = str(_json_object(prospect.meta).get("prospect_type") or "").strip().lower() == "child"
+    if prospect_is_child:
+        # Children commonly share the billing email of their parent. Never use
+        # that email to turn the parent account into the child's client record.
+        # A correctly linked child can still be reused; otherwise the enrollment
+        # workflow will create the child and attach it to the selected parent.
+        for candidate_id in (prospect.linked_client_id, quote.client_id):
+            candidate = db.get(User, candidate_id) if candidate_id is not None else None
+            if candidate is None or candidate.client_kind != ClientKind.CHILD:
+                continue
+            prospect.linked_client_id = candidate.id
+            quote.client_id = candidate.id
+            db.add_all([prospect, quote])
+            return candidate.id
         return None
+    if quote.client_id is not None:
+        return quote.client_id
     if prospect.linked_client_id is not None:
         quote.client_id = prospect.linked_client_id
         db.add(quote)
@@ -10360,10 +10375,24 @@ def _resolve_followup_clients(
     student = None
     candidate_student_ids: list[UUID] = []
     candidate_ids_to_reuse = () if mode == "new_child_existing_parent" else (selected_client_id, quote_prospect.linked_client_id, quote.client_id)
+    reviewed_link_is_parent_placeholder = False
     if reviewed_prospect and reviewed_prospect.linked_client_id:
         # A verified prospect already converted in this workflow identifies one
-        # exact client. Retrying must not create a second child for that prospect.
-        candidate_ids_to_reuse = (reviewed_prospect.linked_client_id,)
+        # exact client. Older approvals could however link a child prospect to
+        # the selected adult parent solely because they shared an email address.
+        # That adult is a billing placeholder, not an existing child.
+        reviewed_linked_client = _load_user_for_update(db, reviewed_prospect.linked_client_id)
+        reviewed_link_is_parent_placeholder = bool(
+            reviewed_linked_client is not None
+            and reviewed_linked_client.id == billing.id
+            and reviewed_linked_client.client_kind == ClientKind.ADULT
+            and mode in {"new_parent_child", "new_child_existing_parent"}
+        )
+        candidate_ids_to_reuse = (
+            ()
+            if reviewed_link_is_parent_placeholder
+            else (reviewed_prospect.linked_client_id,)
+        )
     for candidate_id in candidate_ids_to_reuse:
         if candidate_id is None or candidate_id in candidate_student_ids:
             continue
@@ -10379,7 +10408,12 @@ def _resolve_followup_clients(
         student = candidate_student
         break
 
-    if reviewed_prospect and reviewed_prospect.linked_client_id and student is None:
+    if (
+        reviewed_prospect
+        and reviewed_prospect.linked_client_id
+        and student is None
+        and not reviewed_link_is_parent_placeholder
+    ):
         raise HTTPException(409, "La fiche client liée au prospect vérifié n'est pas une fiche enfant valide. Vérifiez le rattachement sans créer de doublon.")
     if student is None and child_email:
         candidate_student = _find_user_by_email_for_update(db, child_email)
