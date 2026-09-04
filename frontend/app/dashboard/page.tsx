@@ -2519,6 +2519,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       hasDirectPayment,
       renewalSubscription,
       canCheckout,
+      canJoinWaitlist: isFull && participantAllowed && !memberBooking
+        && normalizeStatus(session.status) === "SCHEDULED"
+        && session.online_booking_enabled && !sessionIsPastOrStarted,
       statusCode,
       statusLabel: planningStatusLabel(statusCode),
       actionLabel,
@@ -2643,6 +2646,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       hasDirectPayment,
       renewalSubscription,
       canCheckout: actionableMembers.length > 0,
+      canJoinWaitlist: familyMemberStates.some((entry) => entry.state.canJoinWaitlist),
       statusCode,
       statusLabel: planningStatusLabel(statusCode),
       cardStatusCode: statusCode,
@@ -3135,7 +3139,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       sessions: day.sessions.filter((session) => {
         const sessionState = planningStateForSession(session);
         if (planningSlotFilter === "AVAILABLE") {
-          return sessionState.canCheckout;
+          return sessionState.canCheckout || sessionState.canJoinWaitlist;
         }
         if (planningSlotFilter === "ALREADY_BOOKED") {
           return sessionState.alreadyReserved || sessionState.paymentPending;
@@ -4035,7 +4039,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                 </form>
 
                 <div id="client-week-navigation" className="client-week-toolbar">
-                  <div className="client-week-toolbar-head">
+                  <div className="client-week-toolbar-head client-week-navigation-explicit">
                     <div className="client-week-title-group">
                       <span className="badge">{bookingOwnerLabel}</span>
                       <strong>{agendaRange.title}</strong>
@@ -4048,9 +4052,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           href={`${withUpdatedQuery(rawParams, { tab: "planning", planning_mode: "book", agenda_date: previousAgendaDate, agenda_view: "week" })}#client-week-navigation`}
                           aria-label={t("client.previous_week")}
                         >
-                          ←
+                          ← {language === "fr" ? "Précédent" : "Previous"}
                         </a>
-                      ) : null}
+                      ) : <span className="client-date-nav-btn" aria-disabled="true">← {language === "fr" ? "Précédent" : "Previous"}</span>}
                       <a className="mode-link" href={`${withUpdatedQuery(rawParams, { tab: "planning", planning_mode: "book", agenda_date: todayKeyInTimezone(timezone), agenda_view: "week" })}#client-week-navigation`}>
                         {t("client.today")}
                       </a>
@@ -4059,11 +4063,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         href={`${withUpdatedQuery(rawParams, { tab: "planning", planning_mode: "book", agenda_date: shiftDateKeyByDays(agendaDate, 7), agenda_view: "week" })}#client-week-navigation`}
                         aria-label={t("client.next_week")}
                       >
-                        →
+                        {language === "fr" ? "Suivant" : "Next"} →
                       </a>
                     </div>
                   </div>
-                  <div className="client-week-legend">
+                  <div className="client-week-legend" hidden>
                     <span className="client-week-legend-item">
                       <span className="client-week-legend-swatch reserved" />
                       {t("client.my_bookings")}
@@ -4216,7 +4220,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                   <h2>{t("client.additional_booking_week")}</h2>
                   <span className="badge">{agendaSessionCount}</span>
                 </div>
-                <p className="muted">{t("client.additional_booking_week_help")}</p>
+                <p className="client-booking-filter-help">{language === "fr" ? "Les cours complets avec liste d’attente sont également affichés. Les jours sans créneau correspondant aux filtres sont masqués." : "Full classes with a waiting list are also shown. Days with no slots matching your filters are hidden."}</p>
                 <nav className="client-booking-category-switch" aria-label={t("client.booking_category_label")}>
                   {([
                     { key: "PIANO", icon: "♩", label: t("client.booking_category_piano"), help: t("client.booking_category_piano_help") },
@@ -4345,6 +4349,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                 ? t("client.complete_payment_action")
                                 : sessionState.canCheckout
                                   ? sessionState.actionLabel
+                                  : sessionState.canJoinWaitlist
+                                  ? (language === "fr" ? "Liste d’attente" : "Join waitlist")
                                   : sessionState.isFull
                                   ? planningStatusLabel("FULL")
                                   : t("client.view_details");
@@ -4377,7 +4383,6 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                     </div>
                                     <div className="row spread client-event-head">
                                       <h3 className="event-title">{session.title}</h3>
-                                      <span className="client-event-color" style={{ backgroundColor: accentColor }} aria-hidden="true" />
                                     </div>
                                     {compactAgendaCard ? <small className="event-meta">🕒 {formatTimeInTimezone(session.start_at_utc, timezone, language)} - {formatTimeInTimezone(session.end_at_utc, timezone, language)}</small> : null}
                                     <small className="event-meta">🎵 {session.course_type.name}</small>
@@ -4401,10 +4406,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                       ) : null}
                                       {showPlanningStateBadge ? (
                                         <span className={`status-badge ${cardStatusClass}`}>
-                                          {sessionState.cardStatusLabel}
+                                          {sessionState.canJoinWaitlist ? (language === "fr" ? "Complet · liste d’attente" : "Full · waiting list") : sessionState.cardStatusLabel}
                                         </span>
                                       ) : null}
-                                      <span className={`client-session-cta ${sessionState.canCheckout || sessionState.paymentPending ? "ready" : ""}`}>
+                                      <span className={`client-session-cta ${sessionState.canCheckout || sessionState.canJoinWaitlist || sessionState.paymentPending ? "ready" : ""}`}>
                                         {sessionCtaLabel}
                                       </span>
                                     </div>
@@ -4421,6 +4426,14 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                 {visibleAgendaDays.length === 0 ? (
                   <p className="muted agenda-empty">{t("client.no_course_in_rolling_week")}</p>
                 ) : null}
+                <nav className="client-week-bottom-navigation client-week-navigation-explicit" aria-label={language === "fr" ? "Navigation du planning" : "Schedule navigation"}>
+                  <strong>{agendaRange.title}</strong>
+                  <div className="client-week-toolbar-actions">
+                    {agendaDate > defaultAgendaDate ? <a className="client-date-nav-btn" href={`${withUpdatedQuery(rawParams, { agenda_date: previousAgendaDate })}#client-week-navigation`}>← {language === "fr" ? "Précédent" : "Previous"}</a> : <span className="client-date-nav-btn" aria-disabled="true">← {language === "fr" ? "Précédent" : "Previous"}</span>}
+                    <a className="mode-link" href={`${withUpdatedQuery(rawParams, { agenda_date: defaultAgendaDate })}#client-week-navigation`}>{language === "fr" ? "Aujourd’hui" : "Today"}</a>
+                    <a className="client-date-nav-btn" href={`${withUpdatedQuery(rawParams, { agenda_date: shiftDateKeyByDays(agendaDate, 7) })}#client-week-navigation`}>{language === "fr" ? "Suivant" : "Next"} →</a>
+                  </div>
+                </nav>
               </Card>
               ) : null}
 
