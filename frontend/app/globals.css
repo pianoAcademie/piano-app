@@ -15022,15 +15022,37 @@ button.danger:focus-visible {
 
 @media (max-width: 760px) {
   .client-booking-category-switch {
-    display: flex;
-    overflow-x: auto;
-    scroll-snap-type: x proximity;
-    padding-bottom: 3px;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    overflow: visible;
+    gap: 5px;
+    padding-bottom: 0;
   }
 
   .client-booking-category-switch > a {
-    flex: 0 0 min(82vw, 285px);
-    scroll-snap-align: start;
+    min-height: 58px;
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: center;
+    gap: 2px;
+    padding: 7px 5px;
+    text-align: center;
+  }
+
+  .client-booking-category-switch .client-booking-category-icon,
+  .client-booking-category-switch small {
+    display: none;
+  }
+
+  .client-booking-category-switch strong {
+    width: 100%;
+    font-size: 12px;
+    line-height: 1.2;
+    white-space: normal;
+  }
+
+  .client-booking-category-switch .badge {
+    font-size: 11px;
+    padding: 2px 7px;
   }
 
   .client-booking-location-options {
