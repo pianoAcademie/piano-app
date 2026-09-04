@@ -77,6 +77,10 @@ def capacity_guard(db, session: CourseSession) -> None:
 def append_contract_session(subscription: ClientPlanSubscription, booking: Booking, session: CourseSession) -> None:
     terms = [dict(term) for term in (subscription.annual_pricing_terms or [])]
     matches = [term for term in terms if term.get("version") == booking.price_book_version_snapshot]
+    if not matches:
+        matches = [term for term in terms if str(SOURCE_GROUP_ID) in term.get("series_ids", [])]
+    if not terms:
+        return
     if len(matches) != 1:
         abort(f"annual_term_match_count_{len(matches)}")
     term = matches[0]
