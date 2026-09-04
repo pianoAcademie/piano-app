@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 import unicodedata
+from collections import Counter
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
@@ -104,6 +105,14 @@ def main() -> None:
                 f"TARGET last={rows[-1][0].start_at_utc.astimezone(PARIS).isoformat()} group={group_id} "
                 f"reserved_min={min(counts)} reserved_max={max(counts)} free_min={min(row[0].capacity_max - count for row, count in zip(rows, counts, strict=True))}"
             )
+            statuses = Counter(str(row[0].status.value if hasattr(row[0].status, "value") else row[0].status) for row in rows)
+            scheduled = [row for row in rows if str(row[0].status.value if hasattr(row[0].status, "value") else row[0].status) == "SCHEDULED"]
+            print(f"TARGET statuses={dict(statuses)} scheduled={len(scheduled)}")
+            if scheduled:
+                print(
+                    f"TARGET scheduled_first={scheduled[0][0].start_at_utc.astimezone(PARIS).isoformat()} "
+                    f"scheduled_last={scheduled[-1][0].start_at_utc.astimezone(PARIS).isoformat()}"
+                )
 
 
 if __name__ == "__main__":
