@@ -8,7 +8,7 @@ from sqlalchemy import or_,select
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from app.db.session import SessionLocal
 from app.models.catalog import CourseSession,CourseSessionProfessor,CourseType,Location,Professor,SessionStatus
-from app.services.billing_entities import normalize_billing_entity
+from app.services.invoice_documents import normalize_billing_entity
 
 LOCATION=UUID('26132519-8dfe-446a-91e7-82ea3172cec7'); PROFESSOR=UUID('a58909e3-e7f4-4e56-bb9b-624669946f80')
 PARIS=ZoneInfo('Europe/Paris'); END=date(2026,10,17)
