@@ -56,3 +56,13 @@ jobs:
             export COMPOSE_PROJECT_NAME='piano-app'
             docker compose exec -T backend python - ${args}
           " < backend/scripts/move_prod_armelle_curin_to_thursday.py
+      - name: Audit effective Armelle price
+        if: ${{ !inputs.apply }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_ed25519 -p "${VPS_PORT:-22}" "${VPS_USER}@${VPS_HOST}" "
+            set -euo pipefail
+            cd '${VPS_PATH}'
+            export COMPOSE_PROJECT_NAME='piano-app'
+            docker compose exec -T backend python -
+          " < backend/scripts/audit_prod_armelle_curin_price.py
