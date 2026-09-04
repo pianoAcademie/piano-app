@@ -10908,6 +10908,28 @@ button.danger:focus-visible {
 
 .client-week-legend[hidden] { display: none; }
 
+/* Compact catalogue: choosing is separate from order confirmation. */
+#purchase-review { scroll-margin-top: 16px; }
+.client-content .client-catalog-offer-card { padding: 16px; gap: 10px; background: #fff; border: 1px solid #cabda9; box-shadow: 0 2px 5px #3727110a; }
+.client-content .client-offer-catalog-grid { gap: 16px; align-items: start; }
+.client-content .client-catalog-offer-content h3 { font-size: 18px; line-height: 1.3; margin: 0; }
+.client-content .client-catalog-offer-footer { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; padding-top: 10px; }
+.client-content .client-catalog-offer-footer > a { min-height: 44px; padding: 10px 16px; width: auto; text-align: center; }
+.client-content .client-catalog-price strong { font-size: 22px; }
+.client-content .client-catalog-category-badge { font-size: 12px; padding: 4px 8px; }
+.client-content .client-catalog-offer-meta { margin-top: 4px; font-size: 12px; }
+.client-offer-details { margin: 6px 0; font-size: 13px; }
+.client-offer-details summary { cursor: pointer; min-height: 32px; padding: 6px 0; color: #685640; }
+.client-offer-details p { line-height: 1.45; }
+.client-purchase-review-options { display: grid; gap: 12px; margin: 12px 0; }
+.client-offers-confirm-card .legal-terms-consent { display: flex; flex-wrap: nowrap; align-items: flex-start; gap: 10px; font-size: 14px; }
+.client-offers-confirm-card .legal-terms-consent input { width: 20px; min-width: 20px; height: 20px; margin: 2px 0 0; }
+@media (max-width: 900px) {
+  body:has(.client-topbar-offers) .client-mobile-header { position: static; padding: 8px 12px; }
+  body:has(.client-topbar-offers) .client-mobile-header h1 { font-size: 20px; line-height: 24px; }
+  body:has(.client-topbar-offers) .client-mobile-header .muted { display: none; }
+}
+
 .client-week-navigation-explicit .client-week-toolbar-actions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

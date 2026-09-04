@@ -125,6 +125,7 @@ type OfferCatalogCategory =
   | "ALL"
   | "PIANO_ONSITE"
   | "PIANO_ONLINE"
+  | "ONLINE_THEORY"
   | "REHEARSAL_STUDIO"
   | "SHEET_MUSIC"
   | "NOTE_GAMES"
@@ -196,6 +197,7 @@ const OFFER_CATALOG_CATEGORIES: Array<{
   icon: string;
 }> = [
   { key: "PIANO_ONSITE", labelKey: "client.offer_category_piano_onsite", icon: "♩" },
+  { key: "ONLINE_THEORY", labelKey: "client.offer_category_online_theory", icon: "⌁" },
   { key: "PIANO_ONLINE", labelKey: "client.offer_category_piano_online", icon: "⌁" },
   { key: "REHEARSAL_STUDIO", labelKey: "client.offer_category_rehearsal_studio", icon: "♫" },
   { key: "SHEET_MUSIC", labelKey: "client.offer_category_sheet_music", icon: "▤" },
@@ -226,7 +228,8 @@ function offerCategoriesFromText(value: string): Exclude<OfferCatalogCategory, "
   if (/\bpartition/.test(text)) categories.push("SHEET_MUSIC");
   if (/\bjeu(x)?\b.*\bnote(s)?\b|\bnote(s)?\b.*\bjeu(x)?\b/.test(text)) categories.push("NOTE_GAMES");
   if (/\bcahier(s)?\b.*\bsolfege\b|\bsolfege\b.*\bcahier(s)?\b/.test(text)) categories.push("THEORY_BOOKS");
-  if (hasOnline && /\b(piano|cours|solfege|musique)\b/.test(text)) categories.push("PIANO_ONLINE");
+  if (hasOnline && /\b(solfege|theory)\b/.test(text) && !/\bcahier/.test(text)) categories.push("ONLINE_THEORY");
+  else if (hasOnline && /\b(piano|cours|musique)\b/.test(text)) categories.push("PIANO_ONLINE");
   if ((hasOnsite || (!hasOnline && /\b(piano|cours)\b/.test(text))) && /\b(piano|cours|musique)\b/.test(text)) {
     categories.push("PIANO_ONSITE");
   }
@@ -2144,6 +2147,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     : todayKeyInTimezone(timezone);
   const selectedOwnerSubscriptions = subscriptionsByOwner.get(selectedPurchaseOwner) ?? [];
   const confirmPlan = confirmPlanId ? plans.find((plan) => plan.id === confirmPlanId) ?? null : null;
+  const confirmRecurringPaymentMethods = (confirmPlan?.payment_methods ?? []).filter((method) => method === "CARD_ONLINE" || method === "SEPA_DEBIT");
   const selectedPurchaseOwnerProfile = members.find((member) => member.id === selectedPurchaseOwner) ?? null;
   const selectedOfferCategory = parseOfferCatalogCategory(readParam(searchParams, "offer_category"));
   const offerCategoryCounts = new Map<Exclude<OfferCatalogCategory, "ALL">, number>();
@@ -5352,12 +5356,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                 </div>
               </Card>
 
-              {confirmExistingPackPurchase && confirmPlan ? (
-                <Card className="client-offers-confirm-card">
-                  <section className="flash-warn client-offers-confirm-alert">
+              {confirmPlan ? (
+                <div id="purchase-review"><Card className="client-offers-confirm-card">
+                  {confirmExistingPackPurchase ? <section className="flash-warn client-offers-confirm-alert">
                     <strong>{t("client.pre_purchase_check")}</strong>
                     <span>{warningMessage || t("client.pre_purchase_default_warning")}</span>
-                  </section>
+                  </section> : null}
                   <div className="client-offers-confirm-head">
                     <div>
                       <p className="client-offers-confirm-kicker">{t("client.purchase_confirmation")}</p>
@@ -5388,6 +5392,24 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       <p>{Number(planDisplayPrice(confirmPlan) ?? "0") > 0 ? t("client.secure_online_payment") : t("client.no_payment_required")}</p>
                     </article>
                   </div>
+                  <form method="get" action="#purchase-review" className="client-purchase-review-options">
+                    <input type="hidden" name="tab" value="offers" />
+                    <input type="hidden" name="confirm_plan_id" value={confirmPlan.id} />
+                    <input type="hidden" name="lang" value={language} />
+                    <label>{t("client.beneficiary")}
+                      <select name="purchase_user_id" defaultValue={selectedPurchaseOwner}>
+                        {members.map((member) => <option key={member.id} value={member.id}>{member.display_name}</option>)}
+                      </select>
+                    </label>
+                    <label>{language === "fr" ? "Date de début" : "Start date"}
+                      <input type="date" name="purchase_start_date" defaultValue={selectedPurchaseStartDate} required />
+                    </label>
+                    <button type="submit" className="ghost">{language === "fr" ? "Actualiser le récapitulatif" : "Update summary"}</button>
+                  </form>
+                  <p>{confirmPlan.description}</p>
+                  {confirmPlan.kind === "SUBSCRIPTION" ? <p>{t("client.then_monthly_price", { amount: toMoney(confirmPlan.base_price_ttc ?? planDisplayPrice(confirmPlan), confirmPlan.currency_code ?? me.preferred_currency, language) })}</p> : null}
+                  {confirmPlan.first_purchase_required ? <ul>{confirmPlan.first_purchase_breakdown.map((line) => <li key={line.code}>{line.label} · {toMoney(line.amount_ttc, confirmPlan.currency_code ?? me.preferred_currency, language)}</li>)}</ul> : null}
+                  <p>{language === "fr" ? "Date de début" : "Start date"} : {selectedPurchaseStartDate}</p>
                   <div className="client-offers-confirm-note">
                     <strong>{t("client.next_steps_after_purchase")}</strong>
                     <p>{Number(planDisplayPrice(confirmPlan) ?? "0") > 0 ? t("client.redirect_to_secure_payment") : t("client.immediate_plan_addition")}</p>
@@ -5397,9 +5419,22 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       <input type="hidden" name="plan_id" value={confirmPlan.id} />
                       <input type="hidden" name="purchase_user_id" value={selectedPurchaseOwner} />
                       <input type="hidden" name="start_date" value={selectedPurchaseStartDate} />
-                      <input type="hidden" name="confirm_existing_pack_purchase" value="1" />
+                      <input type="hidden" name="confirm_existing_pack_purchase" value={confirmExistingPackPurchase ? "1" : "0"} />
                       <input type="hidden" name="ui_language" value={language} />
-                      {confirmPlan.kind === "PACK" || confirmPlan.kind === "SUBSCRIPTION" ? (
+                                {confirmPlan.kind === "SUBSCRIPTION" && confirmRecurringPaymentMethods.length > 1 ? (
+                                  <label>
+                                    <span>{t("client.catalog_renewal_method")}</span>
+                                    <select name="billing_method_code" defaultValue="CARD_ONLINE">
+                                      {confirmRecurringPaymentMethods.map((method) => (
+                                        <option key={method} value={method}>{paymentMethodLabel(method, language)}</option>
+                                      ))}
+                                    </select>
+                                    <small>{t("client.sepa_first_card_notice")}</small>
+                                  </label>
+                                ) : confirmPlan.kind === "SUBSCRIPTION" && confirmRecurringPaymentMethods.length === 1 ? (
+                                  <input type="hidden" name="billing_method_code" value={confirmRecurringPaymentMethods[0]} />
+                                ) : null}
+
                         <label className="row legal-terms-consent">
                           <input type="checkbox" name="legal_terms_accepted" value="1" required />
                           <span>
@@ -5410,7 +5445,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             {t("legal.terms.accept_suffix")}
                           </span>
                         </label>
-                      ) : null}
+
                       <button type="submit">
                         {Number(planDisplayPrice(confirmPlan) ?? "0") > 0 ? t("client.confirm_and_pay_online") : t("client.confirm_purchase")}
                       </button>
@@ -5430,9 +5465,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       {t("common.cancel")}
                     </a>
                   </div>
-                </Card>
+                </Card></div>
               ) : null}
 
+              {!confirmPlan ? <>
               <section id="client-owned-purchases">
                 <Card>
                   <div className="row spread">
@@ -5816,10 +5852,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         const displayedCategoryKey = selectedOfferCategory !== "ALL" && categories.includes(selectedOfferCategory)
                           ? selectedOfferCategory
                           : categories[0];
-                        const primaryCategory = OFFER_CATALOG_CATEGORIES.find((category) => category.key === displayedCategoryKey) ?? OFFER_CATALOG_CATEGORIES[7];
-                        const recurringPaymentMethods = (plan.payment_methods ?? []).filter(
-                          (method) => method === "CARD_ONLINE" || method === "SEPA_DEBIT",
-                        );
+                        const primaryCategory = OFFER_CATALOG_CATEGORIES.find((category) => category.key === displayedCategoryKey) ?? OFFER_CATALOG_CATEGORIES[OFFER_CATALOG_CATEGORIES.length - 1];
                         const price = planDisplayPrice(plan);
                         const planTypeLabel = plan.kind === "PACK"
                           ? t("client.pack_sessions")
@@ -5833,15 +5866,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                 <span aria-hidden="true">{primaryCategory.icon}</span>
                                 {t(primaryCategory.labelKey)}
                               </span>
-                              <span className="client-catalog-kind">{t("client.catalog_formula")}</span>
                             </div>
                             <div className="client-catalog-offer-content">
                               <h3>{plan.name}</h3>
-                              <p className="client-catalog-offer-description">
-                                {plan.description || (plan.entitlement_course_type_names ?? []).join(" · ") || planTypeLabel}
-                              </p>
+                              {plan.description ? <details className="client-offer-details"><summary>{language === "fr" ? "Détails" : "Details"}</summary><p>{plan.description}</p></details> : null}
                               <div className="client-catalog-offer-meta">
-                                <span>{planTypeLabel}</span>
+                                {plan.kind === "SUBSCRIPTION" ? <span>{planTypeLabel}</span> : null}
                                 {plan.kind === "PACK" && plan.credits_count != null ? (
                                   <span>{t("client.catalog_sessions_included", { count: plan.credits_count })}</span>
                                 ) : null}
@@ -5850,7 +5880,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             </div>
                             <div className="client-catalog-offer-footer">
                               <div className="client-catalog-price">
-                                <span>{plan.first_purchase_required ? t("client.first_purchase_payment") : t("client.price")}</span>
+                                {plan.first_purchase_required ? <span>{t("client.first_purchase_payment")}</span> : null}
                                 <strong>{price != null ? toMoney(price, plan.currency_code ?? me.preferred_currency, language) : "—"}</strong>
                                 {plan.first_purchase_required && plan.kind === "SUBSCRIPTION" && plan.base_price_ttc != null ? (
                                   <small>{t("client.then_monthly_price", { amount: toMoney(plan.base_price_ttc, plan.currency_code ?? me.preferred_currency, language) })}</small>
@@ -5866,38 +5896,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                   </ul>
                                 ) : null}
                               </div>
-                              <form action={purchasePlanAction} className="client-catalog-purchase-form">
-                                <input type="hidden" name="plan_id" value={plan.id} />
-                                <input type="hidden" name="purchase_user_id" value={selectedPurchaseOwner} />
-                                <input type="hidden" name="start_date" value={selectedPurchaseStartDate} />
-                                <input type="hidden" name="ui_language" value={language} />
-                                {plan.kind === "SUBSCRIPTION" && recurringPaymentMethods.length > 1 ? (
-                                  <label>
-                                    <span>{t("client.catalog_renewal_method")}</span>
-                                    <select name="billing_method_code" defaultValue="CARD_ONLINE">
-                                      {recurringPaymentMethods.map((method) => (
-                                        <option key={method} value={method}>{paymentMethodLabel(method, language)}</option>
-                                      ))}
-                                    </select>
-                                    <small>{t("client.sepa_first_card_notice")}</small>
-                                  </label>
-                                ) : plan.kind === "SUBSCRIPTION" && recurringPaymentMethods.length === 1 ? (
-                                  <input type="hidden" name="billing_method_code" value={recurringPaymentMethods[0]} />
-                                ) : null}
-                                {plan.kind === "PACK" || plan.kind === "SUBSCRIPTION" ? (
-                                  <label className="row legal-terms-consent">
-                                    <input type="checkbox" name="legal_terms_accepted" value="1" required />
-                                    <span>
-                                      {t("legal.terms.accept_prefix")} {" "}
-                                      <Link href={`/cgv?lang=${language}`} target="_blank" rel="noreferrer">
-                                        {t("legal.terms.link")}
-                                      </Link>
-                                      {t("legal.terms.accept_suffix")}
-                                    </span>
-                                  </label>
-                                ) : null}
-                                <button type="submit" title={t("client.subscribe_offer_title")}>{t("common.choose")}</button>
-                              </form>
+                              <a className="client-catalog-product-link" href={withUpdatedQuery(rawParams, {
+                                tab: "offers", confirm_plan_id: plan.id, purchase_user_id: selectedPurchaseOwner,
+                                purchase_start_date: selectedPurchaseStartDate, confirm_existing_pack_purchase: null,
+                                warning_code: null, warning: null,
+                              }) + "#purchase-review"}>{t("common.choose")}</a>
                             </div>
                           </article>
                         );
@@ -5908,7 +5911,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         const displayedCategoryKey = selectedOfferCategory !== "ALL" && categories.includes(selectedOfferCategory)
                           ? selectedOfferCategory
                           : categories[0];
-                        const primaryCategory = OFFER_CATALOG_CATEGORIES.find((category) => category.key === displayedCategoryKey) ?? OFFER_CATALOG_CATEGORIES[7];
+                        const primaryCategory = OFFER_CATALOG_CATEGORIES.find((category) => category.key === displayedCategoryKey) ?? OFFER_CATALOG_CATEGORIES[OFFER_CATALOG_CATEGORIES.length - 1];
                         return (
                           <article key={product.id} className="client-catalog-offer-card client-catalog-product-card">
                             <div className="client-catalog-offer-topline">
@@ -5916,7 +5919,6 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                 <span aria-hidden="true">{primaryCategory.icon}</span>
                                 {t(primaryCategory.labelKey)}
                               </span>
-                              <span className="client-catalog-kind">{t("client.catalog_product")}</span>
                             </div>
                             <div className="client-catalog-offer-content">
                               <h3>{product.title}</h3>
@@ -5931,7 +5933,6 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             </div>
                             <div className="client-catalog-offer-footer">
                               <div className="client-catalog-price">
-                                <span>{t("client.price")}</span>
                                 <strong>{toMoney(product.price_incl_vat, me.preferred_currency, language)}</strong>
                               </div>
                               {product.web_link ? (
@@ -5957,6 +5958,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                   </section>
                 </Card>
               </section>
+              </> : null}
             </>
           ) : null}
 
