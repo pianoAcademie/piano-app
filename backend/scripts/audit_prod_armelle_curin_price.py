@@ -34,4 +34,4 @@ with SessionLocal() as db:
     print("ALL_INVOICE_LINES", [(l.note_id, l.source, l.source_payment_id, str(l.total_incl_vat), l.label) for l in all_invoice_lines])
     client_ids = {STUDENT_ID} | {sub.payer_contact_id for sid in sub_ids for sub in [db.get(ClientPlanSubscription, sid)] if sub and sub.payer_contact_id}
     quotes = db.execute(select(Quote, QuoteLine).join(QuoteLine).where(Quote.client_id.in_(client_ids))).all()
-    print("QUOTES", [(q.quote_number, str(q.total_ttc), l.label, str(l.quantity), str(l.unit_price_ttc), str(l.amount_ttc)) for q,l in quotes])
+    print("QUOTES", [(q.quote_number, str(q.total_ttc), l.title, str(l.quantity), str(l.unit_price_ttc), str(l.amount_ttc), l.meta) for q,l in quotes])
