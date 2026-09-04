@@ -1,5 +1,11 @@
 name: Audit Prod Haddad Rosana Transfer
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        required: true
+        type: boolean
+        default: false
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 jobs:
@@ -22,4 +28,5 @@ jobs:
           ssh-keyscan -p "${VPS_PORT:-22}" -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
           if [ -n "$VPS_KNOWN_HOSTS" ]; then printf '%s\n' "$VPS_KNOWN_HOSTS" >> ~/.ssh/known_hosts; fi
       - run: |
-          ssh -i ~/.ssh/id_ed25519 -p "${VPS_PORT:-22}" "$VPS_USER@$VPS_HOST" "cd '$VPS_PATH' && COMPOSE_PROJECT_NAME=piano-app docker compose exec -T backend python -" < backend/scripts/audit_prod_haddad_rosana_transfer.py
+          args=""; if [ "${{ inputs.apply }}" = "true" ]; then args="--apply"; fi
+          ssh -i ~/.ssh/id_ed25519 -p "${VPS_PORT:-22}" "$VPS_USER@$VPS_HOST" "cd '$VPS_PATH' && COMPOSE_PROJECT_NAME=piano-app docker compose exec -T backend python - $args" < backend/scripts/move_prod_haddad_sisters_to_rosana.py
