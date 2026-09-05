@@ -16,6 +16,7 @@ from app.services.notifications.application.orchestrator import (
     schedule_auto_low_attendance_cancellation_notifications,
 )
 from app.services.reminders import skip_pending_reminders_for_booking
+from app.services.session_protection import is_core_lesson_course_type
 
 
 @dataclass(frozen=True)
@@ -155,11 +156,13 @@ _restore_cancelled_booking_credit = restore_cancelled_booking_credit
 def _effective_auto_cancel_threshold(db: Session, *, session_obj: CourseSession) -> int | None:
     if session_obj.auto_cancel_rule_enabled_override is False:
         return None
+    course_type = db.scalar(select(CourseType).where(CourseType.id == session_obj.course_type_id))
+    if course_type is None or is_core_lesson_course_type(course_type):
+        return None
     if session_obj.auto_cancel_rule_enabled_override is True:
         threshold = session_obj.auto_cancel_if_booked_less_than_override
         return int(threshold) if threshold is not None and int(threshold) >= 1 else None
-    course_type = db.scalar(select(CourseType).where(CourseType.id == session_obj.course_type_id))
-    if course_type is None or not bool(course_type.auto_cancel_rule_enabled):
+    if not bool(course_type.auto_cancel_rule_enabled):
         return None
     threshold = course_type.auto_cancel_if_booked_less_than_override
     return int(threshold) if threshold is not None and int(threshold) >= 1 else None

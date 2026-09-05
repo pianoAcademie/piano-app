@@ -58,6 +58,15 @@ type SlotEditTab = "general" | "schedule" | "visibility" | "notes";
 type AttendanceFilter = "all" | "missing";
 type ComposerTab = "content" | "recipients" | "send";
 
+function isProtectedCoreLesson(courseType: CourseTypeOut | undefined): boolean {
+  if (!courseType) return false;
+  if (courseType.lesson_format === "INDIVIDUAL") return true;
+  const label = `${courseType.code} ${courseType.name}`.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  return label.includes("eveil musical") || label.includes("initiation") ||
+    (label.includes("collectif") && label.includes("enfant")) ||
+    ["PIANO_GROUP_ONSITE_1H", "PIANO_GROUP_ONLINE_1H"].includes(courseType.code);
+}
+
 type CreateSessionDraft = {
   title: string;
   course_type_id: string;
@@ -4189,6 +4198,15 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                 <input type="checkbox" name="professor_same_as_students" defaultChecked />
                 {isEnglish ? "Use the same subject/message as for students" : "Utiliser le meme sujet/message que pour les eleves"}
               </label>
+
+              {confirmAction === "delete" && isProtectedCoreLesson(courseTypeById.get(selectedSession.course_type_id)) ? (
+                <label className="checkline span-3">
+                  <input type="checkbox" name="protected_deletion_confirmed" required />
+                  {isEnglish
+                    ? "Second confirmation: I understand that this protected lesson will be permanently deleted."
+                    : "Seconde confirmation : je comprends que ce cours protégé sera supprimé définitivement."}
+                </label>
+              ) : null}
 
               <label>
                 {isEnglish ? "Teacher subject (if different)" : "Sujet professeur (si message distinct)"}

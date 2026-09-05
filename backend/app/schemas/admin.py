@@ -2784,6 +2784,7 @@ class AdminSessionCancelOperationRequest(BaseModel):
 
 
 class AdminSessionDeleteOperationRequest(BaseModel):
+    protected_deletion_confirmed: bool = False
     notifications: AdminSessionOperationNotificationRequest | None = None
 
 

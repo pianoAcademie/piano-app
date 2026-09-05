@@ -3947,11 +3947,12 @@ export async function deleteAdminSessionAction(formData: FormData): Promise<void
   const professor_subject = optionalField(formData, "professor_subject");
   const professor_message = optionalField(formData, "professor_message");
   const professor_format = String(formData.get("professor_format") ?? "TEXT").trim().toUpperCase() === "HTML" ? "HTML" : "TEXT";
+  const protected_deletion_confirmed = checkboxField(formData, "protected_deletion_confirmed");
   if (!session_id) {
     redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.invalid_session")));
   }
 
-  const payload: Record<string, unknown> = {};
+  const payload: Record<string, unknown> = { protected_deletion_confirmed };
   if (notify_students || notify_professor) {
     payload.notifications = {
       notify_students,

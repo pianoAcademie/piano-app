@@ -30,6 +30,11 @@ def test_slot_rule_can_be_explicitly_disabled() -> None:
 
 def test_slot_custom_rule_takes_priority_over_activity() -> None:
     db = MagicMock()
+    db.scalar.return_value = SimpleNamespace(
+        code="ADULT_GROUP",
+        name="Cours collectifs ado/adultes",
+        lesson_format="GROUP",
+    )
     slot = SimpleNamespace(
         auto_cancel_rule_enabled_override=True,
         auto_cancel_if_booked_less_than_override=4,
@@ -37,7 +42,22 @@ def test_slot_custom_rule_takes_priority_over_activity() -> None:
     )
 
     assert _effective_auto_cancel_threshold(db, session_obj=slot) == 4
-    db.scalar.assert_not_called()
+
+
+def test_protected_core_lesson_cannot_be_auto_cancelled_even_with_slot_override() -> None:
+    db = MagicMock()
+    db.scalar.return_value = SimpleNamespace(
+        code="PIANO_GROUP_ONSITE_1H",
+        name="Cours de piano collectif en presentiel (1h)",
+        lesson_format="GROUP",
+    )
+    slot = SimpleNamespace(
+        auto_cancel_rule_enabled_override=True,
+        auto_cancel_if_booked_less_than_override=4,
+        course_type_id="activity-id",
+    )
+
+    assert _effective_auto_cancel_threshold(db, session_obj=slot) is None
 
 
 def test_slot_inherits_enabled_activity_rule() -> None:

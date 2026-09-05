@@ -88,6 +88,7 @@ from app.services.payment_receipts import (
 )
 from app.services.reminders import ensure_booking_reminder, skip_pending_reminders_for_booking
 from app.services.session_automation import restore_cancelled_booking_credit
+from app.services.session_protection import is_core_lesson_course_type
 from app.services.session_teachers import (
     assigned_professor_ids_for_session,
     effective_professor_ids_for_session,
@@ -7280,6 +7281,15 @@ def delete_session_operation(
     _validate_operation_notifications(payload.notifications)
 
     targets = _target_sessions_for_scope(db, session_obj=session_obj, apply_scope=apply_scope)
+
+    course_types = db.scalars(
+        select(CourseType).where(CourseType.id.in_({target.course_type_id for target in targets}))
+    ).all()
+    if any(is_core_lesson_course_type(course_type) for course_type in course_types) and not payload.protected_deletion_confirmed:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A second confirmation is required to delete this protected lesson",
+        )
     now = _utcnow()
     target_ids = [target.id for target in targets]
     student_emails = _session_student_emails(db, session_ids=target_ids)
@@ -7334,6 +7344,15 @@ def delete_session(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
 
     targets = _target_sessions_for_scope(db, session_obj=session_obj, apply_scope=apply_scope)
+
+    course_types = db.scalars(
+        select(CourseType).where(CourseType.id.in_({target.course_type_id for target in targets}))
+    ).all()
+    if any(is_core_lesson_course_type(course_type) for course_type in course_types):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Protected lessons must be deleted through the double-confirmation operation",
+        )
 
     for target in targets:
         if _any_booking_count_by_session(db, target.id) > 0:
