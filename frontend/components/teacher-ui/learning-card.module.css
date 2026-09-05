@@ -1,0 +1,23 @@
+.card { border: 1px solid #dfd5c3; border-radius: 14px; padding: 14px; margin-block: 12px; background: #fffcf7; min-width: 0; overflow-wrap: anywhere; }
+.header, .links { display: flex; justify-content: space-between; gap: 8px; align-items: center; flex-wrap: wrap; }
+.card button, .card select { min-height: 48px; font-size: 16px; border-radius: 10px; }
+.card button { padding: 10px 12px; white-space: normal; cursor: pointer; }
+.card button:disabled { opacity: .55; cursor: wait; }
+.card button:focus-visible, .card select:focus-visible, .card input:focus-visible { outline: 3px solid #245eb5; outline-offset: 2px; }
+.current { margin: 8px 0; line-height: 1.6; }
+.actions { display: grid; gap: 8px; margin-block: 12px; }
+.card .primary { background: #804714; color: white; border: 1px solid #804714; font-weight: 700; }
+.editor { border: 0; padding: 0; margin: 12px 0 0; min-width: 0; display: grid; gap: 12px; }
+.editor legend { font-weight: 700; margin-bottom: 12px; }
+.editor label { display: grid; gap: 6px; }
+.editor select { width: 100%; max-width: 100%; min-width: 0; }
+.help { font-size: 14px; color: #594d3c; line-height: 1.5; margin: 4px 0; }
+.pieces { max-height: 45dvh; overflow-y: auto; overscroll-behavior: contain; border: 1px solid #ddd; border-radius: 10px; }
+.piece { border-bottom: 1px solid #ddd; padding: 8px; }
+.piece label { display: flex; align-items: center; gap: 10px; min-height: 48px; cursor: pointer; }
+.piece input { width: 24px; height: 24px; flex-shrink: 0; accent-color: #316c42; }
+.piece button { font-size: 14px; margin-left: 34px; }
+.notice { color: #205d35; font-weight: 600; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.error { background: #ffe4df; color: #86291d; padding: 12px; border-radius: 8px; }
+.history { font-size: 14px; border-top: 1px solid #ddd; margin-top: 12px; padding-top: 12px; }
+@media (min-width: 520px) { .actions { grid-template-columns: 1fr 1fr; } .piece { display: flex; justify-content: space-between; align-items: center; gap: 8px; } .piece button { margin-left: 0; flex-shrink: 0; } }

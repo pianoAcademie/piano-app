@@ -14,9 +14,96 @@ from app.models.product_catalog import CatalogProduct, ProductCategory
 from app.models.repertoire import SheetMusicPiece, StudentSheetMusic, StudentSheetMusicEvent
 from app.models.user import User, UserRole
 from app.services.repertoire_progression import start_next_partition_after_completion
+from app.models.learning_progress import StudentLearningProgress, StudentLearningEvent
+from app.models.catalog import CourseSessionProfessor
+from app.services.learning_progress import learning_snapshot, apply_learning_change
+from typing import Literal
 
 router = APIRouter()
 STATUSES = {"STANDBY", "TO_DELIVER", "DELIVERED", "IN_PROGRESS", "COMPLETED"}
+
+
+class LearningChange(BaseModel):
+    revision: int = Field(ge=0)
+    session_id: UUID
+    action: Literal["CORRECT", "HISTORY", "CONTINUE", "COMPLETE_PIECE", "COMPLETE_BOOK", "NEXT_BOOK", "UNDO"]
+    product_id: UUID | None = None
+    piece_id: UUID | None = None
+    statuses: dict[UUID, Literal["UNKNOWN", "REVIEW", "COMPLETED"]] | None = None
+    undo_event_id: UUID | None = None
+    note: str | None = Field(default=None, max_length=4000)
+
+
+def _require_learning_access(db, actor, student_id, session_id):
+    professor = db.scalar(select(Professor).where(func.lower(Professor.email) == actor.email.lower()))
+    if professor is None:
+        raise HTTPException(403, "Accès refusé")
+    permitted = db.scalar(select(Booking.id).join(CourseSession, CourseSession.id == Booking.session_id).where(
+        Booking.user_id == student_id, CourseSession.id == session_id,
+        or_(CourseSession.professor_id == professor.id, CourseSession.substitute_teacher_id == professor.id,
+            CourseSession.id.in_(select(CourseSessionProfessor.session_id).where(CourseSessionProfessor.professor_id == professor.id))),
+    ).limit(1))
+    if permitted is None:
+        raise HTTPException(403, "Cet élève n’est pas inscrit à votre cours.")
+
+
+@router.get("/professors/me/students/{student_id}/learning")
+def professor_learning(student_id: UUID, session_id: UUID, db: Session = Depends(get_db),
+                       actor: User = Depends(require_roles(UserRole.PROF))):
+    _require_learning_access(db, actor, student_id, session_id)
+    snapshot = learning_snapshot(db, student_id)
+    events = db.scalars(select(StudentLearningEvent).where(StudentLearningEvent.student_id == student_id)
+        .order_by(StudentLearningEvent.revision.desc()).limit(30)).all()
+    actors = {person.id: " ".join(filter(None, [person.first_name, person.last_name])) or "Professeur"
+              for person in db.scalars(select(User).where(User.id.in_({event.actor_id for event in events}))).all()} if events else {}
+    snapshot["history"] = [{"id": str(event.id), "action": event.action, "at": event.created_at.isoformat(),
+        "actor_name": actors.get(event.actor_id, "Professeur"),
+        "product_id": event.before_state.get("product_id") if event.action == "COMPLETE_PIECE" else event.after_state.get("product_id"),
+        "piece_id": event.before_state.get("books", {}).get(event.before_state.get("product_id"), {}).get("current_piece_id") if event.action == "COMPLETE_PIECE" else event.after_state.get("books", {}).get(event.after_state.get("product_id"), {}).get("current_piece_id"),
+        "session_id": str(event.session_id), "actor_id": str(event.actor_id)} for event in events]
+    return snapshot
+
+
+@router.patch("/professors/me/students/{student_id}/learning")
+def professor_change_learning(student_id: UUID, payload: LearningChange, db: Session = Depends(get_db),
+                              actor: User = Depends(require_roles(UserRole.PROF))):
+    _require_learning_access(db, actor, student_id, payload.session_id)
+    # Also serializes the first write, before a learning row exists.
+    db.scalar(select(User).where(User.id == student_id).with_for_update())
+    snapshot = learning_snapshot(db, student_id)
+    if payload.revision != snapshot["revision"]:
+        raise HTTPException(409, "Le suivi a changé. Rechargez-le avant de modifier.")
+    before = snapshot["state"]
+    if payload.action == "UNDO":
+        event = db.get(StudentLearningEvent, payload.undo_event_id) if payload.undo_event_id else None
+        if (event is None or event.student_id != student_id or event.actor_id != actor.id
+                or event.revision != snapshot["revision"] or event.action == "UNDO"):
+            raise HTTPException(409, "Cette modification ne peut plus être annulée. Rechargez le suivi.")
+        after = event.before_state
+    else:
+        products = _partition_products(db)
+        pieces = _pieces(db, [product.id for product in products])
+        catalog = {str(product.id): [str(piece.id) for piece in pieces.get(product.id, [])] for product in products}
+        after = apply_learning_change(before, action=payload.action,
+            product_id=str(payload.product_id) if payload.product_id else None,
+            piece_id=str(payload.piece_id) if payload.piece_id else None,
+            statuses={str(key): value for key, value in payload.statuses.items()} if payload.statuses is not None else None,
+            catalog=catalog, session_id=payload.session_id)
+        if payload.note is not None and after.get("product_id"):
+            after["books"][after["product_id"]]["note"] = payload.note.strip()
+    row = db.get(StudentLearningProgress, student_id)
+    if row is None:
+        row = StudentLearningProgress(student_id=student_id)
+    row.state = after
+    row.revision = snapshot["revision"] + 1
+    db.add(row)
+    event = StudentLearningEvent(student_id=student_id, actor_id=actor.id, session_id=payload.session_id,
+        action=payload.action, before_state=before, after_state=after, revision=row.revision)
+    db.add(event)
+    db.flush()
+    response = {"revision": row.revision, "state": after, "undo_event_id": str(event.id) if payload.action != "UNDO" else None}
+    db.commit()
+    return response
 
 
 class PieceIn(BaseModel):

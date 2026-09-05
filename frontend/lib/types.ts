@@ -1543,6 +1543,7 @@ export type ProfessorMeOut = {
 };
 
 export type ProfessorSessionStudentOut = {
+  learning_progress?: import("./learning-progress").LearningSnapshot | null;
   booking_id: string;
   user_id: string;
   first_name: string | null;

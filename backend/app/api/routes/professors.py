@@ -1,4 +1,5 @@
 from __future__ import annotations
+from app.services.learning_progress import learning_snapshot
 
 import re
 from datetime import date, datetime, timezone
@@ -352,6 +353,7 @@ def _session_students(
                 is_first_course=is_first_course,
                 internal_note=_professor_visible_booking_note(booking.internal_note),
                 repertoire=repertoire,
+                learning_progress=learning_snapshot(db, user.id),
             )
         )
     return out

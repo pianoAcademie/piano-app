@@ -1,4 +1,5 @@
 import Link from "next/link";
+import LearningCard from "../../components/teacher-ui/learning-card";
 import { redirect } from "next/navigation";
 
 import {
@@ -8,8 +9,6 @@ import {
   professorMarkSessionAbsentAction,
   professorSendSessionMessageAction,
   professorUpdateAttendanceAction,
-  professorAddRepertoireAction,
-  professorUpdateRepertoireAction,
   professorUpdateBookingInternalNoteAction,
   professorUpdateSessionInternalNoteAction,
 } from "../../lib/actions";
@@ -28,13 +27,11 @@ import BottomTabs from "../../components/teacher-ui/bottom-tabs";
 import ProfessorHelpAssistant from "../../components/teacher-ui/help-assistant";
 import ProfessorMobilePushRegistration from "../../components/teacher-ui/mobile-push-registration";
 import PresenceHeartbeat from "../../components/presence-heartbeat";
-import RepertoireAssignmentFields from "../../components/repertoire-assignment-fields";
 import ListRow from "../../components/teacher-ui/list-row";
 import ProfessorLocalIntakeRequestModal from "../../components/professor-local-intake-request-modal";
 import PageHeaderMobile from "../../components/teacher-ui/page-header-mobile";
 import PortalBrandLockup from "../../components/portal-brand-lockup";
 import SectionAccordion from "../../components/teacher-ui/section-accordion";
-import RepertoireSaveButton from "../../components/teacher-ui/repertoire-save-button";
 import StatCard from "../../components/teacher-ui/stat-card";
 import StatChip from "../../components/teacher-ui/stat-chip";
 import StickyActionBar from "../../components/teacher-ui/sticky-action-bar";
@@ -780,9 +777,6 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
     : false;
   const selectedMessageId = readParam(searchParams, "message_id");
   const sentMessageId = readParam(searchParams, "sent_message_id");
-  const repertoireFocusId = readParam(searchParams, "repertoire_focus");
-  const repertoireSavedAt = readParam(searchParams, "repertoire_saved_at");
-  const repertoireSavedId = repertoireSavedAt ? repertoireFocusId : "";
 
   const pendingRows = pendingResult.ok ? pendingResult.data : [];
   const pendingCount = pendingRows.reduce((sum, row) => sum + row.pending_students_count, 0);
@@ -1855,126 +1849,12 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                           </details>
                         ) : null}
 
-                        {canTakeAttendanceForSelectedSession && student.repertoire.length > 0 ? (
-                          <details
-                            className="teacher-student-note"
-                            open={student.is_first_course || student.repertoire.some((assignment) => !assignment.current_piece_id || assignment.pieces.length === 0)}
-                          >
-                            <summary>
-                              <span>Progression musicale</span>
-                              <span className="status-pill status-scheduled">{student.repertoire[0].title} · Modifier</span>
-                            </summary>
-                            {student.repertoire.map((assignment) => (
-                              <form
-                                key={assignment.id}
-                                action={professorUpdateRepertoireAction}
-                                className={`teacher-student-note-form teacher-repertoire-form${repertoireSavedId === assignment.id ? " is-saved" : ""}`}
-                              >
-                                <input type="hidden" name="student_id" value={student.user_id} />
-                                <input type="hidden" name="assignment_id" value={assignment.id} />
-                                <input
-                                  type="hidden"
-                                  name="return_to"
-                                  value={buildProfHref({
-                                    tab: "planning",
-                                    agendaView,
-                                    agendaDate,
-                                    sessionId: selectedSession.id,
-                                    attendanceFilter,
-                                    planningScope,
-                                    repertoireFocus: assignment.id,
-                                  })}
-                                />
-                                <div>
-                                  <small className="muted">
-                                    {assignment.status === "IN_PROGRESS"
-                                      ? "Partition actuelle"
-                                      : assignment.status === "STANDBY"
-                                        ? "Prochaine partition"
-                                        : assignment.status === "TO_DELIVER"
-                                          ? "Partition à remettre"
-                                          : "Partition suivie"}
-                                  </small>
-                                  <strong>{assignment.title}</strong>
-                                </div>
-                                <RepertoireAssignmentFields
-                                  catalog={repertoireCatalog}
-                                  initialProductId={assignment.product_id}
-                                  initialPieceId={assignment.current_piece_id}
-                                />
-                                <small className="muted">Une correction est enregistrée dans l’historique, sans modifier le devis ni la facturation.</small>
-                                <label>
-                                  État
-                                  <select name="status" defaultValue={assignment.status}>
-                                    <option value="STANDBY">En attente</option>
-                                    <option value="TO_DELIVER">À remettre</option>
-                                    <option value="DELIVERED">Remise</option>
-                                    <option value="IN_PROGRESS">En cours</option>
-                                    <option value="COMPLETED">Terminée</option>
-                                  </select>
-                                </label>
-                                <label>
-                                  Note pédagogique
-                                  <textarea name="internal_note" rows={2} defaultValue={assignment.internal_note ?? ""} />
-                                </label>
-                                <RepertoireSaveButton saved={repertoireSavedId === assignment.id} />
-                                {repertoireSavedId === assignment.id ? (
-                                  <div className="teacher-repertoire-saved" role="status" aria-live="polite">
-                                    <strong>✓ Progression enregistrée{repertoireSavedAt ? ` à ${formatTime(repertoireSavedAt, language)}` : ""}</strong>
-                                    <span>{assignment.title}</span>
-                                    <span>
-                                      {assignment.pieces.find((piece) => piece.id === assignment.current_piece_id)?.title
-                                        ? `Morceau : ${assignment.pieces.find((piece) => piece.id === assignment.current_piece_id)?.title}`
-                                        : "Morceau : à définir"}
-                                    </span>
-                                  </div>
-                                ) : null}
-                                {repertoireFocusId === assignment.id && errorMessage ? (
-                                  <div className="teacher-repertoire-save-error" role="alert">{errorMessage}</div>
-                                ) : null}
-                                {assignment.status === "IN_PROGRESS" ? (
-                                  <small className="muted">En la passant à « Terminée », le premier morceau de la prochaine partition sera préparé. Sa remise reste à confirmer si l’élève ne l’a pas encore reçue.</small>
-                                ) : null}
-                              </form>
-                            ))}
-                          </details>
-                        ) : canTakeAttendanceForSelectedSession ? (
-                          <details className="teacher-student-note" open>
-                            <summary>
-                              <span>Progression musicale</span>
-                              <span className="status-pill status-warn">Ajouter une partition</span>
-                            </summary>
-                            <form action={professorAddRepertoireAction} className="teacher-student-note-form">
-                              <input type="hidden" name="student_id" value={student.user_id} />
-                              <input
-                                type="hidden"
-                                name="return_to"
-                                value={buildProfHref({
-                                  tab: "planning",
-                                  agendaView,
-                                  agendaDate,
-                                  sessionId: selectedSession.id,
-                                  attendanceFilter,
-                                  planningScope,
-                                })}
-                              />
-                              <RepertoireAssignmentFields
-                                catalog={repertoireCatalog}
-                                initialProductId={null}
-                                initialPieceId={null}
-                              />
-                              <label>
-                                État
-                                <select name="status" defaultValue="IN_PROGRESS">
-                                  <option value="IN_PROGRESS">En cours</option>
-                                  <option value="TO_DELIVER">À remettre</option>
-                                  <option value="STANDBY">En attente</option>
-                                </select>
-                              </label>
-                              <small className="muted">Cet ajout concerne uniquement le suivi pédagogique et ne modifie ni le devis ni la facturation.</small>
-                              <button type="submit" className="ghost">Ajouter la partition</button>
-                            </form>
-                          </details>
+                        {canTakeAttendanceForSelectedSession && student.learning_progress ? (
+                          <>
+                            <LearningCard studentId={student.user_id} studentName={student.display_name}
+                              sessionId={selectedSession.id} catalog={repertoireCatalog} initial={student.learning_progress} />
+                            <Link href="/prof/partitions">Remise des partitions →</Link>
+                          </>
                         ) : null}
                       </article>
                     ))}

@@ -322,3 +322,4 @@ __all__ = [
     "UserRole",
     "VatRule",
 ]
+from app.models.learning_progress import StudentLearningProgress, StudentLearningEvent

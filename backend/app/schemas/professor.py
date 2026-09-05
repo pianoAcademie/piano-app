@@ -42,6 +42,7 @@ class ProfessorSessionStudentOut(BaseModel):
     is_first_course: bool
     internal_note: str | None = None
     repertoire: list[dict[str, Any]] = Field(default_factory=list)
+    learning_progress: dict[str, Any] | None = None
 
 
 class ProfessorSessionOut(BaseModel):
