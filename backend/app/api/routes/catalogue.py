@@ -6,7 +6,7 @@ from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from app.api.deps import get_db
@@ -16,6 +16,8 @@ from app.models.catalog import (
     CourseSession,
     CourseType,
     CreditType,
+    DeliveryMode,
+    LessonFormat,
     Location,
     PlanningCourseType,
     Professor,
@@ -43,6 +45,11 @@ from app.services.pricing_catalog import resolve_catalog_activity_price
 
 router = APIRouter()
 ACCOUNT_DEFAULT_CURRENCY_KEY = "config_account_default_currency"
+PUBLIC_CHILD_TRIAL_TEACHER_FIRST_NAMES = ("ariane", "neda", "rosana", "rym")
+LEGACY_PUBLIC_CHILD_TRIAL_COURSE_TYPE_CODES = (
+    "ACT_COURS_D_ESSAI_COLLECTIF_2DE0E7",
+    "ACT_COURS_D_ESSAI_INDIVIDUEL_22BA9D",
+)
 
 
 def _account_default_currency(db: Session) -> str:
@@ -57,6 +64,17 @@ def _session_accepts_participant_kind(session: CourseSession, participant_kind: 
     if participant_kind == ClientKind.CHILD:
         return bool(getattr(session, "child_bookings_enabled", True))
     return True
+
+
+def _session_is_public_child_trial(session: CourseSession) -> bool:
+    """Fail closed: public trial calendars only expose explicitly published slots."""
+
+    return bool(
+        getattr(session, "public_child_trial_listing_enabled", False)
+        and getattr(session, "child_bookings_enabled", False)
+        and getattr(session, "child_trial_bookings_enabled", False)
+        and getattr(session, "allow_online_booking", False)
+    )
 
 
 def _participant_seats_remaining(
@@ -171,6 +189,9 @@ def _serialize_public_session(
         adult_booked_count=int(adult_booked_count or 0),
         child_trial_bookings_enabled=bool(getattr(session, "child_trial_bookings_enabled", True)),
         adult_trial_bookings_enabled=bool(getattr(session, "adult_trial_bookings_enabled", False)),
+        public_child_trial_listing_enabled=bool(
+            getattr(session, "public_child_trial_listing_enabled", False)
+        ),
         visibility_scopes=visibility_scopes,
         booking_scopes=booking_scopes,
         visibility_scope=visibility_scope,
@@ -189,6 +210,7 @@ def _serialize_public_session(
             id=course_type.id,
             code=course_type.code,
             name=course_type.name,
+            trial_course_price_ttc=course_type.trial_course_price_ttc,
             supports_student_time_overrides=bool(course_type.supports_student_time_overrides),
         ),
         location=SessionLocationOut(
@@ -309,6 +331,7 @@ def list_sessions(
     course_type_id: UUID | None = None,
     location_id: UUID | None = None,
     participant_kind: ClientKind | None = None,
+    public_child_trials_only: bool = False,
     from_: datetime | None = Query(default=None, alias="from"),
     to: datetime | None = None,
     timezone: str = "UTC",
@@ -379,6 +402,39 @@ def list_sessions(
         stmt = stmt.where(CourseSession.adult_bookings_enabled.is_(True))
     elif participant_kind == ClientKind.CHILD:
         stmt = stmt.where(CourseSession.child_bookings_enabled.is_(True))
+    if public_child_trials_only:
+        if participant_kind not in (None, ClientKind.CHILD):
+            return []
+        stmt = stmt.where(
+            CourseSession.public_child_trial_listing_enabled.is_(True),
+            CourseSession.child_bookings_enabled.is_(True),
+            CourseSession.child_trial_bookings_enabled.is_(True),
+            CourseSession.allow_online_booking.is_(True),
+            or_(
+                and_(
+                    CourseType.trial_course_enabled.is_(True),
+                    CourseType.trial_course_price_ttc.is_not(None),
+                ),
+                CourseSession.external_booking_price_ttc.is_not(None),
+            ),
+            or_(
+                CourseType.code.in_(LEGACY_PUBLIC_CHILD_TRIAL_COURSE_TYPE_CODES),
+                and_(
+                    CourseType.mode == DeliveryMode.ONSITE,
+                    CourseType.lesson_format == LessonFormat.GROUP,
+                    or_(
+                        and_(
+                            substitute_professor.id.is_not(None),
+                            func.lower(substitute_professor.first_name).in_(PUBLIC_CHILD_TRIAL_TEACHER_FIRST_NAMES),
+                        ),
+                        and_(
+                            substitute_professor.id.is_(None),
+                            func.lower(Professor.first_name).in_(PUBLIC_CHILD_TRIAL_TEACHER_FIRST_NAMES),
+                        ),
+                    ),
+                ),
+            ),
+        )
     if from_ is not None:
         stmt = stmt.where(CourseSession.start_at_utc >= from_)
     if to is not None:
@@ -391,6 +447,8 @@ def list_sessions(
 
     result: list[SessionOut] = []
     for session, course_type, location, professor, substitute, booked_count, adult_booked_count in rows:
+        if public_child_trials_only and not _session_is_public_child_trial(session):
+            continue
         serialized = _serialize_public_session(
             db=db,
             session=session,

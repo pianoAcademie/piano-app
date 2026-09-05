@@ -184,6 +184,7 @@ export type SessionOut = {
   adult_booked_count: number;
   child_trial_bookings_enabled: boolean;
   adult_trial_bookings_enabled: boolean;
+  public_child_trial_listing_enabled: boolean;
   visibility_scopes: SessionAudienceScope[];
   booking_scopes: SessionAudienceScope[];
   visibility_scope: SessionAudienceScope;
@@ -202,6 +203,7 @@ export type SessionOut = {
     id: string;
     code: string;
     name: string;
+    trial_course_price_ttc: string | null;
   };
   location: {
     id: string;
@@ -1934,6 +1936,7 @@ export type AdminSessionOut = {
   adult_capacity_max: number | null;
   child_trial_bookings_enabled: boolean;
   adult_trial_bookings_enabled: boolean;
+  public_child_trial_listing_enabled: boolean;
   status: "SCHEDULED" | "CANCELLED" | "COMPLETED" | string;
   auto_cancel_deadline_utc: string;
   auto_cancel_rule_enabled_override: boolean | null;

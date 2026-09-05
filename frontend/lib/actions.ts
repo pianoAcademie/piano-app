@@ -559,6 +559,7 @@ type CreateSessionDraftPayload = {
   adult_capacity_max: string;
   child_trial_bookings_enabled: "1" | "0";
   adult_trial_bookings_enabled: "1" | "0";
+  public_child_trial_listing_enabled: "1" | "0";
   is_all_day: "1" | "0";
   zoom_link: string;
   recurrence_mode: string;
@@ -3361,6 +3362,7 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
   const adult_capacity_max = adultCapacityRaw ? parsePositiveInt(adultCapacityRaw) : null;
   const child_trial_bookings_enabled = checkboxField(formData, "child_trial_bookings_enabled");
   const adult_trial_bookings_enabled = checkboxField(formData, "adult_trial_bookings_enabled");
+  const public_child_trial_listing_enabled = checkboxField(formData, "public_child_trial_listing_enabled");
 
   const createDraftPayload: CreateSessionDraftPayload = {
     title: clampDraftValue(title, 255),
@@ -3379,6 +3381,7 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
     adult_capacity_max: adultCapacityRaw,
     child_trial_bookings_enabled: child_trial_bookings_enabled ? "1" : "0",
     adult_trial_bookings_enabled: adult_trial_bookings_enabled ? "1" : "0",
+    public_child_trial_listing_enabled: public_child_trial_listing_enabled ? "1" : "0",
     is_all_day: is_all_day ? "1" : "0",
     zoom_link: clampDraftValue(zoom_link ?? "", 1200),
     recurrence_mode: recurrence_mode || "NONE",
@@ -3459,6 +3462,8 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
     adult_capacity_max: adult_bookings_enabled ? adult_capacity_max : null,
     child_trial_bookings_enabled: child_bookings_enabled && child_trial_bookings_enabled,
     adult_trial_bookings_enabled: adult_bookings_enabled && adult_trial_bookings_enabled,
+    public_child_trial_listing_enabled:
+      child_bookings_enabled && child_trial_bookings_enabled && public_child_trial_listing_enabled,
     visibility_scopes,
     booking_scopes,
     is_private,
@@ -3586,6 +3591,7 @@ export async function updateAdminSessionAction(formData: FormData): Promise<void
   const adult_capacity_max = adultCapacityRaw ? parsePositiveInt(adultCapacityRaw) : null;
   const child_trial_bookings_enabled = checkboxField(formData, "child_trial_bookings_enabled");
   const adult_trial_bookings_enabled = checkboxField(formData, "adult_trial_bookings_enabled");
+  const public_child_trial_listing_enabled = checkboxField(formData, "public_child_trial_listing_enabled");
   const autoCancelRuleMode = String(formData.get("auto_cancel_rule_mode") ?? "INHERIT").trim().toUpperCase();
   const autoCancelThresholdRaw = String(formData.get("auto_cancel_if_booked_less_than_override") ?? "").trim();
   const autoCancelHoursRaw = String(formData.get("auto_cancel_hours_before_start_override") ?? "").trim();
@@ -3665,6 +3671,8 @@ export async function updateAdminSessionAction(formData: FormData): Promise<void
     adult_capacity_max: adult_bookings_enabled ? adult_capacity_max : null,
     child_trial_bookings_enabled: child_bookings_enabled && child_trial_bookings_enabled,
     adult_trial_bookings_enabled: adult_bookings_enabled && adult_trial_bookings_enabled,
+    public_child_trial_listing_enabled:
+      child_bookings_enabled && child_trial_bookings_enabled && public_child_trial_listing_enabled,
     visibility_scopes,
     booking_scopes,
     is_private,

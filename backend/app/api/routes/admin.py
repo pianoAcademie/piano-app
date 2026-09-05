@@ -523,6 +523,9 @@ def _to_admin_session_out(
         adult_capacity_max=getattr(session_obj, "adult_capacity_max", None),
         child_trial_bookings_enabled=bool(getattr(session_obj, "child_trial_bookings_enabled", True)),
         adult_trial_bookings_enabled=bool(getattr(session_obj, "adult_trial_bookings_enabled", False)),
+        public_child_trial_listing_enabled=bool(
+            getattr(session_obj, "public_child_trial_listing_enabled", False)
+        ),
         status=session_obj.status,
         auto_cancel_deadline_utc=session_obj.auto_cancel_deadline_utc,
         auto_cancel_rule_enabled_override=session_obj.auto_cancel_rule_enabled_override,
@@ -4982,6 +4985,11 @@ def create_session(
                 adult_trial_bookings_enabled=(
                     payload.adult_trial_bookings_enabled and adult_bookings_enabled
                 ),
+                public_child_trial_listing_enabled=(
+                    payload.public_child_trial_listing_enabled
+                    and payload.child_trial_bookings_enabled
+                    and child_bookings_enabled
+                ),
                 status=SessionStatus.SCHEDULED,
                 auto_cancel_deadline_utc=deadline_at,
                 auto_cancel_rule_enabled_override=payload.auto_cancel_rule_enabled_override,
@@ -6531,6 +6539,16 @@ def update_session(
             bool(updates.get("adult_trial_bookings_enabled", target.adult_trial_bookings_enabled))
             and next_adult_bookings_enabled
         )
+        target.public_child_trial_listing_enabled = (
+            bool(
+                updates.get(
+                    "public_child_trial_listing_enabled",
+                    target.public_child_trial_listing_enabled,
+                )
+            )
+            and target.child_trial_bookings_enabled
+            and next_child_bookings_enabled
+        )
         if "status" in updates:
             target.status = updates["status"]
         if "cancel_reason" in updates:
@@ -6789,6 +6807,7 @@ def update_session(
                     adult_capacity_max=session_obj.adult_capacity_max,
                     child_trial_bookings_enabled=session_obj.child_trial_bookings_enabled,
                     adult_trial_bookings_enabled=session_obj.adult_trial_bookings_enabled,
+                    public_child_trial_listing_enabled=session_obj.public_child_trial_listing_enabled,
                     status=session_obj.status,
                     auto_cancel_deadline_utc=deadline_at,
                     auto_cancel_rule_enabled_override=session_obj.auto_cancel_rule_enabled_override,
@@ -6868,6 +6887,7 @@ def update_session(
                     adult_capacity_max=session_obj.adult_capacity_max,
                     child_trial_bookings_enabled=session_obj.child_trial_bookings_enabled,
                     adult_trial_bookings_enabled=session_obj.adult_trial_bookings_enabled,
+                    public_child_trial_listing_enabled=session_obj.public_child_trial_listing_enabled,
                     status=session_obj.status,
                     auto_cancel_deadline_utc=deadline_at,
                     auto_cancel_rule_enabled_override=session_obj.auto_cancel_rule_enabled_override,
@@ -7059,6 +7079,7 @@ def duplicate_session_operation(
                 adult_capacity_max=target.adult_capacity_max,
                 child_trial_bookings_enabled=target.child_trial_bookings_enabled,
                 adult_trial_bookings_enabled=target.adult_trial_bookings_enabled,
+                public_child_trial_listing_enabled=target.public_child_trial_listing_enabled,
                 status=SessionStatus.SCHEDULED,
                 auto_cancel_deadline_utc=duplicate_deadline,
                 auto_cancel_rule_enabled_override=target.auto_cancel_rule_enabled_override,

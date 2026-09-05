@@ -405,6 +405,11 @@ class CourseSession(Base):
     adult_capacity_max: Mapped[int | None] = mapped_column(Integer, nullable=True)
     child_trial_bookings_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     adult_trial_bookings_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    public_child_trial_listing_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=text("false"),
+    )
     status: Mapped[SessionStatus] = mapped_column(
         Enum(
             SessionStatus,

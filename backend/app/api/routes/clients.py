@@ -2830,6 +2830,9 @@ def list_client_visible_sessions(
                 adult_booked_count=int(adult_booked_count or 0),
                 child_trial_bookings_enabled=bool(getattr(session, "child_trial_bookings_enabled", True)),
                 adult_trial_bookings_enabled=bool(getattr(session, "adult_trial_bookings_enabled", True)),
+                public_child_trial_listing_enabled=bool(
+                    getattr(session, "public_child_trial_listing_enabled", False)
+                ),
                 visibility_scopes=visibility_scopes,
                 booking_scopes=booking_scopes,
                 visibility_scope=visibility_scope,
@@ -2848,6 +2851,7 @@ def list_client_visible_sessions(
                     id=course_type.id,
                     code=course_type.code,
                     name=course_type.name,
+                    trial_course_price_ttc=getattr(course_type, "trial_course_price_ttc", None),
                 ),
                 location=SessionLocationOut(
                     id=location.id,

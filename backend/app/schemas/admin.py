@@ -2434,6 +2434,7 @@ class AdminSessionCreateRequest(BaseModel):
     adult_capacity_max: int | None = Field(default=None, ge=1)
     child_trial_bookings_enabled: bool = True
     adult_trial_bookings_enabled: bool = False
+    public_child_trial_listing_enabled: bool = False
     auto_cancel_deadline_utc: datetime | None = None
     auto_cancel_rule_enabled_override: bool | None = None
     auto_cancel_if_booked_less_than_override: int | None = Field(default=None, ge=1)
@@ -2473,6 +2474,7 @@ class AdminSessionUpdateRequest(BaseModel):
     adult_capacity_max: int | None = Field(default=None, ge=1)
     child_trial_bookings_enabled: bool | None = None
     adult_trial_bookings_enabled: bool | None = None
+    public_child_trial_listing_enabled: bool | None = None
     auto_cancel_deadline_utc: datetime | None = None
     auto_cancel_rule_enabled_override: bool | None = None
     auto_cancel_if_booked_less_than_override: int | None = Field(default=None, ge=1)
@@ -2536,6 +2538,7 @@ class AdminSessionOut(BaseModel):
     adult_capacity_max: int | None
     child_trial_bookings_enabled: bool
     adult_trial_bookings_enabled: bool
+    public_child_trial_listing_enabled: bool
     status: SessionStatus
     auto_cancel_deadline_utc: datetime
     auto_cancel_rule_enabled_override: bool | None

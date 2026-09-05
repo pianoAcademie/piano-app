@@ -51,6 +51,7 @@ class SessionCourseTypeOut(BaseModel):
     id: UUID
     code: str
     name: str
+    trial_course_price_ttc: Decimal | None = None
 
 
 class SessionLocationOut(BaseModel):
@@ -86,6 +87,7 @@ class SessionOut(BaseModel):
     adult_booked_count: int = 0
     child_trial_bookings_enabled: bool = True
     adult_trial_bookings_enabled: bool = False
+    public_child_trial_listing_enabled: bool = False
     visibility_scopes: list[SessionAudienceScope]
     booking_scopes: list[SessionAudienceScope]
     visibility_scope: SessionAudienceScope

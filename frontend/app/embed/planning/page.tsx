@@ -58,6 +58,11 @@ function readParticipantKind(params: SearchParams | undefined): PlanningParticip
   return value === "ADULT" || value === "CHILD" ? value : null;
 }
 
+function readBooleanParam(params: SearchParams | undefined, key: string): boolean {
+  const value = readParam(params, key).trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes";
+}
+
 function appendCourseTypeParams(params: URLSearchParams, courseTypeIds: string[]): void {
   for (const courseTypeId of courseTypeIds) {
     params.append("course_type_id", courseTypeId);
@@ -193,6 +198,14 @@ function publicPlanningRateLabel(
   participantKind: PlanningParticipantKind | null,
   language: UiLanguage,
 ): string {
+  if (
+    participantKind === "CHILD"
+    && session.public_child_trial_listing_enabled
+    && session.child_trial_bookings_enabled
+    && session.course_type.trial_course_price_ttc !== null
+  ) {
+    return formatMoney(session.course_type.trial_course_price_ttc, session.external_booking_currency, language);
+  }
   if (participantKind && session.external_booking_price_ttc === null) {
     return uiText(language, "embed_planning.formula_access_rate");
   }
@@ -226,6 +239,7 @@ function resolveLocationColorClass(locationName: string | null | undefined): str
 function buildPlanningHref({
   courseTypeIds,
   participantKind,
+  publicChildTrialsOnly,
   locationId,
   locationGroup,
   date,
@@ -234,6 +248,7 @@ function buildPlanningHref({
 }: {
   courseTypeIds: string[];
   participantKind?: PlanningParticipantKind | null;
+  publicChildTrialsOnly?: boolean;
   locationId?: string | null;
   locationGroup?: string | null;
   date: string;
@@ -244,6 +259,9 @@ function buildPlanningHref({
   appendCourseTypeParams(params, courseTypeIds);
   if (participantKind) {
     params.set("participant_kind", participantKind);
+  }
+  if (publicChildTrialsOnly) {
+    params.set("public_child_trials_only", "1");
   }
   if (locationGroup) {
     params.set("location_group", locationGroup);
@@ -321,6 +339,7 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
   const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const courseTypeIds = readCourseTypeIds(searchParams);
   const participantKind = readParticipantKind(searchParams);
+  const requestedPublicChildTrialsOnly = readBooleanParam(searchParams, "public_child_trials_only");
   const locationId = readParam(searchParams, "location_id").trim();
   const locationGroup = readParam(searchParams, "location_group").trim().toLowerCase();
   const selectedSessionId = readParam(searchParams, "session_id").trim();
@@ -381,9 +400,17 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
   }
   const selectedCourseTypes = courseTypeIds.map((courseTypeId) => courseTypeById.get(courseTypeId)).filter((courseType): courseType is CourseTypeOut => Boolean(courseType));
   const selectedCourseTypeIds = selectedCourseTypes.map((courseType) => courseType.id);
+  const legacyChildTrialCalendar = selectedCourseTypes.some((courseType) => {
+    const normalizedName = normalizeLocationName(courseType.name);
+    return normalizedName.includes("cours d essai collectif enfants");
+  });
+  const publicChildTrialsOnly = requestedPublicChildTrialsOnly || legacyChildTrialCalendar;
+  const effectiveParticipantKind: PlanningParticipantKind | null = publicChildTrialsOnly ? "CHILD" : participantKind;
   const selectedCourseTypeLabel = participantKind === "ADULT"
     ? t("embed_planning.all_adult_booking_slots")
-    : participantKind === "CHILD"
+    : publicChildTrialsOnly
+      ? (language === "en" ? "Child trial lessons" : "Cours d’essai collectifs enfants")
+      : participantKind === "CHILD"
       ? t("embed_planning.all_child_booking_slots")
       : selectedCourseTypes.map((courseType) => courseType.name).join(" + ");
   const selectedLocation = locations.find((row) => row.id === (usesParisLocationGroup ? selectedParisLocationId : locationId)) ?? null;
@@ -415,13 +442,16 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
       params.set("timezone", timezone);
       params.set("from", from);
       params.set("to", to);
-      if (participantKind) {
-        params.set("participant_kind", participantKind);
+      if (effectiveParticipantKind) {
+        params.set("participant_kind", effectiveParticipantKind);
+      }
+      if (publicChildTrialsOnly) {
+        params.set("public_child_trials_only", "1");
       }
       return backendRequest<SessionOut[]>(`/api/v1/sessions?${params.toString()}`);
     };
     const results = await Promise.all(
-      participantKind
+      effectiveParticipantKind
         ? effectiveLocationIds.map((currentLocationId) => loadSessions(currentLocationId))
         : effectiveLocationIds.flatMap((currentLocationId) =>
             selectedCourseTypeIds.map((courseTypeId) => loadSessions(currentLocationId, courseTypeId)),
@@ -437,7 +467,12 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
       }
     }
     return [...sessionById.values()]
-      .filter((session) => isPublicPlanningSession(session, participantKind))
+      .filter((session) => isPublicPlanningSession(session, effectiveParticipantKind))
+      .filter((session) => !publicChildTrialsOnly || (
+        session.public_child_trial_listing_enabled
+        && session.child_trial_bookings_enabled
+        && session.seats_remaining > 0
+      ))
       .sort(sortPublicPlanningSessions);
   };
 
@@ -504,7 +539,7 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
   const selectedSession = sessions.find((session) => session.id === selectedSessionId) ?? null;
   const selectedSessionTrialOffersResult = selectedSession
     ? await backendRequest<ClientSessionFormulaOptionOut[]>(
-        `/api/v1/public/sessions/${encodeURIComponent(selectedSession.id)}/trial-offers${participantKind ? `?participant_kind=${encodeURIComponent(participantKind)}` : ""}`,
+        `/api/v1/public/sessions/${encodeURIComponent(selectedSession.id)}/trial-offers${effectiveParticipantKind ? `?participant_kind=${encodeURIComponent(effectiveParticipantKind)}` : ""}`,
       )
     : null;
   const selectedSessionTrialOffers =
@@ -517,6 +552,7 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
   const selectedSessionReturnTo = buildPlanningHref({
     courseTypeIds,
     participantKind,
+    publicChildTrialsOnly,
     locationId: usesParisLocationGroup ? selectedParisLocationId : locationId,
     locationGroup: usesParisLocationGroup ? PARIS_LOCATION_GROUP : null,
     date: weekStartKey,
@@ -526,6 +562,7 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
   const previousHref = buildPlanningHref({
     courseTypeIds,
     participantKind,
+    publicChildTrialsOnly,
     locationId: usesParisLocationGroup ? selectedParisLocationId : locationId,
     locationGroup: usesParisLocationGroup ? PARIS_LOCATION_GROUP : null,
     date: utcDateToKey(addUtcDays(weekStart, -7)),
@@ -534,6 +571,7 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
   const nextHref = buildPlanningHref({
     courseTypeIds,
     participantKind,
+    publicChildTrialsOnly,
     locationId: usesParisLocationGroup ? selectedParisLocationId : locationId,
     locationGroup: usesParisLocationGroup ? PARIS_LOCATION_GROUP : null,
     date: utcDateToKey(addUtcDays(weekStart, 7)),
@@ -542,6 +580,7 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
   const todayHref = buildPlanningHref({
     courseTypeIds,
     participantKind,
+    publicChildTrialsOnly,
     locationId: usesParisLocationGroup ? selectedParisLocationId : locationId,
     locationGroup: usesParisLocationGroup ? PARIS_LOCATION_GROUP : null,
     date: todayKeyInTimezone(timezone),
@@ -550,12 +589,13 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
   const closeSessionHref = buildPlanningHref({
     courseTypeIds,
     participantKind,
+    publicChildTrialsOnly,
     locationId: usesParisLocationGroup ? selectedParisLocationId : locationId,
     locationGroup: usesParisLocationGroup ? PARIS_LOCATION_GROUP : null,
     date: weekStartKey,
     language,
   });
-  const childRegistrationQuery = isChildOnlyBookingSession(selectedSession) ? "&registration_subject_type=child" : "";
+  const childRegistrationQuery = effectiveParticipantKind === "CHILD" || isChildOnlyBookingSession(selectedSession) ? "&registration_subject_type=child" : "";
   const loginHref = `/login?mode=login&return_to=${encodeURIComponent(selectedSessionReturnTo)}${childRegistrationQuery}${language === "en" ? "&lang=en" : ""}`;
   const sessionCheckoutHref = selectedSession ? buildSessionCheckoutHref(selectedSession.id, selectedSessionReturnTo, language) : `/buy/session/checkout${language === "en" ? "?lang=en" : ""}`;
   const sessionCheckoutLoginHref = `/login?mode=login&return_to=${encodeURIComponent(sessionCheckoutHref)}${childRegistrationQuery}${language === "en" ? "&lang=en" : ""}`;
@@ -563,7 +603,7 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
     selectedSession !== null
     && !selectedSessionIsFull
     && (
-      participantKind !== null
+      effectiveParticipantKind !== null
       || Number(selectedSession.external_booking_price_ttc ?? "0") > 0
       || featuredTrialOffer !== null
     );
@@ -586,7 +626,7 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
           <small className="muted">
             {t(selectedSession.external_booking_price_ttc === null ? "embed_planning.formula_access_label" : "embed_planning.external_rate")}
           </small>
-          <p>{publicPlanningRateLabel(selectedSession, participantKind, language)}</p>
+          <p>{publicPlanningRateLabel(selectedSession, effectiveParticipantKind, language)}</p>
         </article>
         {selectedSessionTrialOffers.map((trialOffer) => (
           <article className="item embed-planning-trial-offer" key={trialOffer.formula_id}>
@@ -691,6 +731,7 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
             ))}
             {language === "en" ? <input type="hidden" name="lang" value="en" /> : null}
             {participantKind ? <input type="hidden" name="participant_kind" value={participantKind} /> : null}
+            {publicChildTrialsOnly ? <input type="hidden" name="public_child_trials_only" value="1" /> : null}
 
             {usesParisLocationGroup ? (
               <>
@@ -734,6 +775,7 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
                   href={buildPlanningHref({
                     courseTypeIds,
                     participantKind,
+                    publicChildTrialsOnly,
                     locationId: usesParisLocationGroup ? null : locationId,
                     locationGroup: usesParisLocationGroup ? PARIS_LOCATION_GROUP : null,
                     date: todayKeyInTimezone(timezone),
@@ -785,6 +827,7 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
                       const detailHref = buildPlanningHref({
                         courseTypeIds,
                         participantKind,
+                        publicChildTrialsOnly,
                         locationId: usesParisLocationGroup ? selectedParisLocationId : locationId,
                         locationGroup: usesParisLocationGroup ? PARIS_LOCATION_GROUP : null,
                         date: weekStartKey,
@@ -807,7 +850,7 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
                           {!usesParisLocationGroup && !selectedLocation ? (
                             <small className="embed-slot-location">{session.location?.name || t("embed_planning.location_to_confirm")}</small>
                           ) : null}
-                          <small>{publicPlanningRateLabel(session, participantKind, language)}</small>
+                          <small>{publicPlanningRateLabel(session, effectiveParticipantKind, language)}</small>
                           <small>{externalAvailabilityLabel(session, language)}</small>
                           <span className="embed-slot-card-action">{isReserved ? t("embed_planning.reserved_badge") : t("embed_planning.select_slot_cta")}</span>
                         </Link>

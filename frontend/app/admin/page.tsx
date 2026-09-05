@@ -75,6 +75,7 @@ type CreateSessionDraft = {
   adult_capacity_max: string;
   child_trial_bookings_enabled: "1" | "0";
   adult_trial_bookings_enabled: "1" | "0";
+  public_child_trial_listing_enabled: "1" | "0";
   is_all_day: "1" | "0";
   zoom_link: string;
   recurrence_mode: string;
@@ -904,6 +905,8 @@ function parseCreateSessionDraft(raw: string): CreateSessionDraft | null {
       adult_capacity_max: String(parsed.adult_capacity_max ?? ""),
       child_trial_bookings_enabled: String(parsed.child_trial_bookings_enabled ?? "1") === "0" ? "0" : "1",
       adult_trial_bookings_enabled: String(parsed.adult_trial_bookings_enabled ?? "0") === "0" ? "0" : "1",
+      public_child_trial_listing_enabled:
+        String(parsed.public_child_trial_listing_enabled ?? "0") === "1" ? "1" : "0",
       is_all_day: String(parsed.is_all_day ?? "") === "1" ? "1" : "0",
       zoom_link: String(parsed.zoom_link ?? ""),
       recurrence_mode: String(parsed.recurrence_mode ?? "NONE"),
@@ -2122,6 +2125,20 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                       <label className="session-audience-option">
                         <input
                           type="checkbox"
+                          name="public_child_trial_listing_enabled"
+                          value="1"
+                          defaultChecked={createDraft?.public_child_trial_listing_enabled === "1"}
+                        />
+                        <span>
+                          <strong>{pickText(language, "Publier sur le planning public des essais enfants", "Publish on the public child-trial calendar")}</strong>
+                          <small className="muted">
+                            {pickText(language, "Reserve a Neda, Rosana, Rym et Ariane. Le creneau sera propose au tarif d'essai dans la limite des places.", "Reserved for Neda, Rosana, Rym and Ariane. The slot will use the trial rate while seats remain.")}
+                          </small>
+                        </span>
+                      </label>
+                      <label className="session-audience-option">
+                        <input
+                          type="checkbox"
                           name="adult_bookings_enabled"
                           value="1"
                           defaultChecked={createDraft?.adult_bookings_enabled === "1"}
@@ -2686,6 +2703,14 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                         <span className="session-slot-fact-label">{isEnglish ? "Effective teacher" : "Professeur effectif"}</span>
                         <span className="session-slot-fact-value">{selectedEffectiveProfessorLabel || pickText(language, "Non requis", "Not required")}</span>
                       </div>
+                      <div className="session-slot-fact-row">
+                        <span className="session-slot-fact-label">{isEnglish ? "Public child trials" : "Essais enfants publics"}</span>
+                        <span className="session-slot-fact-value">
+                          {selectedSession.public_child_trial_listing_enabled
+                            ? pickText(language, "Publie", "Published")
+                            : pickText(language, "Non publie", "Not published")}
+                        </span>
+                      </div>
                       {selectedSession.recurrence_group_id && selectedSessionRecurrenceEndLabel ? (
                         <div className="session-slot-fact-row">
                           <span className="session-slot-fact-label">{isEnglish ? "Series end" : "Fin de serie"}</span>
@@ -3232,6 +3257,20 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                         <label className="session-audience-option">
                           <input type="checkbox" name="child_bookings_enabled" value="1" defaultChecked={selectedSession.child_bookings_enabled} />
                           <span><strong>{pickText(language, "Reservations enfants", "Child bookings")}</strong></span>
+                        </label>
+                        <label className="session-audience-option">
+                          <input
+                            type="checkbox"
+                            name="public_child_trial_listing_enabled"
+                            value="1"
+                            defaultChecked={selectedSession.public_child_trial_listing_enabled}
+                          />
+                          <span>
+                            <strong>{pickText(language, "Publier sur le planning public des essais enfants", "Publish on the public child-trial calendar")}</strong>
+                            <small className="muted">
+                              {pickText(language, "Reserve a Neda, Rosana, Rym et Ariane. Pour ouvrir a partir de ce cours, choisissez Serie future.", "Reserved for Neda, Rosana, Rym and Ariane. Choose Future series to publish from this occurrence.")}
+                            </small>
+                          </span>
                         </label>
                         <label className="session-audience-option">
                           <input type="checkbox" name="adult_bookings_enabled" value="1" defaultChecked={selectedSession.adult_bookings_enabled} />
