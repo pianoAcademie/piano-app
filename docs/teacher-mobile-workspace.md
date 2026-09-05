@@ -31,4 +31,12 @@ Limites : données de démonstration et API simulée ; ces tests ne créent aucu
 
 ## Déploiement
 
-Non déployé pendant l'implémentation. Recontrôler les fichiers et images réellement en production immédiatement avant la bascule et intégrer tout changement concurrent. Le correctif est limité au frontend.
+Déployé le 5 septembre 2026 à 18:12 Europe/Paris, code `ceecaec1`. Dernier contrôle avant bascule : 811 fichiers identiques à `688f5695`, images frontend et backend inchangées depuis ce déploiement intermédiaire.
+
+- Image frontend active : `sha256:9ce86beae0be2a3375fbe6c3d1280d6a746c948c0ee987aa1e9c57f4ea721710`.
+- Backend non redémarré : `sha256:bc98310d2c228cb66d6a333f30e891c37bdbce72266bce73ea24bedfd82193ae`.
+- Après bascule : 813 fichiers opérationnels identiques au code livré ; `/login` HTTP 200 ; `/prof` HTTP 307 sans authentification, attendu ; démarrage frontend sans erreur ; route de démonstration absente de l'image.
+- Vérification de production en lecture seule avant bascule : 5 cours, 11 suivis élèves, migration 0242 présente. Aucune donnée métier modifiée pour les tests.
+- Retour arrière conservé : image `piano-mobile-rollback:ceecaec1`, fichiers remplacés dans `/home/ubuntu/piano-mobile-rollback-ceecaec1/sources.tar.gz`. Restaurer ensemble les trois fichiers remplacés et l'image ; les deux nouveaux composants ne sont pas référencés par l'ancienne page.
+
+Les parcours Chromium et WebKit passent sur 320, 393 et 768 px après intégration de la correction des devis. Compilation dans l'image Docker réussie (deux avertissements CSS préexistants). Le contrôle d'un clavier iPhone physique reste à effectuer.
