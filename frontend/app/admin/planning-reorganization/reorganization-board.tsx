@@ -403,6 +403,13 @@ export function PlanningReorganizationBoard({
                 ? `${seriesConfirmation.booking.label} will be moved to ${seriesConfirmation.targetLabel} for ${seriesConfirmation.preview.affected_bookings} session(s). Prices will not change.`
                 : `${seriesConfirmation.booking.label} sera deplace vers ${seriesConfirmation.targetLabel} pour ${seriesConfirmation.preview.affected_bookings} seance(s). Les tarifs ne seront pas modifies.`}
             </p>
+            {seriesConfirmation.scope === "series_future" ? (
+              <p className="reorg-price-scope-note">
+                {language === "en"
+                  ? "Starting with the two selected dates, the remaining actual sessions are matched chronologically. Different school closures do not remove any booking."
+                  : "À partir des deux dates sélectionnées, les séances réelles restantes sont associées dans l’ordre chronologique. Des fermetures scolaires différentes ne suppriment aucune réservation."}
+              </p>
+            ) : null}
             <p>Tarif et remises conservés. Écart financier : 0 €. Aucune nouvelle facture.</p>
             <details><summary>Vérifier les dates et montants ({seriesConfirmation.preview.affected_bookings} séances)</summary>
               <ul>{seriesConfirmation.preview.occurrences.map((o, index) => <li key={index}>
