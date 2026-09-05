@@ -715,6 +715,7 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
             <p className="muted">{t("admin.products.subtitle")}</p>
           </div>
           <div className="row wrap gap-xs">
+            <Link className="mode-link" href="/admin/partition-distribution">Distribution des partitions — Paris</Link>
             <Link className="ghost" href={addLink}>
               {t("admin.products.add_product")}
             </Link>

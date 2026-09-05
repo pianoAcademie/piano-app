@@ -43,7 +43,7 @@ def test_reenrollment_creates_previous_degree_in_progress():
     assert db.add.call_count == 2
 
 
-def test_completing_current_partition_starts_quote_partition_at_first_piece():
+def test_completing_current_partition_prepares_first_piece_without_inventing_delivery():
     now = datetime(2026, 9, 2, 12, 0, tzinfo=timezone.utc)
     student_id = uuid4()
     current = StudentSheetMusic(
@@ -80,10 +80,10 @@ def test_completing_current_partition_starts_quote_partition_at_first_piece():
     )
 
     assert started is next_assignment
-    assert next_assignment.status == "IN_PROGRESS"
+    assert next_assignment.status == "TO_DELIVER"
     assert next_assignment.current_piece_id == first_piece.id
-    assert next_assignment.started_at == now
-    assert next_assignment.delivered_at == now
+    assert next_assignment.started_at is None
+    assert next_assignment.delivered_at is None
 
 
 def test_professor_authorized_product_correction_is_audited_without_touching_quote():

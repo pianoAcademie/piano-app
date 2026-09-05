@@ -150,7 +150,11 @@ def recalculate_product_global_stock(db: Session, *, product_id: UUID) -> None:
             ProductLocationStock.product_id == product_id
         )
     )
-    product.stock_global_quantity = int(total or 0)
+    from app.models.partition_distribution import PartitionMovement
+    from app.services.partition_distribution import held_expression
+    held = db.scalar(select(func.coalesce(func.sum(held_expression()), 0)).where(
+        PartitionMovement.product_id == product_id, PartitionMovement.state == "CONFIRMED"))
+    product.stock_global_quantity = int(total or 0) + int(held or 0)
     if int(product.stock_global_quantity or 0) < int(product.reserve_stock or 0):
         if product.reorder_status in {ProductReorderStatus.NORMAL, ProductReorderStatus.RECEIVED}:
             product.reorder_status = ProductReorderStatus.TO_ORDER
@@ -808,6 +812,19 @@ def mark_request_delivered(
 ) -> ProductRequest:
     if request_row.status not in READY_FOR_DELIVERY_STATUSES:
         return request_row
+
+    # The repertoire distribution screen may already have recorded this handover.
+    # Keep the older catalogue action from debiting a second physical copy.
+    from app.models.partition_distribution import PartitionMovement
+    from app.models.repertoire import StudentSheetMusic
+    from fastapi import HTTPException
+    db.scalar(select(CatalogProduct).where(CatalogProduct.id == request_row.product_id).with_for_update())
+    db.scalar(select(User).where(User.id == request_row.student_user_id).with_for_update())
+    if db.scalar(select(PartitionMovement.id).join(StudentSheetMusic, StudentSheetMusic.id == PartitionMovement.assignment_id).where(
+        StudentSheetMusic.student_id == request_row.student_user_id,
+        PartitionMovement.product_id == request_row.product_id,
+        PartitionMovement.kind == "DELIVERY", PartitionMovement.state == "CONFIRMED")):
+        raise HTTPException(409, "Cette partition a déjà été remise depuis le suivi pédagogique. Aucun nouveau retrait effectué.")
 
     now = utcnow()
     product = db.scalar(select(CatalogProduct).where(CatalogProduct.id == request_row.product_id))

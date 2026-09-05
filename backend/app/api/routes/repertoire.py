@@ -303,6 +303,7 @@ def _update_assignment(
     actor: User,
     *,
     allow_product_change: bool = False,
+    distribution_professor_id: UUID | None = None,
 ) -> AssignmentOut:
     old_status = row.status
     correction_note: str | None = None
@@ -316,6 +317,8 @@ def _update_assignment(
         if product is None:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Partition invalide")
         if row.product_id != product.id:
+            if row.delivered_at is not None:
+                raise HTTPException(409, "Cette partition a déjà été remise. Ajoutez une nouvelle partition pour conserver l'historique.")
             previous_title = row.title_snapshot
             row.product_id = product.id
             row.title_snapshot = product.title
@@ -349,6 +352,11 @@ def _update_assignment(
 
     now = datetime.now(timezone.utc)
     if row.status in {"DELIVERED", "IN_PROGRESS"} and row.delivered_at is None:
+        if old_status in {"STANDBY", "TO_DELIVER"}:
+            from app.services.partition_distribution import consume_partition, delivery_professor
+            professor_id = delivery_professor(db, row.student_id, distribution_professor_id)
+            if professor_id is not None:
+                consume_partition(db, row, professor_id, actor.id)
         row.delivered_at = now
     if row.status == "IN_PROGRESS" and row.started_at is None:
         row.started_at = now
@@ -397,7 +405,7 @@ def admin_update_assignment(
     db: Session = Depends(get_db),
     actor: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> AssignmentOut:
-    row = db.get(StudentSheetMusic, assignment_id)
+    row = db.scalar(select(StudentSheetMusic).where(StudentSheetMusic.id == assignment_id).with_for_update())
     if row is None or row.student_id != student_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Suivi introuvable")
     return _update_assignment(db, row, payload, actor, allow_product_change=True)
@@ -412,7 +420,7 @@ def professor_update_assignment(
     actor: User = Depends(require_roles(UserRole.PROF)),
 ) -> AssignmentOut:
     professor = db.scalar(select(Professor).where(func.lower(Professor.email) == actor.email.lower()))
-    row = db.get(StudentSheetMusic, assignment_id)
+    row = db.scalar(select(StudentSheetMusic).where(StudentSheetMusic.id == assignment_id).with_for_update())
     if (
         professor is None
         or row is None
@@ -420,7 +428,7 @@ def professor_update_assignment(
         or not _professor_can_edit(db, professor, student_id)
     ):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès refusé")
-    return _update_assignment(db, row, payload, actor, allow_product_change=True)
+    return _update_assignment(db, row, payload, actor, allow_product_change=True, distribution_professor_id=professor.id)
 
 
 @router.post("/professors/me/students/{student_id}/repertoire", response_model=AssignmentOut)

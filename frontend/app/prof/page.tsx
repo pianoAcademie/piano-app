@@ -864,6 +864,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
 
   return (
     <main className="page prof-page teacher-shell">
+      <Link className="mode-link" href="/prof/partitions">Mes partitions — retrait à Richelieu et remises aux élèves</Link>
       <PageHeaderMobile
         title={fullName || uiText(language, "teacher.default_name")}
         subtitle={profile.email}
@@ -1929,7 +1930,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                                   <div className="teacher-repertoire-save-error" role="alert">{errorMessage}</div>
                                 ) : null}
                                 {assignment.status === "IN_PROGRESS" ? (
-                                  <small className="muted">En la passant à « Terminée », la prochaine partition démarrera automatiquement sur son premier morceau.</small>
+                                  <small className="muted">En la passant à « Terminée », le premier morceau de la prochaine partition sera préparé. Sa remise reste à confirmer si l’élève ne l’a pas encore reçue.</small>
                                 ) : null}
                               </form>
                             ))}

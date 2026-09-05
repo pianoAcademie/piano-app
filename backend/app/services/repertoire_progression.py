@@ -134,18 +134,17 @@ def start_next_partition_after_completion(
     transition_at = now or datetime.now(timezone.utc)
     old_status = next_assignment.status
     first_piece = first_active_piece(db, next_assignment.product_id)
-    next_assignment.status = "IN_PROGRESS"
+    physically_delivered = next_assignment.delivered_at is not None or old_status == "DELIVERED"
+    next_assignment.status = "IN_PROGRESS" if physically_delivered else "TO_DELIVER"
     next_assignment.current_piece_id = first_piece.id if first_piece is not None else None
-    if next_assignment.delivered_at is None:
-        next_assignment.delivered_at = transition_at
-    if next_assignment.started_at is None:
+    if physically_delivered and next_assignment.started_at is None:
         next_assignment.started_at = transition_at
     next_assignment.updated_at = transition_at
     db.add(
         StudentSheetMusicEvent(
             assignment_id=next_assignment.id,
             actor_user_id=actor_user_id,
-            event_type="AUTO_STARTED_AFTER_PREVIOUS_COMPLETED",
+            event_type="AUTO_STARTED_AFTER_PREVIOUS_COMPLETED" if physically_delivered else "READY_AFTER_PREVIOUS_COMPLETED",
             old_status=old_status,
             new_status=next_assignment.status,
             piece_id=next_assignment.current_piece_id,

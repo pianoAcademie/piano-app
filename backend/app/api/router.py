@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 from app.api.routes import annual_pricing
 from app.api.routes import admin_makeups
+from app.api.routes import partition_distribution
 
 from app.api.routes import (
     admin,
@@ -44,6 +45,7 @@ from app.api.routes import (
 )
 
 api_router = APIRouter()
+api_router.include_router(partition_distribution.router, tags=["partition-distribution"])
 api_router.include_router(admin_makeups.router, tags=["admin-makeups"])
 api_router.include_router(annual_pricing.router, tags=["annual-pricing"])
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
