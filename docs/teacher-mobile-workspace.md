@@ -1,6 +1,6 @@
 # Portail professeur : parcours mobile complet
 
-Base : `fe88a6dc`, dernière production au début du travail. Aucun changement du backend, des paiements, des réservations ou de la distribution des partitions.
+Base initiale : `fe88a6dc`. Avant déploiement, intégration du déploiement intermédiaire `688f5695` (correction des créneaux de devis), dont les 807 fichiers opérationnels contrôlés correspondent exactement à la production. Aucun changement du backend, des paiements, des réservations ou de la distribution des partitions dans le correctif mobile.
 
 ## Changements
 
@@ -25,7 +25,9 @@ Scénarios : 320, 393 et 768 px ; navigation, brouillon conservé, un seul élè
 
 Sur localhost HTTP, le harnais retire uniquement `upgrade-insecure-requests` de la réponse de démonstration, car WebKit essaie autrement de charger les ressources locales en HTTPS. Aucune règle de sécurité de l'application n'est modifiée.
 
-Limites : données de démonstration, sauvegarde testée en échec de session ; ce test ne valide pas une nouvelle écriture réelle sur un élève. La hauteur réduite simule l'espace réduit mais pas le clavier natif d'un iPhone. Un contrôle connecté sur appareil réel reste recommandé avant diffusion générale.
+Contrôles approfondis : action serveur Next réelle reliée à une API HTTP locale de test, sauvegarde réussie et confirmation visible, morceau terminé et suivant choisi hors ordre, blocage du changement d'élève pendant la sauvegarde, une requête par action, conflit HTTP 409 avec conservation du formulaire. Les 38 tests ciblés sur créneaux, réservations, remises et dates locales passent aussi sur la base fusionnée.
+
+Limites : données de démonstration et API simulée ; ces tests ne créent aucune écriture sur un élève réel. La hauteur réduite simule l'espace réduit mais pas le clavier natif d'un iPhone. Un contrôle connecté sur appareil réel reste recommandé.
 
 ## Déploiement
 
