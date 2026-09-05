@@ -14634,6 +14634,14 @@ function parsePlanningDateOnly(value: string): Date | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
+function planningWeekdayFromDate(value: string): number | null {
+  const parsed = parsePlanningDateOnly(value);
+  if (!parsed) {
+    return null;
+  }
+  return (parsed.getUTCDay() + 6) % 7;
+}
+
 function isoPlanningDateOnly(value: Date): string {
   return value.toISOString().slice(0, 10);
 }
@@ -14917,8 +14925,21 @@ async function buildCalendarSnapshotFromBlocks({
 
   const normalizedBlocks = blocks.map((block) => {
     const withSessionLimit = normalizePlanningBlockSessionLimit(block, quoteLines);
+    const startDateWeekday = planningWeekdayFromDate(withSessionLimit.start_date);
+    const normalizedWeekday =
+      !withSessionLimit.custom_period
+      && withSessionLimit.recurrence_frequency === "weekly"
+      && startDateWeekday !== null
+      && startDateWeekday !== withSessionLimit.weekday
+        ? startDateWeekday
+        : withSessionLimit.weekday;
     return {
       ...withSessionLimit,
+      weekday: normalizedWeekday,
+      weekday_label:
+        normalizedWeekday === withSessionLimit.weekday
+          ? withSessionLimit.weekday_label
+          : null,
       location_id: withSessionLimit.location_id || null,
       location_label: withSessionLimit.location_label || null,
     };

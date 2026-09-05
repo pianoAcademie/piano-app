@@ -105,6 +105,32 @@ test("a saved live block with a stale 31-date cap is healed from the authoritati
   assert.equal(legacy.sessions.length, 32);
 });
 
+test("a weekly block with a stale weekday and an end date one lesson early is repaired from production", async () => {
+  const [option] = await slots();
+  const server = saveHarness();
+  const stale = {
+    ...option,
+    source: null,
+    series_key: null,
+    recurrence_frequency: "weekly",
+    weekday: 1,
+    weekday_label: "Mardi",
+    end_date: "2027-06-09",
+    planning_session_limit: 32,
+  };
+  const snapshot = await server.buildCalendarSnapshotFromBlocks({
+    blocks: server.parsePlanningBlocksJson(JSON.stringify([stale])),
+    quoteLines: [{ ...fixture.line, meta: { planning_session_limit: 32 } }],
+    token: "fixture-only",
+    returnTo: "/fixture",
+    schoolYearLabel: "2026-2027",
+  });
+  assert.equal(snapshot.blocks[0].weekday, 2);
+  assert.equal(snapshot.blocks[0].source, "live_planning");
+  assert.equal(snapshot.blocks[0].sessions_count, 32);
+  assert.equal(snapshot.blocks[0].end_date, "2027-06-16");
+});
+
 test("a new live draft displays actual dates, not a theoretical lesson cancelled in the middle of the year", async () => {
   const sessions = fixture.sessions.map((s, i) => i === 3 ? { ...s, status: "CANCELLED" } : s);
   const [option] = await slots({}, sessions);

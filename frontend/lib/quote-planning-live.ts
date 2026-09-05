@@ -285,8 +285,13 @@ export async function loadLivePlanningMatchForBlock({
     if (widenedMatches.length > matched.length) {
       matched = widenedMatches;
     }
-  } else if (sessionLimit > 0 && blockSeriesKey && matched.length < sessionLimit) {
-    const widenedMatches = selectCohesiveRecurringRows(buildMatches(false, block.end_date));
+  } else if (sessionLimit > 0 && matched.length < sessionLimit) {
+    // Older/manual quote blocks can lose their live series id or retain an end
+    // date one occurrence too early. Recover the authoritative production
+    // series across the school year before falling back to a theoretical
+    // calendar expansion.
+    const recoveryEndDate = schoolYearEndDate || block.end_date;
+    const widenedMatches = selectCohesiveRecurringRows(buildMatches(false, recoveryEndDate));
     if (widenedMatches.length > matched.length) {
       matched = widenedMatches;
     }
