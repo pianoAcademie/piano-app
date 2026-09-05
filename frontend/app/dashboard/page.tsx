@@ -5,6 +5,7 @@ import PortalImpersonationBanner from "../../components/portal-impersonation-ban
 import PortalReadOnlyPreviewGuard from "../../components/portal-read-only-preview-guard";
 import { getAdminToken, getPortalReturnTo, getPortalToken, readPortalImpersonationClaims } from "../../lib/auth-cookies";
 import { backendRequest } from "../../lib/backend";
+import { clientSessionCheckoutAccess } from "../../lib/client-session-selection";
 import { portalFailurePath } from "../../lib/portal-auth-routing";
 import {
   cancelBookingAction,
@@ -2455,19 +2456,14 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     ) ?? null;
     const hasAnySubscription = activeSubscriptionByOwner.has(ownerId);
     const memberKind = members.find((member) => member.id === ownerId)?.kind ?? "ADULT";
-    const participantAllowed = memberKind === "CHILD" ? session.child_bookings_enabled : session.adult_bookings_enabled;
-    const adultQuotaFull = memberKind === "ADULT"
-      && session.adult_capacity_max !== null
-      && session.adult_booked_count >= session.adult_capacity_max;
-    const isFull = session.booked_count >= session.capacity_max || adultQuotaFull;
-    const hasDirectPayment = sessionHasDirectPayment(session);
-    const canCheckout =
-      normalizeStatus(session.status) === "SCHEDULED"
-      && session.online_booking_enabled
-      && participantAllowed
-      && !sessionIsPastOrStarted
-      && !isFull
-      && (paymentPending || (!memberBooking && !renewalSubscription && (eligibleByPlan || hasDirectPayment)));
+    const { participantAllowed, adultQuotaFull, isFull, hasDirectPayment, hasTrialPurchaseOption, requiresPayment, canCheckout } =
+      clientSessionCheckoutAccess(session, memberKind, {
+        hasBooking: Boolean(memberBooking),
+        paymentPending,
+        renewalRequired: Boolean(renewalSubscription),
+        eligibleByPlan,
+        sessionIsPastOrStarted,
+      });
 
     let statusCode: PlanningStatusCode = "UNAVAILABLE";
     if (alreadyReserved) {
@@ -2485,7 +2481,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     } else if (renewalSubscription) {
       statusCode = "NO_PLAN";
     } else if (canCheckout) {
-      statusCode = hasDirectPayment && !eligibleByPlan ? "PAYMENT_REQUIRED" : "AVAILABLE";
+      statusCode = requiresPayment ? "PAYMENT_REQUIRED" : "AVAILABLE";
     } else if (hasAnySubscription) {
       statusCode = "INCOMPATIBLE_PLAN";
     } else {
@@ -2494,6 +2490,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 
     const actionLabel = paymentPending
       ? t("client.complete_payment_action")
+      : hasTrialPurchaseOption && !eligibleByPlan
+        ? t("client.choose_your_option")
       : hasDirectPayment && !eligibleByPlan
         ? t("client.pay_and_book_action")
         : t("client.book_action");
@@ -2510,6 +2508,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       participantAllowed,
       adultQuotaFull,
       hasDirectPayment,
+      hasTrialPurchaseOption,
+      requiresPayment,
       renewalSubscription,
       canCheckout,
       canJoinWaitlist: isFull && participantAllowed && !memberBooking
@@ -2531,7 +2531,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
         : ownerState.paymentPending
           ? t("client.payment_to_finalize_for_member")
           : ownerState.canCheckout
-            ? hasDirectPayment && !ownerState.eligibleByPlan
+            ? ownerState.requiresPayment
               ? t("client.online_payment_required_confirmation")
               : t("client.available_for_booking")
             : ownerState.renewalSubscription
@@ -2608,7 +2608,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     } else if (actionableMembers.length === 1) {
       statusCode = actionableMembers[0].state.statusCode;
       contextLine =
-        actionableMembers[0].state.hasDirectPayment && !actionableMembers[0].state.eligibleByPlan
+        actionableMembers[0].state.requiresPayment
           ? t("client.payment_required_for_member", { member: actionableMembers[0].member.display_name })
           : t("client.available_for_member", { member: actionableMembers[0].member.display_name });
     } else if (renewalSubscription) {
@@ -2696,7 +2696,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   }
   const fallbackReservationOptionsMembers: ClientSessionReservationMemberOptionOut[] =
     shouldUseFallbackReservationOptions && selectedSessionPlanningState
-      ? selectedSessionPlanningState.actionableMembers.map(({ member, state }) => ({
+      ? selectedSessionPlanningState.actionableMembers
+        // An unverified trial offer must not fall back to a free-credit booking
+        // when the server cannot return this member's reservation options.
+        .filter(({ state }) => state.paymentPending || state.eligibleByPlan || state.hasDirectPayment)
+        .map(({ member, state }) => ({
           member_id: member.id,
           member_display_name: member.display_name,
           member_kind: member.kind === "CHILD" ? "CHILD" : "ADULT",
