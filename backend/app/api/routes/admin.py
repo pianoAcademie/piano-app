@@ -4439,58 +4439,51 @@ def _planning_reorganization_move_pairs(
         )
     )
 
-    pairs: list[tuple[Booking, CourseSession, CourseSession]] = []
-    skipped_count = 0
+    # SERIES_FUTURE is anchored by the two sessions selected in the UI. School
+    # closures can make two otherwise equivalent series non-isomorphic by week
+    # (for example a Wednesday bank holiday versus a Friday bridge day). Match
+    # the remaining actual occurrences chronologically instead of requiring an
+    # occurrence in the same relative week. This keeps the selected sessions as
+    # the first pair and never silently drops an active booking.
+    ordered_target_sessions = sorted(
+        target_sessions,
+        key=lambda session_obj: (session_obj.start_at_utc, str(session_obj.id)),
+    )
+    valid_source_rows = [
+        (booking, source_session_by_id[booking.session_id])
+        for booking in recurring_bookings
+        if booking.session_id in source_session_by_id
+    ]
+    missing_source_count = len(recurring_bookings) - len(valid_source_rows)
+    available_target_count = len(ordered_target_sessions)
+    required_target_count = len(valid_source_rows)
+    pair_count = min(required_target_count, available_target_count)
+    pairs = [
+        (booking, current_source_session, ordered_target_sessions[index])
+        for index, (booking, current_source_session) in enumerate(valid_source_rows[:pair_count])
+    ]
+
+    skipped_count = missing_source_count + max(0, required_target_count - available_target_count)
     details: list[str] = []
-    unused_target_sessions = list(target_sessions)
-    day_offset = (_local_date_in_timezone(target_session.start_at_utc, _normalize_session_timezone(target_session.timezone))
-                  - _local_date_in_timezone(source_session.start_at_utc, _normalize_session_timezone(source_session.timezone))).days
-    for booking in recurring_bookings:
-        current_source_session = source_session_by_id.get(booking.session_id)
-        if current_source_session is None:
-            skipped_count += 1
-            continue
-        source_day = _local_date_in_timezone(
-            current_source_session.start_at_utc,
-            _normalize_session_timezone(current_source_session.timezone),
+    if missing_source_count:
+        details.append(
+            f"{missing_source_count} réservation(s) source ne correspondent plus à la série sélectionnée"
         )
-        target_candidates = [
-            session_obj
-            for session_obj in unused_target_sessions
-            if (
-                (
-                    _local_date_in_timezone(
-                        session_obj.start_at_utc,
-                        _normalize_session_timezone(session_obj.timezone),
-                    )
-                    - source_day
-                ).days
+    if available_target_count < required_target_count:
+        details.append(
+            "Série cible trop courte à partir de la date choisie : "
+            f"{available_target_count} séance(s) disponible(s) pour {required_target_count} réservation(s). "
+            "Aucun créneau ne sera perdu. Choisissez une date cible plus tôt ou complétez le planning."
+        )
+    elif available_target_count > required_target_count:
+        surplus_target_count = available_target_count - required_target_count
+        details.append(
+            (
+                "1 séance cible supplémentaire reste hors de ce déplacement"
+                if surplus_target_count == 1
+                else f"{surplus_target_count} séances cibles supplémentaires restent hors de ce déplacement"
             )
-            == day_offset
-        ]
-        if not target_candidates:
-            skipped_count += 1
-            if len(details) < 8:
-                details.append(f"Aucun creneau cible dans la semaine du {source_day.isoformat()}")
-            continue
-        current_target_session = min(
-            target_candidates,
-            key=lambda session_obj: (
-                abs(
-                    (
-                        _local_date_in_timezone(
-                            session_obj.start_at_utc,
-                            _normalize_session_timezone(session_obj.timezone),
-                        )
-                        - source_day
-                    ).days
-                ),
-                session_obj.start_at_utc,
-                str(session_obj.id),
-            ),
         )
-        unused_target_sessions.remove(current_target_session)
-        pairs.append((booking, current_source_session, current_target_session))
     return pairs, skipped_count, details
 
 

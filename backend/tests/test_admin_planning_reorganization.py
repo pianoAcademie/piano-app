@@ -14,6 +14,7 @@ from fastapi import HTTPException
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.api.routes.admin import (
+    _checked_move_version,
     _move_planning_reorganization_booking_occurrence,
     _planning_reorganization_move_pairs,
     _planning_reorganization_price_rows,
@@ -102,6 +103,222 @@ class AdminPlanningReorganizationTests(unittest.TestCase):
         assert pairs == [(booking, source_session, target_session)]
         assert skipped == 0
         assert details == []
+
+    def test_series_move_aligns_mismatched_school_closures_chronologically(self) -> None:
+        user_id = uuid4()
+        source_group_id = uuid4()
+        target_group_id = uuid4()
+        source_dates = [
+            datetime(2026, 11, 4, 14, 0, tzinfo=timezone.utc),
+            datetime(2026, 11, 18, 14, 0, tzinfo=timezone.utc),
+            datetime(2026, 11, 25, 14, 0, tzinfo=timezone.utc),
+        ]
+        target_dates = [
+            datetime(2026, 11, 6, 16, 0, tzinfo=timezone.utc),
+            datetime(2026, 11, 13, 16, 0, tzinfo=timezone.utc),
+            datetime(2026, 11, 20, 16, 0, tzinfo=timezone.utc),
+        ]
+        source_sessions = [
+            SimpleNamespace(
+                id=uuid4(),
+                recurrence_group_id=source_group_id,
+                start_at_utc=start_at,
+                timezone="Europe/Paris",
+            )
+            for start_at in source_dates
+        ]
+        target_sessions = [
+            SimpleNamespace(
+                id=uuid4(),
+                recurrence_group_id=target_group_id,
+                start_at_utc=start_at,
+                timezone="Europe/Paris",
+            )
+            for start_at in target_dates
+        ]
+        bookings = [
+            SimpleNamespace(
+                id=uuid4(),
+                session_id=session.id,
+                user_id=user_id,
+                status=BookingStatus.BOOKED,
+                booked_at=source_dates[0] - timedelta(days=30),
+            )
+            for session in source_sessions
+        ]
+        db = _FakeSession([], scalars_values=[list(reversed(bookings))])
+
+        with patch(
+            "app.api.routes.admin._target_sessions_for_scope",
+            side_effect=[source_sessions, target_sessions],
+        ):
+            pairs, skipped, details = _planning_reorganization_move_pairs(
+                db,  # type: ignore[arg-type]
+                source_booking=bookings[0],
+                source_session=source_sessions[0],
+                target_session=target_sessions[0],
+                scope="series_future",
+            )
+
+        assert [(source.start_at_utc, target.start_at_utc) for _, source, target in pairs] == list(
+            zip(source_dates, target_dates, strict=True)
+        )
+        assert skipped == 0
+        assert details == []
+
+    def test_series_move_uses_only_occurrences_from_the_selected_dates(self) -> None:
+        user_id = uuid4()
+        source_group_id = uuid4()
+        target_group_id = uuid4()
+        source_sessions = [
+            SimpleNamespace(
+                id=uuid4(),
+                recurrence_group_id=source_group_id,
+                start_at_utc=datetime(2027, month, day, 14, 0, tzinfo=timezone.utc),
+                timezone="Europe/Paris",
+            )
+            for month, day in [(1, 13), (1, 20), (1, 27)]
+        ]
+        target_sessions = [
+            SimpleNamespace(
+                id=uuid4(),
+                recurrence_group_id=target_group_id,
+                start_at_utc=datetime(2027, month, day, 16, 0, tzinfo=timezone.utc),
+                timezone="Europe/Paris",
+            )
+            for month, day in [(1, 15), (1, 22), (1, 29)]
+        ]
+        bookings = [
+            SimpleNamespace(
+                id=uuid4(),
+                session_id=session.id,
+                user_id=user_id,
+                status=BookingStatus.BOOKED,
+                booked_at=datetime(2026, 9, 1, tzinfo=timezone.utc),
+            )
+            for session in source_sessions
+        ]
+        db = _FakeSession([], scalars_values=[bookings])
+
+        with patch(
+            "app.api.routes.admin._target_sessions_for_scope",
+            side_effect=[source_sessions, target_sessions],
+        ) as scoped_sessions:
+            pairs, skipped, details = _planning_reorganization_move_pairs(
+                db,  # type: ignore[arg-type]
+                source_booking=bookings[0],
+                source_session=source_sessions[0],
+                target_session=target_sessions[0],
+                scope="series_future",
+            )
+
+        assert len(pairs) == 3
+        assert pairs[0] == (bookings[0], source_sessions[0], target_sessions[0])
+        assert skipped == 0
+        assert details == []
+        scoped_sessions.assert_any_call(
+            db,
+            session_obj=source_sessions[0],
+            apply_scope="SERIES_FUTURE",
+        )
+        scoped_sessions.assert_any_call(
+            db,
+            session_obj=target_sessions[0],
+            apply_scope="SERIES_FUTURE",
+        )
+
+    def test_series_move_with_shorter_target_fails_closed_without_losing_a_booking(self) -> None:
+        start_at = datetime(2027, 1, 13, 14, 0, tzinfo=timezone.utc)
+        source_sessions = [
+            SimpleNamespace(
+                id=uuid4(), recurrence_group_id=uuid4(),
+                start_at_utc=start_at + timedelta(days=7 * index), timezone="Europe/Paris",
+            )
+            for index in range(3)
+        ]
+        target_sessions = [
+            SimpleNamespace(
+                id=uuid4(), recurrence_group_id=uuid4(),
+                start_at_utc=start_at + timedelta(days=2 + 7 * index), timezone="Europe/Paris",
+            )
+            for index in range(2)
+        ]
+        bookings = [
+            SimpleNamespace(
+                id=uuid4(), session_id=session.id, user_id=uuid4(),
+                status=BookingStatus.BOOKED, booked_at=start_at - timedelta(days=30),
+            )
+            for session in source_sessions
+        ]
+        db = _FakeSession([], scalars_values=[bookings])
+
+        with patch(
+            "app.api.routes.admin._target_sessions_for_scope",
+            side_effect=[source_sessions, target_sessions],
+        ):
+            pairs, skipped, details = _planning_reorganization_move_pairs(
+                db,  # type: ignore[arg-type]
+                source_booking=bookings[0],
+                source_session=source_sessions[0],
+                target_session=target_sessions[0],
+                scope="series_future",
+            )
+
+        assert len(pairs) == 2
+        assert skipped == 1
+        assert "Aucun créneau ne sera perdu" in details[0]
+        with self.assertRaises(HTTPException) as raised:
+            _checked_move_version(
+                db,  # type: ignore[arg-type]
+                pairs,
+                skipped,
+                details,
+                datetime.now(timezone.utc),
+            )
+        assert raised.exception.status_code == 409
+        assert "toute la série doit avoir une destination" in raised.exception.detail
+        assert "Aucun créneau ne sera perdu" in raised.exception.detail
+
+    def test_series_move_does_not_add_unpurchased_surplus_target_sessions(self) -> None:
+        start_at = datetime(2027, 1, 13, 14, 0, tzinfo=timezone.utc)
+        source_sessions = [
+            SimpleNamespace(
+                id=uuid4(), recurrence_group_id=uuid4(),
+                start_at_utc=start_at + timedelta(days=7 * index), timezone="Europe/Paris",
+            )
+            for index in range(2)
+        ]
+        target_sessions = [
+            SimpleNamespace(
+                id=uuid4(), recurrence_group_id=uuid4(),
+                start_at_utc=start_at + timedelta(days=2 + 7 * index), timezone="Europe/Paris",
+            )
+            for index in range(3)
+        ]
+        bookings = [
+            SimpleNamespace(
+                id=uuid4(), session_id=session.id, user_id=uuid4(),
+                status=BookingStatus.BOOKED, booked_at=start_at - timedelta(days=30),
+            )
+            for session in source_sessions
+        ]
+        db = _FakeSession([], scalars_values=[bookings])
+
+        with patch(
+            "app.api.routes.admin._target_sessions_for_scope",
+            side_effect=[source_sessions, target_sessions],
+        ):
+            pairs, skipped, details = _planning_reorganization_move_pairs(
+                db,  # type: ignore[arg-type]
+                source_booking=bookings[0],
+                source_session=source_sessions[0],
+                target_session=target_sessions[0],
+                scope="series_future",
+            )
+
+        assert len(pairs) == 2
+        assert skipped == 0
+        assert details == ["1 séance cible supplémentaire reste hors de ce déplacement"]
 
     def test_reused_cancelled_target_keeps_a_neutral_financial_link(self) -> None:
         now = datetime.now(timezone.utc)
