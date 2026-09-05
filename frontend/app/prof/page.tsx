@@ -1,5 +1,7 @@
 import Link from "next/link";
 import LearningCard from "../../components/teacher-ui/learning-card";
+import { AttendanceDialog, AttendanceButton, StudentPager } from "../../components/teacher-ui/attendance-workspace";
+import mobileStyles from "../../components/teacher-ui/teacher-mobile.module.css";
 import { redirect } from "next/navigation";
 
 import {
@@ -857,7 +859,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
   ];
 
   return (
-    <main className="page prof-page teacher-shell">
+    <main className={`page prof-page teacher-shell ${mobileStyles.portal}`}>
       <PageHeaderMobile
         title={fullName || uiText(language, "teacher.default_name")}
         subtitle={profile.email}
@@ -908,7 +910,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
         }
       />
 
-      <Link href="/prof/partitions" style={{ display: "block", background: "#7a4313", color: "#fff", padding: "18px 20px", borderRadius: 16, margin: "16px 0", fontSize: 20, fontWeight: 700, textDecoration: "none" }}>
+      <Link href="/prof/partitions" className="teacher-partitions-entry">
         📚 Mes partitions <span style={{ display: "block", fontSize: 14, fontWeight: 400 }}>Retraits à Richelieu et remises aux élèves →</span>
       </Link>
       <section className="teacher-brand-banner card">
@@ -1134,10 +1136,10 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
               </Link>
             </div>
             <div className="row teacher-planning-controls-arrows">
-              <Link className="mode-link" href={previousAgendaHref}>
+              <Link className="mode-link" href={previousAgendaHref} aria-label="Période précédente">
                 ←
               </Link>
-              <Link className="mode-link" href={nextAgendaHref}>
+              <Link className="mode-link" href={nextAgendaHref} aria-label="Période suivante">
                 →
               </Link>
             </div>
@@ -1697,7 +1699,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
       ) : null}
 
       {currentTab === "planning" && selectedSession ? (
-        <section className="modal-overlay modal-overlay-front teacher-attendance-overlay">
+        <AttendanceDialog closeHref={buildProfHref({ tab: "planning", agendaView, agendaDate, planningScope })}>
           <article className="modal-panel session-attendance-modal-v2 teacher-attendance-modal">
             <header className="teacher-attendance-header">
               <div className="teacher-attendance-header-main">
@@ -1755,7 +1757,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                     </p>
                   </div>
                 ) : (
-                  <div className="teacher-attendance-rows">
+                  <StudentPager sessionId={selectedSession.id} students={visibleAttendanceStudents.map((s) => ({ id: s.booking_id, name: s.display_name }))}>
                     {visibleAttendanceStudents.map((student) => (
                       <article key={student.booking_id} className="teacher-attendance-row-card">
                         <div className="teacher-attendance-row-head">
@@ -1796,14 +1798,13 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                                     planningScope,
                                   })}
                                 />
-                                <button
-                                  type="submit"
+                                <AttendanceButton
                                   className={`teacher-attendance-btn tone-${choice.tone} ${
                                     student.attendance_status === choice.value ? "active" : ""
                                   }`}
                                 >
                                   {choice.label}
-                                </button>
+                                </AttendanceButton>
                               </form>
                             ))}
                           </div>
@@ -1858,12 +1859,14 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                         ) : null}
                       </article>
                     ))}
-                  </div>
+                  </StudentPager>
                 )}
               </section>
 
+              <details className="teacher-course-tools">
+                <summary>{language === "en" ? "Group notes and information" : "Notes et informations du groupe"}</summary>
               <aside className="teacher-attendance-secondary">
-                <details className="teacher-attendance-accordion" open={selectedSessionMessages.length > 0}>
+                <details className="teacher-attendance-accordion">
                   <summary>{t("teacher.session_messages_section")}</summary>
                   <div className="teacher-attendance-accordion-body">
                     <p className="teacher-session-message-help">{t("teacher.session_messages_help")}</p>
@@ -1921,7 +1924,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                 </details>
 
                 {canTakeAttendanceForSelectedSession ? (
-                  <details className="teacher-attendance-accordion" open>
+                  <details className="teacher-attendance-accordion">
                     <summary>{t("teacher.session_internal_note_section")}</summary>
                     <div className="teacher-attendance-accordion-body">
                       <p className="teacher-note-safety-text teacher-note-safety-internal">{t("teacher.session_internal_note_help")}</p>
@@ -2055,12 +2058,10 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                   </div>
                 </details>
               </aside>
+              </details>
             </div>
 
             <footer className="teacher-attendance-footer">
-              <Link className="reset-link" href={buildProfHref({ tab: "planning", agendaView, agendaDate, planningScope })}>
-                {uiText(language, "common.close")}
-              </Link>
               <div className="row">
                 {!selectedSessionBelongsToProfessor ? (
                   <span className="status-badge status-scheduled">{t("teacher.planning_read_only_course")}</span>
@@ -2070,12 +2071,12 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                   <span className="status-badge status-completed">{t("teacher.all_recorded")}</span>
                 )}
                 <Link className="mode-link" href={buildProfHref({ tab: "planning", agendaView, agendaDate, planningScope })}>
-                  {t("teacher.finish")}
+                  {language === "en" ? "Back to schedule" : "Retour au planning"}
                 </Link>
               </div>
             </footer>
           </article>
-        </section>
+        </AttendanceDialog>
       ) : null}
 
       {selectedLocalIntakeId && !selectedLocalIntakeResult.ok ? (

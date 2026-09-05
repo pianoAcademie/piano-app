@@ -1,18 +1,23 @@
-.card { border: 1px solid #dfd5c3; border-radius: 14px; padding: 14px; margin-block: 12px; background: #fffcf7; min-width: 0; overflow-wrap: anywhere; }
+.card { border: 0; border-top: 1px solid #e6dfd5; border-radius: 0; padding: 12px 0 0; margin-block: 12px; background: transparent; min-width: 0; overflow-wrap: anywhere; }
 .header, .links { display: flex; justify-content: space-between; gap: 8px; align-items: center; flex-wrap: wrap; }
 .card button, .card select { min-height: 48px; font-size: 16px; border-radius: 10px; }
-.card button { padding: 10px 12px; white-space: normal; cursor: pointer; }
+.card button { padding: 8px 10px; white-space: normal; cursor: pointer; background: #fff; color: #493a29; border: 1px solid #d7c6b1; font-size: 14px; line-height: 1.3; box-shadow: none; }
 .card button:disabled { opacity: .55; cursor: wait; }
 .card button:focus-visible, .card select:focus-visible, .card input:focus-visible { outline: 3px solid #245eb5; outline-offset: 2px; }
 .current { margin: 8px 0; line-height: 1.6; }
-.actions { display: grid; gap: 8px; margin-block: 12px; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; margin-block: 12px; }
+.actions > button { flex: 1 1 110px; }
+.more { margin-top: 12px; font-size: 14px; }
+.more > summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; color: #5b4931; text-decoration: underline; }
+.links { display: grid; gap: 8px; }
+.links button { text-align: left; }
 .card .primary { background: #804714; color: white; border: 1px solid #804714; font-weight: 700; }
 .editor { border: 0; padding: 0; margin: 12px 0 0; min-width: 0; display: grid; gap: 12px; }
 .editor legend { font-weight: 700; margin-bottom: 12px; }
 .editor label { display: grid; gap: 6px; }
-.editor select { width: 100%; max-width: 100%; min-width: 0; }
+.editor select { width: 100%; max-width: 100%; min-width: 0; height: 48px; appearance: none; padding: 8px 28px 8px 10px; background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%235b4931' stroke-width='2'/%3E%3C/svg%3E") no-repeat right 10px center; }
 .help { font-size: 14px; color: #594d3c; line-height: 1.5; margin: 4px 0; }
-.pieces { max-height: 45dvh; overflow-y: auto; overscroll-behavior: contain; border: 1px solid #ddd; border-radius: 10px; }
+.pieces { border: 1px solid #ddd; border-radius: 10px; }
 .piece { border-bottom: 1px solid #ddd; padding: 8px; }
 .piece label { display: flex; align-items: center; gap: 10px; min-height: 48px; cursor: pointer; }
 .piece input { width: 24px; height: 24px; flex-shrink: 0; accent-color: #316c42; }

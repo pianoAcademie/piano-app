@@ -66,10 +66,8 @@ export default function LearningCard({ studentId, studentName, sessionId, catalo
     finally { inFlight.current = false; setBusy(false); }
   }
 
-  return <section className={styles.card} aria-label={`Progression musicale de ${studentName}`} aria-busy={busy}>
-    <header className={styles.header}><strong>Progression musicale</strong>
-      <button type="button" disabled={busy} onClick={() => open("CORRECT")}>Corriger</button>
-    </header>
+  return <section className={styles.card} aria-label={`Progression musicale de ${studentName}`} aria-busy={busy} data-learning-draft={mode !== null}>
+    <header className={styles.header}><strong>Travail du cours</strong></header>
     <p className={styles.current}>{current?.title ?? "Partition à renseigner"}<br />
       <strong>{book?.completed ? "Partition terminée ✓" : piece?.title ?? "Morceau à renseigner"}</strong>
     </p>
@@ -80,13 +78,16 @@ export default function LearningCard({ studentId, studentName, sessionId, catalo
         <button type="button" disabled={busy} onClick={() => save({ action: "CONTINUE" })}>Continuer ce morceau</button>
         <button type="button" className={styles.primary} disabled={busy} onClick={() => open("FINISH")}>Terminé → suivant</button>
       </div>}
-      {!piece && !book?.completed && <button type="button" className={styles.primary} disabled={busy} onClick={() => open("CORRECT")}>Renseigner le morceau</button>}
+      {!piece && !book?.completed && <div className={styles.actions}><button type="button" className={styles.primary} disabled={busy} onClick={() => open("CORRECT")}>Choisir le morceau travaillé</button></div>}
       {allDone && !book?.completed && <button type="button" disabled={busy} onClick={() => save({ action: "COMPLETE_BOOK" })}>Terminer cette partition</button>}
       {book?.completed && <button type="button" className={styles.primary} disabled={busy} onClick={() => open("NEXT_BOOK")}>Choisir la prochaine partition</button>}
-      <div className={styles.links}>
-        <button type="button" disabled={busy} onClick={() => open("HISTORY")}>Reprendre l’historique</button>
-        <button type="button" disabled={busy} onClick={() => reload(!showHistory)}>Voir le suivi</button>
-      </div>
+      <details className={styles.more}><summary>Partition et morceaux déjà travaillés</summary>
+        <div className={styles.links}>
+          <button type="button" disabled={busy} onClick={() => open("CORRECT")}>Changer la partition ou le morceau</button>
+          <button type="button" disabled={busy} onClick={() => open("HISTORY")}>Indiquer les morceaux déjà terminés</button>
+          <button type="button" disabled={busy} onClick={() => reload(!showHistory)}>Consulter la progression</button>
+        </div>
+      </details>
     </>}
     {mode && <form onSubmit={(event) => {
       event.preventDefault();
@@ -94,7 +95,7 @@ export default function LearningCard({ studentId, studentName, sessionId, catalo
         { action: mode, product_id: productId, piece_id: pieceId || null, note, ...(mode === "HISTORY" ? { statuses } : {}) });
     }}>
       <fieldset disabled={busy} className={styles.editor}>
-        <legend>{mode === "FINISH" ? "Choisir le prochain morceau" : mode === "HISTORY" ? "Reprendre l’historique" : mode === "NEXT_BOOK" ? "Prochaine partition" : "Corriger la progression"}</legend>
+        <legend>{mode === "FINISH" ? "Choisir le prochain morceau" : mode === "HISTORY" ? "Morceaux déjà terminés" : mode === "NEXT_BOOK" ? "Prochaine partition" : "Partition et morceau travaillés"}</legend>
         {mode !== "FINISH" && <label>Partition travaillée
           <select required value={productId} onChange={(e) => selectBook(e.target.value)}>
             <option value="">Choisir une partition</option>
@@ -132,7 +133,7 @@ export default function LearningCard({ studentId, studentName, sessionId, catalo
         {mode !== "FINISH" && <details><summary>Note pédagogique (facultative)</summary>
           <textarea aria-label="Note pédagogique" rows={2} maxLength={4000} value={note} onChange={(e) => setNote(e.target.value)} />
         </details>}
-        <div className={styles.actions}><button type="button" onClick={() => setMode(null)}>Fermer sans enregistrer</button>
+        <div className={styles.actions}><button type="button" onClick={() => setMode(null)}>Annuler</button>
           <button type="submit" className={styles.primary}>Enregistrer</button></div>
       </fieldset>
     </form>}

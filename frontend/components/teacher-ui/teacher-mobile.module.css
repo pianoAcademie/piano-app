@@ -1,0 +1,56 @@
+/* Scoped to the professor portal: do not alter admin/client modals. */
+.portal.portal { min-width: 0; width: 100%; box-sizing: border-box; }
+.portal :global(.teacher-partitions-entry) { display: block; background: #7a4313; color: #fff; padding: 12px 16px; border-radius: 12px; margin-block: 12px; font-size: 16px; font-weight: 700; text-decoration: none; }
+.portal :global(.teacher-attendance-overlay) { z-index: 1000; }
+.portal :global(.teacher-attendance-modal) { width: min(760px, 96vw); }
+.portal :global(.teacher-attendance-body) { display: block; overflow-y: auto; overscroll-behavior: contain; }
+.portal :global(.teacher-attendance-secondary) { margin-top: 16px; }
+.portal :global(.teacher-course-tools) { border-top: 1px solid #dedede; margin-top: 16px; }
+.portal :global(.teacher-course-tools > summary) { min-height: 44px; padding-block: 12px; cursor: pointer; font-size: 14px; font-weight: 600; }
+.portal :global(.teacher-student-pager > [hidden]) { display: none; }
+.portal :global(.teacher-student-navigation) { position: sticky; top: -12px; z-index: 2; background: white; padding-block: 8px; display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; gap: 8px; align-items: end; margin-bottom: 12px; }
+.portal :global(.teacher-student-navigation label) { min-width: 0; display: grid; gap: 4px; font-size: 13px; }
+.portal :global(.teacher-student-navigation select) { width: 100%; min-width: 0; font-size: 16px; height: 44px; appearance: none; padding: 8px 28px 8px 10px; background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%235b4931' stroke-width='2'/%3E%3C/svg%3E") no-repeat right 10px center; }
+.portal :global(.teacher-student-navigation button) { min-height: 44px; padding: 8px; color: #493a29; background: #fff; border: 1px solid #d7c6b1; }
+.portal :global(.teacher-student-navigation button:disabled) { opacity: .35; }
+.portal :global(.teacher-attendance-row-card) { min-width: 0; padding: 12px; }
+.portal :global(.teacher-attendance-row-identity small) { display: none; }
+.portal :global(.teacher-attendance-row-head) { margin-bottom: 8px; }
+.portal :global(.teacher-attendance-primary) { display: block; }
+.portal :global(.teacher-attendance-toolbar) { margin-bottom: 12px; }
+.portal :global(.teacher-attendance-header .modal-close-x) { min-width: 44px; min-height: 44px; display: grid; place-items: center; }
+.portal :global(.teacher-attendance-footer) { display: flex; justify-content: space-between; align-items: center; }
+.portal :global(.teacher-attendance-footer .row) { width: 100%; justify-content: space-between; }
+.portal :global(.teacher-attendance-footer a) { min-height: 44px; display: inline-flex; align-items: center; }
+.portal :global(.teacher-closing) { padding: 24px; border-radius: 12px; background: white; }
+@media (max-width: 980px) {
+  .portal.portal { padding-inline: 12px; }
+  .portal.portal > * { min-width: 0; max-width: 100%; box-sizing: border-box; }
+  .portal :global(.teacher-page-header) { position: static; flex-wrap: wrap; padding: 10px; }
+  .portal :global(.teacher-page-header-actions) { min-width: 0; flex-wrap: wrap; }
+  .portal :global(.teacher-page-header-actions > .row) { min-width: 0; flex-wrap: wrap; }
+  .portal :global(.teacher-brand-banner) { display: none; }
+  .portal :global(.teacher-planning-card) { padding: 12px; }
+  .portal :global(.teacher-planning-head) { flex-wrap: wrap; gap: 6px; }
+  .portal :global(.teacher-planning-head h2) { font-size: 18px; }
+  .portal :global(.teacher-planning-controls) { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
+  .portal :global(.teacher-planning-controls input), .portal :global(.teacher-planning-controls select) { box-sizing: border-box; width: 100%; min-width: 0; height: 44px; font-size: 16px; }
+  .portal :global(.teacher-planning-controls-arrows) { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .portal :global(.teacher-planning-controls-arrows a) { display: grid; place-items: center; min-height: 44px; }
+  .portal :global(.coach-agenda-grid) { display: grid; grid-template-columns: minmax(0, 1fr); width: 100%; min-width: 0; }
+  .portal :global(.coach-agenda-grid > *) { min-width: 0; max-width: 100%; }
+  .portal :global(.coach-agenda-grid .month-day-card) { min-height: 0; }
+  .portal :global(.teacher-attendance-overlay) { padding: 0; align-items: stretch; }
+  .portal :global(.teacher-attendance-modal) { width: 100%; height: 100dvh; max-height: 100dvh; margin: 0; border: 0; border-radius: 0; }
+  .portal :global(.teacher-attendance-header) { position: static; padding: calc(10px + env(safe-area-inset-top, 0px)) 12px 10px; }
+  .portal :global(.teacher-attendance-header-main .modal-title) { font-size: 22px; }
+  .portal :global(.teacher-attendance-header-main p) { font-size: 13px; white-space: normal; }
+  .portal :global(.teacher-attendance-header-meta > .occ-badge), .portal :global(.teacher-attendance-header-meta > .status-badge) { display: none; }
+  .portal :global(.teacher-attendance-body) { padding: 12px; min-height: 0; }
+  .portal :global(.teacher-attendance-footer) { padding: 8px 12px calc(8px + env(safe-area-inset-bottom, 0px)); flex-wrap: nowrap; gap: 8px; }
+  .portal :global(.teacher-attendance-footer .status-badge) { font-size: 11px; }
+  .portal :global(.teacher-attendance-footer .row) { gap: 6px; }
+  .portal :global(.teacher-attendance-toolbar > .status-badge) { display: none; }
+  .portal :global(.teacher-attendance-accordion-body textarea) { font-size: 16px; }
+  .portal :global(.teacher-attendance-row-head) { gap: 5px; }
+}
