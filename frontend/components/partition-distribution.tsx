@@ -11,7 +11,7 @@ export type DistributionData = {
   needs: { student_id: string; student_name: string; professor_id: string; professor: string; site: string; course_at: string;
     assignment_id: string | null; product_id: string | null; title: string; status: string }[];
   totals: { professor_id: string; professor: string; product_id: string; title: string; needed: number; held: number; pending: number; to_pickup: number; richelieu: number }[];
-  movements: { id: string; professor: string; title: string; kind: string; state: string; quantity: number; created_at: string; confirmed_at: string | null;
+  movements: { id: string; professor_id: string; product_id: string; professor: string; title: string; kind: string; state: string; quantity: number; created_at: string; confirmed_at: string | null;
     student: string | null; actor: string | null; confirmed_by: string | null }[];
 };
 
@@ -56,11 +56,22 @@ export default function PartitionDistribution({ data }: { data: DistributionData
       {!data.totals.length && <p>Aucun besoin de partition renseigné pour cette semaine.</p>}
       {data.totals.map(row => <article key={`${row.professor_id}-${row.product_id}`} style={{ borderBottom: "1px solid #ddd", padding: "12px 0" }}>
         <h3>{row.title}{data.is_admin ? ` — ${row.professor}` : ""}</h3>
-        <p>À remettre : {row.needed} · Chez le professeur : {row.held} · Retrait demandé : {row.pending} · À récupérer : <strong>{row.to_pickup}</strong> · Stock Richelieu : {row.richelieu}</p>
+        <p>À remettre : {row.needed} · Déjà chez le professeur : {row.held} · Reste à récupérer : <strong>{Math.max(0, row.needed-row.held)}</strong> · Stock disponible à Richelieu : {row.richelieu}</p>
+        {row.needed-row.held > row.richelieu && <p role="alert" style={{ background: "#fde2df", color: "#8b1717", padding: 14, borderRadius: 10, fontWeight: 700 }}>Stock insuffisant : {Math.max(0, row.needed-row.held)} nécessaires, {row.richelieu} disponibles. Il manque {row.needed-row.held-row.richelieu} exemplaire(s). Un retrait partiel est possible.</p>}
+        {row.pending > 0 && <p>Demande en attente : {row.pending}. Aucun exemplaire retiré tant que le retrait réel n’est pas confirmé.</p>}
+        {data.movements.filter(m => m.product_id === row.product_id && m.professor_id === row.professor_id && m.kind === "PICKUP" && m.state === "PENDING").map(m => <div key={m.id}>
+          <ActionForm portal={portal}>{hidden("action", "cancel")}{hidden("movement_id", m.id)}<button>Annuler cette demande</button></ActionForm>
+          <ActionForm portal={portal}>{hidden("action", "confirm")}{hidden("movement_id", m.id)}
+            <label>Quantité réellement récupérée à Richelieu <input name="quantity" type="number" min="1" max={row.richelieu} required placeholder="Saisir la quantité retirée" /></label>
+            <label><input type="checkbox" required /> Je confirme que ces exemplaires ont été physiquement récupérés.</label>
+            <button disabled={row.richelieu < 1}>Confirmer le retrait réel</button>
+          </ActionForm>
+        </div>)}
+        {row.pending === 0 &&
         <ActionForm portal={portal}>
           {hidden("action", "movement")}{hidden("professor_id", row.professor_id)}{hidden("product_id", row.product_id)}{hidden("kind", "PICKUP")}
           <label>Quantité demandée <input name="quantity" type="number" min="1" max="500" defaultValue={Math.max(row.to_pickup, 1)} required /></label> <button>Préparer le retrait</button>
-        </ActionForm>
+        </ActionForm>}
         {row.held > 0 && <ActionForm portal={portal}>
           {hidden("action", "movement")}{hidden("professor_id", row.professor_id)}{hidden("product_id", row.product_id)}{hidden("kind", "RETURN")}
           <label>Exemplaires à rendre <input name="quantity" type="number" min="1" max={row.held} defaultValue="1" required /></label> <button>Déclarer un retour à Richelieu</button>
@@ -98,7 +109,7 @@ export default function PartitionDistribution({ data }: { data: DistributionData
         {row.state === "PENDING" && <ActionForm portal={portal}>{hidden("action", "cancel")}{hidden("movement_id", row.id)}<button>Annuler la demande</button></ActionForm>}
         {data.is_admin && row.state === "PENDING" && <ActionForm portal={portal}>
           {hidden("action", "confirm")}{hidden("movement_id", row.id)}
-          <label>Quantité réellement {row.kind === "RETURN" ? "reçue" : "remise au professeur"} <input name="quantity" type="number" min="1" max="500" defaultValue={row.quantity} required /></label> <button>Valider le {row.kind === "RETURN" ? "retour" : "retrait"}</button>
+          <label>Quantité réellement {row.kind === "RETURN" ? "reçue" : "remise au professeur"} <input name="quantity" type="number" min="1" max="500" required /></label> <button>Valider le {row.kind === "RETURN" ? "retour" : "retrait"}</button>
         </ActionForm>}
       </article>)}
     </section>

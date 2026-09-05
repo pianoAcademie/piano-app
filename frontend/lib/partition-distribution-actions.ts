@@ -42,5 +42,5 @@ export async function partitionDistributionAction(form: FormData): Promise<{ ok:
   revalidatePath("/admin/products");
   return { ok: true, message: action === "cancel" ? "Demande annulée." : action === "confirm" ? "Mouvement validé : le stock est à jour."
     : action === "deliver" ? "Partition remise à l’élève. Votre stock et son suivi sont à jour."
-    : action === "define" || action === "change" ? "Partition enregistrée pour cet élève." : "Demande enregistrée. Elle attend la validation à Richelieu." };
+    : action === "define" || action === "change" ? "Partition enregistrée pour cet élève." : "Demande enregistrée, sans mouvement de stock. Lors du retrait à Richelieu, saisissez et confirmez la quantité réellement récupérée." };
 }

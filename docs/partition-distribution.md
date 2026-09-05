@@ -5,7 +5,7 @@
 - Professeur : `/prof/partitions`, lien depuis son accueil. Choisir la semaine ; les besoins proviennent des réservations du planning de production, avec remplacement professeur pris en compte. Un élève et une référence ne sont comptés qu'une fois. Les partitions déjà remises ne sont pas à reprendre.
 - Une partition inconnue apparaît « À définir ». Le professeur choisit la référence avant de préparer son retrait.
 - Le professeur demande les quantités retirées à Richelieu. L'administration confirme les quantités réellement données sur `/admin/partition-distribution`, accessible depuis Produits. Une demande seule ne modifie pas le stock.
-- La confirmation transfère le stock de Richelieu vers le professeur ; le stock global ne baisse pas.
+- Le professeur peut confirmer son propre retrait en saisissant la quantité réellement récupérée (champ vide, sans validation automatique de la quantité demandée). L'administration peut également confirmer le retrait ; elle seule valide les retours. La confirmation transfère le stock de Richelieu vers le professeur ; le stock global ne baisse pas.
 - Le professeur confirme la remise à chaque élève. Cette action consomme son stock, date la remise et actualise le suivi pédagogique. Elle ne crée aucune facture.
 - Si la référence change avant remise, sélectionner la partition réellement remise. L'ancien exemplaire reste chez le professeur jusqu'à son retour. Les retours sont confirmés par l'administration.
 

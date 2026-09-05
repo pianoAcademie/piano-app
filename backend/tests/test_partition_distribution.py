@@ -133,6 +133,19 @@ def test_professor_cannot_withdraw_for_someone_else(scenario):
     assert error.value.status_code == 403
 
 
+def test_professor_confirms_actual_partial_pickup(scenario):
+    db, admin, actor, prof, student, product, stock, row, session, week = scenario
+    movement = request_movement(MovementIn(operation_id=uuid4(), professor_id=prof.id, product_id=product.id, quantity=10, kind="PICKUP"), db, actor)
+    stock.real_quantity = 4
+    db.flush()
+    with pytest.raises(HTTPException):
+        confirm(movement["id"], ConfirmIn(quantity=10), db, actor)
+    confirm(movement["id"], ConfirmIn(quantity=4), db, actor)
+    confirm(movement["id"], ConfirmIn(quantity=4), db, actor)
+    assert held_quantity(db, prof.id, product.id) == 4
+    assert stock.real_quantity == 0
+
+
 def test_cancelled_request_never_changes_stock(scenario):
     db, admin, actor, prof, student, product, stock, row, session, week = scenario
     result = request_movement(MovementIn(operation_id=uuid4(), professor_id=prof.id, product_id=product.id, quantity=3, kind="PICKUP"), db, actor)

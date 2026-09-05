@@ -87,7 +87,8 @@ def dashboard(week: date | None = None, db=Depends(get_db), actor=Depends(requir
     from app.api.routes.repertoire import _partition_products
     products = _partition_products(db)
     source = richelieu(db)
-    stocks = {s.product_id: s.real_quantity for s in db.scalars(select(ProductLocationStock).where(ProductLocationStock.location_id == source.id)).all()}
+    from app.services.product_catalog import _available_physical_quantity
+    stocks = {s.product_id: _available_physical_quantity(db, stock=s) for s in db.scalars(select(ProductLocationStock).where(ProductLocationStock.location_id == source.id)).all()}
     stmt = select(PartitionMovement)
     if own:
         stmt = stmt.where(PartitionMovement.professor_id == own)
@@ -119,6 +120,7 @@ def dashboard(week: date | None = None, db=Depends(get_db), actor=Depends(requir
     return dict(week=week.isoformat(), is_admin=own is None, needs=needs, totals=totals,
         products=[dict(id=str(p.id), title=p.title) for p in products],
         movements=[dict(id=str(m.id), professor=professors.get(str(m.professor_id), "Professeur"), title=titles.get(str(m.product_id), "Partition"),
+            professor_id=str(m.professor_id), product_id=str(m.product_id),
             kind=m.kind, state=m.state, quantity=m.quantity, created_at=m.created_at.isoformat(),
             confirmed_at=m.confirmed_at.isoformat() if m.confirmed_at else None,
             student=delivery_students.get(m.assignment_id), actor=actor_names.get(m.actor_user_id),
@@ -168,10 +170,12 @@ class ConfirmIn(BaseModel):
 
 
 @router.post("/partition-distribution/movements/{movement_id}/confirm")
-def confirm(movement_id: UUID, payload: ConfirmIn, db=Depends(get_db), actor=Depends(require_roles(UserRole.ADMIN))):
+def confirm(movement_id: UUID, payload: ConfirmIn, db=Depends(get_db), actor=Depends(require_roles(UserRole.ADMIN, UserRole.PROF))):
     row = db.scalar(select(PartitionMovement).where(PartitionMovement.id == movement_id).with_for_update())
     if row is None:
         raise HTTPException(404, "Demande introuvable.")
+    if actor.role == UserRole.PROF and (row.professor_id != actor_professor(db, actor).id or row.kind != "PICKUP"):
+        raise HTTPException(403, "Vous pouvez confirmer uniquement votre propre retrait.")
     if row.state != "CONFIRMED":
         row.quantity = payload.quantity
         confirm_movement(db, row, actor.id)

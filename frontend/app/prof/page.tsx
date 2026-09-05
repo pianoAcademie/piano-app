@@ -864,7 +864,6 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
 
   return (
     <main className="page prof-page teacher-shell">
-      <Link className="mode-link" href="/prof/partitions">Mes partitions — retrait à Richelieu et remises aux élèves</Link>
       <PageHeaderMobile
         title={fullName || uiText(language, "teacher.default_name")}
         subtitle={profile.email}
@@ -878,7 +877,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                 href="/admin"
                 aria-label={language === "en" ? "Switch to administration" : "Passer en mode administration"}
               >
-                {language === "en" ? "Admin mode" : "Mode admin"}
+                {language === "en" ? "Back to administration" : "Retour administration"}
               </Link>
             ) : null}
             <Link className="mode-link teacher-header-link" href="/prof/statements">
@@ -915,6 +914,9 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
         }
       />
 
+      <Link href="/prof/partitions" style={{ display: "block", background: "#7a4313", color: "#fff", padding: "18px 20px", borderRadius: 16, margin: "16px 0", fontSize: 20, fontWeight: 700, textDecoration: "none" }}>
+        📚 Mes partitions <span style={{ display: "block", fontSize: 14, fontWeight: 400 }}>Retraits à Richelieu et remises aux élèves →</span>
+      </Link>
       <section className="teacher-brand-banner card">
         <PortalBrandLockup
           title={uiText(language, "common.app_name")}
@@ -930,6 +932,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
       </section>
 
       <section className="card prof-nav teacher-desktop-nav">
+        <Link className="prof-nav-link" href="/prof/partitions">📚 Mes partitions</Link>
         {navTabs.map((tab) => (
           <Link
             key={tab.id}
