@@ -19,3 +19,7 @@ Le mode public enfants respecte le choix de publication enregistré, les droits 
 Le contrôle exhaustif de 548 fichiers avant bascule a détecté le déploiement concurrent 860a04db (ajustement du retrait des partitions). Ce commit a été intégré au socle avant reconstruction finale. Les calendriers publics ordinaires ont des empreintes JSON identiques avant/après : 85 séances sans filtre de public, 79 enfants et 52 adultes. Le calendrier intégré a été vérifié via l'ancien lien WordPress : 10 séances affichées, offre à 20 EUR et connexion orientée enfant.
 
 Avant la bascule, vérifier de nouveau les sources et images actuelles. Sauvegarde actualisée : /home/ubuntu/child-trials-restore-20260905/pre-rollout-860a04db.tgz. Images candidates construites séparément des services en activité. Les scripts d'audit fournis n'effectuent que des lectures et imposent une transaction READ ONLY.
+
+## Résultat du déploiement
+
+Version applicative 65ba61cb déployée et enregistrée sur main. La compilation Next.js finale a réussi. En production, l'URL exacte intégrée dans WordPress affiche 10 séances disponibles sur la semaine du 7 septembre, les horaires locaux attendus, le tarif d'essai 20 EUR et le lien de connexion enfant. API saine. Aucune réservation ni aucun choix de publication modifié. Images de retour arrière : piano-child-trials-rollback-backend:860a04db et piano-child-trials-rollback-frontend:860a04db. Les workers, PostgreSQL et Redis sont restés en activité.
