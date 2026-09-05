@@ -23,7 +23,21 @@ Les endpoints professeur contrôlent le rattachement de l'élève au cours du pr
 
 Migration additive `20260905_0242` : `student_learning_progress` et `student_learning_events`. Appliquer la migration avant de démarrer le backend et le frontend correspondants. Ne pas supprimer ces tables lors d'un retour applicatif après utilisation.
 
-Avant tout déploiement : relever de nouveau les sources et images réellement en production, comparer la branche et intégrer les changements concurrents. Cette évolution n'a pas été déployée pendant son implémentation.
+Avant tout déploiement : relever de nouveau les sources et images réellement en production, comparer la branche et intégrer les changements concurrents.
+
+## Production — 5 septembre 2026
+
+Déployé à la demande de l'utilisateur, code `cdbdd879`. Socle `fb52bae8` vérifié avant préparation puis immédiatement avant bascule : 800 fichiers identiques. Après bascule : 807 fichiers identiques au code attendu.
+
+Migration `20260905_0242` appliquée. Backend sain, connexion publique HTTP 200, portail professeur protégé par redirection d'authentification. Contrôle en transaction strictement en lecture seule : 5 cours, 11 suivis élèves cohérents entre liste des présences et endpoint pédagogique. Aucun changement de suivi élève, paiement ou email de test en production.
+
+Les 41 tests locaux de l'implémentation sont complétés par 28 tests unitaires/répertoire dans une instance jetable de l'image serveur. Build frontend de production réussi. Les services de notifications n'ont pas été redémarrés.
+
+- Image backend : `sha256:5f447ccd7b0ad1b6ef1fb47d693c51393a457da381e19aafbd83160c6aa986ae`.
+- Image frontend : `sha256:53b8b36ca4dd2943b96fb22d0372891f12f89cd8be922b5156e8ce2d3ad44129`.
+- Backend construit sur l'image de production précédente pour conserver exactement ses dépendances ; recette `/home/ubuntu/teacher-learning-cdbdd879/backend-deploy.Dockerfile`.
+- Sauvegardes sources et base : `/home/ubuntu/teacher-learning-cdbdd879/pre-rollout-sources.tgz` et `pre-rollout-db.dump` (accès restreint).
+- Images de retour arrière : `piano-learning-rollback-backend:fb52bae8`, `piano-learning-rollback-frontend:fb52bae8`. Restaurer les sources correspondantes et ces images ensemble après contrôle d'éventuels changements concurrents ; conserver les tables additives et les nouvelles données pédagogiques.
 
 ## Vérifications locales
 
