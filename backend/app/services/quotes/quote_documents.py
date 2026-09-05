@@ -2074,7 +2074,11 @@ def _sessions_from_planning_block(db: Session, block: dict[str, Any]) -> list[di
     # make that stale quantity self-perpetuating (for example 31 instead of the
     # 33 scheduled sessions).  Custom periods and non-live packs keep their
     # explicit limit semantics.
-    if session_limit > 0 and (not is_live_planning_block or _is_solfege_planning_block(block)):
+    if session_limit > 0 and (
+        not is_live_planning_block
+        or _is_solfege_planning_block(block)
+        or str(block.get("planning_session_limit_source") or "").strip().lower() == "quote_line"
+    ):
         sessions = sessions[:session_limit]
     return sessions
 
@@ -2396,7 +2400,16 @@ def _planning_session_limit_from_quote_line_meta(
     if limit > 0:
         return limit
     if not allow_session_quantity:
-        return None
+        if str(getattr(line, "pricing_unit", "") or "").strip().lower() != "session":
+            return None
+        try:
+            pack_quantity = Decimal(str(getattr(line, "quantity", "") or ""))
+        except Exception:
+            return None
+        if pack_quantity != pack_quantity.to_integral_value():
+            return None
+        inferred_pack_limit = int(pack_quantity)
+        return inferred_pack_limit if 1 < inferred_pack_limit <= 10 else None
     if str(getattr(line, "pricing_unit", "") or "").strip().lower() != "session":
         return None
     try:
@@ -2517,8 +2530,15 @@ def _calendar_snapshot_with_line_recommendation_keys(
                 matching_line,
                 allow_session_quantity=len(activity_lines) > 1,
             )
-            if limit is not None and _planning_session_limit_from_block(block) != limit:
-                block = {**block, "planning_session_limit": limit}
+            if limit is not None and (
+                _planning_session_limit_from_block(block) != limit
+                or str(block.get("planning_session_limit_source") or "").strip().lower() != "quote_line"
+            ):
+                block = {
+                    **block,
+                    "planning_session_limit": limit,
+                    "planning_session_limit_source": "quote_line",
+                }
                 changed_blocks = True
             normalized_blocks.append(block)
             continue
@@ -2538,8 +2558,15 @@ def _calendar_snapshot_with_line_recommendation_keys(
             line,
             allow_session_quantity=len(activity_lines) > 1,
         )
-        if limit is not None and _planning_session_limit_from_block(block) != limit:
-            block = {**block, "planning_session_limit": limit}
+        if limit is not None and (
+            _planning_session_limit_from_block(block) != limit
+            or str(block.get("planning_session_limit_source") or "").strip().lower() != "quote_line"
+        ):
+            block = {
+                **block,
+                "planning_session_limit": limit,
+                "planning_session_limit_source": "quote_line",
+            }
             changed_blocks = True
         normalized_blocks.append(block)
 
@@ -3530,6 +3557,8 @@ def _quote_template_disables_pass_recup(*, db: Session | None, quote: Quote) -> 
     compact = re.sub(r"[^a-z0-9]+", "", searchable)
     words = set(re.split(r"[^a-z0-9]+", searchable))
     if "barleduc" in compact or "bld" in words:
+        return True
+    if "coursparticulieradulte" in compact or "privateadultlesson" in compact:
         return True
     return any(("eveil" in item) or ("initiation" in item) for item in candidates if item)
 

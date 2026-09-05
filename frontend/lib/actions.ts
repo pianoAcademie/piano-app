@@ -14421,6 +14421,7 @@ type QuotePlanningLineInput = {
   line_category?: string | null;
   line_type?: string | null;
   activity_id?: string | null;
+  pricing_unit?: string | null;
   quantity?: string | number | null;
   meta?: Record<string, unknown> | null;
 };
@@ -14754,6 +14755,11 @@ function quoteLinePlanningLimit(line: QuotePlanningLineInput): number {
   if (templateLimit > 0) {
     return templateLimit;
   }
+  const pricingUnit = String(line.pricing_unit ?? "").trim().toLowerCase();
+  const quantity = positiveInt(line.quantity);
+  if (pricingUnit === "session" && quantity > 1 && quantity <= 10) {
+    return quantity;
+  }
   return 0;
 }
 
@@ -14797,6 +14803,7 @@ function normalizePlanningBlockSessionLimit(
   block: QuotePlanningBlockInput,
   quoteLines: QuotePlanningLineInput[],
 ): QuotePlanningBlockInput {
+  const inferred = inferPlanningSessionLimitForBlock(block, quoteLines);
   const normalizedActivityLabel = String(block.activity_label ?? "")
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
@@ -14805,6 +14812,11 @@ function normalizePlanningBlockSessionLimit(
     String(block.source ?? "").trim().toLowerCase() === "live_planning"
     && !normalizedActivityLabel.includes("solfege")
   ) {
+    if (inferred > 0) {
+      return positiveInt(block.planning_session_limit) === inferred
+        ? block
+        : { ...block, planning_session_limit: inferred };
+    }
     return positiveInt(block.planning_session_limit) > 0
       ? { ...block, planning_session_limit: null }
       : block;
@@ -14814,7 +14826,6 @@ function normalizePlanningBlockSessionLimit(
       ? { ...block, planning_session_limit: null }
       : block;
   }
-  const inferred = inferPlanningSessionLimitForBlock(block, quoteLines);
   if (inferred <= 0) {
     return positiveInt(block.planning_session_limit) <= 1
       ? { ...block, planning_session_limit: null }

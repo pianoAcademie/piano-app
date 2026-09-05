@@ -2144,6 +2144,15 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
         self.assertTrue(_quote_template_disables_pass_recup(db=None, quote=child_quote))
         self.assertTrue(_quote_template_disables_pass_recup(db=None, quote=adult_quote))
 
+    def test_private_adult_quote_template_disables_pass_recup_pdf_option(self) -> None:
+        quote = SimpleNamespace(
+            meta={"quote_template_code": "TEMPLATE_COURS_PARTICULIER_ADULTE"},
+            quote_template_id=None,
+            quote_template_version_id=None,
+        )
+
+        self.assertTrue(_quote_template_disables_pass_recup(db=None, quote=quote))
+
     def test_end_year_concert_line_match_detects_billed_option(self) -> None:
         line = SimpleNamespace(
             title="Concert de fin d’année",

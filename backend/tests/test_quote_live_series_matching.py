@@ -732,6 +732,11 @@ class QuoteLiveSeriesMatchingTests(unittest.TestCase):
             31,
         )
 
+    def test_planning_session_limit_infers_a_small_manual_session_pack(self) -> None:
+        line = SimpleNamespace(meta={}, pricing_unit="session", quantity="10.00")
+
+        self.assertEqual(_planning_session_limit_from_quote_line(line), 10)
+
     def test_detached_first_occurrence_recovers_full_series_from_expected_dates(self) -> None:
         course_type_id = uuid4()
         location_id = uuid4()

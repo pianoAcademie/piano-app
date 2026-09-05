@@ -9193,7 +9193,16 @@ def _planning_session_limit_from_quote_line(line: QuoteLine, *, allow_session_qu
     if limit > 0:
         return limit
     if not allow_session_quantity:
-        return None
+        if str(getattr(line, "pricing_unit", "") or "").strip().lower() != "session":
+            return None
+        try:
+            pack_quantity = Decimal(str(getattr(line, "quantity", "") or ""))
+        except Exception:
+            return None
+        if pack_quantity != pack_quantity.to_integral_value():
+            return None
+        inferred_pack_limit = int(pack_quantity)
+        return inferred_pack_limit if 1 < inferred_pack_limit <= 10 else None
     if str(getattr(line, "pricing_unit", "") or "").strip().lower() != "session":
         return None
     try:

@@ -50,9 +50,10 @@ test("catalogue does not depend on billed quantity, other packs, or an existing 
   }
 });
 
-test("billed quantities are not implicit planning limits; explicit pack metadata still works", () => {
+test("small billed session packs constrain planning while annual quantities do not", () => {
   const { quoteLinePlanningLimit } = pageFor();
   assert.equal(quoteLinePlanningLimit(fixture.line), 0);
+  assert.equal(quoteLinePlanningLimit({ ...fixture.line, quantity: "10.00" }), 10);
   assert.equal(quoteLinePlanningLimit({ ...fixture.line, meta: { planning_session_limit: 10 } }), 10);
   assert.equal(quoteLinePlanningLimit({ ...fixture.line, meta: { typeform_template: { planning_session_limit: 26 } } }), 26);
 });
@@ -218,6 +219,12 @@ test("an intentionally limited pack and a custom period remain limited on save",
   });
   assert.equal(pack.sessions.length, 10);
   assert.equal(pack.blocks[0].sessions_count, 10);
+  const manualPack = await server.buildCalendarSnapshotFromBlocks({
+    blocks: [block], quoteLines: [{ ...fixture.line, quantity: "10.00", meta: {} }],
+    token: "fixture-only", returnTo: "/fixture", schoolYearLabel: "2026-2027",
+  });
+  assert.equal(manualPack.sessions.length, 10);
+  assert.equal(manualPack.blocks[0].planning_session_limit, 10);
   const custom = await server.buildCalendarSnapshotFromBlocks({
     blocks: [{ ...block, custom_period: true, start_date: "2027-06-02", end_date: "2027-06-09" }],
     quoteLines: [fixture.line], token: "fixture-only", returnTo: "/fixture", schoolYearLabel: "2026-2027",

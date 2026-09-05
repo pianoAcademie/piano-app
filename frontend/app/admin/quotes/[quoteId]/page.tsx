@@ -1078,10 +1078,17 @@ function quoteLinePlanningLimit(line: QuoteLineOut): number {
   const template = readObject(meta.typeform_template) || {};
   const explicit = positiveInt(meta.planning_session_limit)
     || positiveInt(template.planning_session_limit);
-  // A billed quantity is an output, not a planning constraint. In particular,
-  // 31 Saturday lessons must not cap another block of the same activity at 31.
-  // Only deliberately configured pack/template limits constrain a block.
-  return explicit > 0 ? explicit : 0;
+  if (explicit > 0) {
+    return explicit;
+  }
+  const quantity = positiveInt(line.quantity);
+  // Annual quantities remain descriptive, but a small session-priced quantity
+  // is a pack commitment (for example the adult 10-lesson offer).
+  return String(line.pricing_unit ?? "").trim().toLowerCase() === "session"
+    && quantity > 1
+    && quantity <= 10
+      ? quantity
+      : 0;
 }
 
 function dateOnly(value: string): Date | null {
