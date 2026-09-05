@@ -22,3 +22,11 @@ Appliquer la migration `20260905_0241` avant le démarrage du code mis à jour. 
 ## Vérification locale
 
 Migration aller/retour vérifiée sur une base PostgreSQL isolée. Les tests de distribution s'exécutent avec `PARTITION_TEST_DATABASE_URL` ; ils annulent leurs données à la fin de chaque test. Ne jamais les pointer vers la production.
+
+## Déploiement du 5 septembre 2026
+
+Correctif `e3e195cd` appliqué sélectivement sur la production, en préservant le correctif de réorganisation `6744e88e` déployé le même matin. Les sources correspondantes sont réunies dans le commit de fusion `5d86ab4f`.
+
+Sauvegarde préalable : `/home/ubuntu/deploy-backups/partition-distribution-e3e195cd` (sources, export PostgreSQL et références des anciennes images). Images de retour arrière : `piano-partition-rollback-backend:e3e195cd` et `piano-partition-rollback-frontend:e3e195cd`. Ne pas restaurer la base pour un simple retour arrière applicatif : la migration ajoute une table compatible avec l'ancien code.
+
+Les deux images ont été construites avant remplacement des conteneurs. Base de données, Redis et workers de notifications laissés en service. Migration `20260905_0241` appliquée, schéma d'authentification contrôlé. Compilation Next.js réussie ; 30 tests combinés partitions/réorganisation réussis. Contrôle en lecture seule du tableau sur la production : semaine du 7 septembre, 343 besoins et aucun mouvement créé. API saine, connexion publique HTTP 200 et route professeur protégée par redirection d'authentification.
