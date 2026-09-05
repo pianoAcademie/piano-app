@@ -140,6 +140,7 @@ class Location(Base):
     code: Mapped[str] = mapped_column(String(50), nullable=False, unique=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     address_line: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    access_instructions: Mapped[str | None] = mapped_column(Text, nullable=True)
     city: Mapped[str | None] = mapped_column(String(120), nullable=True)
     country_code: Mapped[str | None] = mapped_column(String(2), nullable=True)
     is_online: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))

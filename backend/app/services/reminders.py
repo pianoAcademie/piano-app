@@ -234,6 +234,10 @@ def _build_email_payload(
         f"Date: {start_human}",
         f"Lieu: {location_label}",
     ]
+    if not location.is_online and (location.address_line or "").strip():
+        lines.append(f"Adresse: {location.address_line.strip()}")
+    if not location.is_online and (location.access_instructions or "").strip():
+        lines.append(f"Code de la porte principale: {location.access_instructions.strip()}")
 
     professor_ids = effective_professor_ids_for_session(db, session_obj=session_obj)
     if professor_ids:

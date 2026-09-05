@@ -176,6 +176,45 @@ class BookingNotificationTests(unittest.TestCase):
         self.assertIn("Prof Test, Guest Teacher", body)
         self.assertIn('href="https://app.example.test/client?tab=planning"', body)
 
+    def test_physical_reminder_includes_address_and_main_door_code_in_french(self) -> None:
+        _, body = _build_lesson_reminder_email(
+            recipient_name="Camille",
+            student_name="Alma",
+            course_type_name="Cours collectif",
+            start_at=datetime(2026, 9, 7, 17, 0, tzinfo=timezone.utc),
+            end_at=datetime(2026, 9, 7, 18, 0, tzinfo=timezone.utc),
+            timezone_name="Europe/Paris",
+            location_name="Rue de la Pompe",
+            location_address="19 rue de la Pompe",
+            location_access_instructions="1961A",
+            meeting_link=None,
+            teacher_names=["Prof Test"],
+            language="fr",
+        )
+
+        self.assertIn("Rue de la Pompe", body)
+        self.assertIn("Adresse :</strong> 19 rue de la Pompe", body)
+        self.assertIn("Code de la porte principale :</strong> 1961A", body)
+
+    def test_physical_reminder_localizes_access_details_in_english(self) -> None:
+        _, body = _build_lesson_reminder_email(
+            recipient_name="Camille",
+            student_name="Alma",
+            course_type_name="Cours collectif",
+            start_at=datetime(2026, 9, 7, 17, 0, tzinfo=timezone.utc),
+            end_at=datetime(2026, 9, 7, 18, 0, tzinfo=timezone.utc),
+            timezone_name="Europe/Paris",
+            location_name="Rue de la Pompe",
+            location_address="19 rue de la Pompe",
+            location_access_instructions="1961A",
+            meeting_link=None,
+            teacher_names=["Prof Test"],
+            language="en",
+        )
+
+        self.assertIn("Address :</strong> 19 rue de la Pompe", body)
+        self.assertIn("Main door code :</strong> 1961A", body)
+
     def test_reminder_schedules_email_for_guardian_only(self) -> None:
         now = datetime(2026, 8, 1, 18, 0, tzinfo=timezone.utc)
         session_id = uuid4()

@@ -304,6 +304,8 @@ def _build_lesson_reminder_email(
     end_at: datetime,
     timezone_name: str | None,
     location_name: str,
+    location_address: str | None = None,
+    location_access_instructions: str | None = None,
     meeting_link: str | None,
     teacher_names: list[str] | None,
     language: str | None,
@@ -337,6 +339,8 @@ def _build_lesson_reminder_email(
         date_label = "Date"
         time_label = "Time"
         location_label = "Location"
+        address_label = "Address"
+        access_label = "Main door code"
         teachers_label = "Teachers" if len(teacher_names or []) > 1 else "Teacher"
         timezone_label = "Time zone"
         online_label = "ONLINE LESSON"
@@ -361,6 +365,8 @@ def _build_lesson_reminder_email(
         date_label = "Date"
         time_label = "Horaire"
         location_label = "Lieu"
+        address_label = "Adresse"
+        access_label = "Code de la porte principale"
         teachers_label = "Professeurs" if len(teacher_names or []) > 1 else "Professeur"
         timezone_label = "Fuseau horaire"
         online_label = "COURS EN LIGNE"
@@ -379,6 +385,14 @@ def _build_lesson_reminder_email(
     normalized_teacher_names = list(
         dict.fromkeys(name.strip() for name in (teacher_names or []) if name and name.strip())
     )
+    location_details = escape(displayed_location)
+    if location_address and location_address.strip():
+        location_details += f"<br><strong>{escape(address_label)} :</strong> {escape(location_address.strip())}"
+    if location_access_instructions and location_access_instructions.strip():
+        location_details += (
+            f"<br><strong>{escape(access_label)} :</strong> "
+            f"{escape(location_access_instructions.strip())}"
+        )
     teachers_row = ""
     if normalized_teacher_names:
         teachers_value = ", ".join(normalized_teacher_names)
@@ -465,7 +479,7 @@ def _build_lesson_reminder_email(
         f'<tr><td style="padding:8px 12px 8px 20px;font-size:13px;font-weight:700;color:#667085;">{escape(timezone_label)}</td>'
         f'<td style="padding:8px 20px 8px 12px;font-size:15px;color:#172033;">{escape(normalized_timezone)}</td></tr>'
         f'<tr><td style="padding:8px 12px {"8px" if teachers_row else "18px"} 20px;font-size:13px;font-weight:700;color:#667085;">{escape(location_label)}</td>'
-        f'<td style="padding:8px 20px {"8px" if teachers_row else "18px"} 12px;font-size:15px;color:#172033;">{escape(displayed_location)}</td></tr>'
+        f'<td style="padding:8px 20px {"8px" if teachers_row else "18px"} 12px;font-size:15px;color:#172033;">{location_details}</td></tr>'
         f'{teachers_row}'
         '</table>'
         f'{account_block}'
@@ -1349,6 +1363,10 @@ def schedule_reminder_notifications_for_booking(
                 end_at=booking_end_at,
                 timezone_name=recipient_timezone,
                 location_name=location_name,
+                location_address=(location.address_line if location is not None and not is_online else None),
+                location_access_instructions=(
+                    location.access_instructions if location is not None and not is_online else None
+                ),
                 meeting_link=meeting_link,
                 teacher_names=teacher_names,
                 language=language,
