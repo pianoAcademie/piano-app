@@ -171,7 +171,10 @@ def upgrade() -> None:
             """
             UPDATE quote_lines
             SET meta = COALESCE(meta, '{}'::jsonb)
-                       || '{"commitment_kind":"ten_course_pack","planning_session_limit":10}'::jsonb,
+                       || jsonb_build_object(
+                            'commitment_kind', 'ten_course_pack',
+                            'planning_session_limit', 10
+                          ),
                 updated_at = now()
             WHERE quote_id = :quote_id
               AND activity_id = CAST(:activity_id AS uuid)
