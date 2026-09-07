@@ -2879,6 +2879,7 @@ class AdminPlanningSimulationSlotOut(BaseModel):
     course_type_name: str
     course_type_color_hex: str | None = None
     course_type_mode: DeliveryMode | None = None
+    requires_professor: bool = True
     weekday: int
     weekday_label: str
     start_time: str
@@ -2934,6 +2935,54 @@ class AdminPlanningSimulationTeacherAssignmentOut(BaseModel):
     teacher_label: str | None = None
     status: Literal["PREVISIONAL", "CONFIRMED"] | None = None
     deleted: bool = False
+
+
+class AdminPlanningTeacherSyncRequest(BaseModel):
+    school_year_label: str = Field(min_length=4, max_length=20)
+    confirmed: bool = False
+    selected_change_keys: list[str] | None = None
+
+
+class AdminPlanningTeacherSyncChangeOut(BaseModel):
+    selection_key: str = ""
+    slot_key: str
+    position: int
+    teacher_label: str | None = None
+    current_teacher_label: str | None = None
+    planned_teacher_label: str | None = None
+    professor_id: UUID | None = None
+    location_name: str | None = None
+    course_type_name: str | None = None
+    weekday: int | None = Field(default=None, ge=0, le=6)
+    start_time: str | None = None
+    end_time: str | None = None
+    first_session_at: datetime | None = None
+    last_session_at: datetime | None = None
+    operation: Literal["ADD", "REPLACE", "REMOVE"]
+    session_count: int
+    conflict: bool = False
+    conflict_reason: str | None = None
+
+
+class AdminPlanningTeacherSyncPreviewOut(BaseModel):
+    school_year_label: str
+    effective_from: datetime
+    last_sync_at: datetime | None = None
+    change_count: int
+    session_count: int
+    conflict_count: int
+    changes: list[AdminPlanningTeacherSyncChangeOut] = Field(default_factory=list)
+
+
+class AdminPlanningTeacherSyncRunOut(BaseModel):
+    id: UUID
+    school_year_label: str
+    effective_from: datetime
+    status: Literal["APPLIED", "ROLLED_BACK"]
+    change_count: int
+    session_count: int
+    created_at: datetime
+    rolled_back_at: datetime | None = None
 
 
 class AdminPlanningSimulationSummaryOut(BaseModel):

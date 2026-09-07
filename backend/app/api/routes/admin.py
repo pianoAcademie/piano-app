@@ -4,6 +4,7 @@ from calendar import monthrange
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from html import unescape
+import hashlib
 import json
 import logging
 import re
@@ -57,7 +58,7 @@ from app.models.ops import (
     CommunicationChannel,
     CommunicationSenderCategory,
 )
-from app.models.planning_simulation import PlanningSimulationTeacherAssignment
+from app.models.planning_simulation import PlanningSimulationTeacherAssignment, PlanningSimulationTeacherSyncRun
 from app.models.plan import ClientPlanSubscription, Plan, PlanKind
 from app.models.quote import Prospect, Quote, QuoteAcceptanceFollowup
 from app.models.user import ClientStatus, User, UserPresence, UserPresenceHour, UserRole
@@ -136,6 +137,10 @@ from app.schemas.admin import (
     AdminPlanningSimulationTeacherActivityNeedOut,
     AdminPlanningSimulationTeacherAssignmentOut,
     AdminPlanningSimulationTeacherAssignmentUpdateRequest,
+    AdminPlanningTeacherSyncChangeOut,
+    AdminPlanningTeacherSyncPreviewOut,
+    AdminPlanningTeacherSyncRequest,
+    AdminPlanningTeacherSyncRunOut,
     AdminPlanningSimulationTeacherDayNeedOut,
     AdminPlanningSimulationTeacherNeedsOut,
     AdminPlanningSimulationTeacherNeedSummaryOut,
@@ -3421,6 +3426,7 @@ def _planning_simulation_day_timeline(
 def _planning_simulation_teacher_needs(
     slots: list[AdminPlanningSimulationSlotOut],
 ) -> AdminPlanningSimulationTeacherNeedsOut:
+    slots = [slot for slot in slots if slot.requires_professor]
     slots_by_weekday: dict[int, list[AdminPlanningSimulationSlotOut]] = {}
     slots_by_activity: dict[str, list[AdminPlanningSimulationSlotOut]] = {}
     for slot in slots:
@@ -3513,7 +3519,10 @@ def _planning_simulation_slot_half_days(slot: AdminPlanningSimulationSlotOut) ->
 def _planning_simulation_teacher_assignment_warnings(
     slots: list[AdminPlanningSimulationSlotOut],
 ) -> dict[str, list[str]]:
-    assigned_slots = [slot for slot in slots if _planning_simulation_teacher_assignment_keys(slot)]
+    assigned_slots = [
+        slot for slot in slots
+        if slot.requires_professor and _planning_simulation_teacher_assignment_keys(slot)
+    ]
     warning_codes: dict[str, set[str]] = {slot.slot_key: set() for slot in assigned_slots}
 
     for index, first in enumerate(assigned_slots):
@@ -3621,7 +3630,10 @@ def update_planning_simulation_teacher_assignment(
     if professor is None and not teacher_label:
         deleted_id = assignment.id if assignment is not None else None
         if assignment is not None:
-            db.delete(assignment)
+            assignment.deleted_at = _utcnow()
+            assignment.updated_by_user_id = current_user.id
+            assignment.updated_at = assignment.deleted_at
+            db.add(assignment)
             db.commit()
         return AdminPlanningSimulationTeacherAssignmentOut(
             id=deleted_id,
@@ -3643,6 +3655,7 @@ def update_planning_simulation_teacher_assignment(
             created_by_user_id=current_user.id,
             updated_by_user_id=current_user.id,
             updated_at=now,
+            deleted_at=None,
         )
         db.add(assignment)
     else:
@@ -3651,6 +3664,7 @@ def update_planning_simulation_teacher_assignment(
         assignment.status = payload.status
         assignment.updated_by_user_id = current_user.id
         assignment.updated_at = now
+        assignment.deleted_at = None
 
     db.commit()
     db.refresh(assignment)
@@ -3663,6 +3677,531 @@ def update_planning_simulation_teacher_assignment(
         teacher_label=assignment.teacher_label,
         status=assignment.status,
     )
+
+
+def _teacher_sync_series_id(slot_key: str) -> UUID | None:
+    if not slot_key.startswith("series::"):
+        return None
+    try:
+        return UUID(slot_key.split("::", 1)[1])
+    except (TypeError, ValueError):
+        return None
+
+
+def _teacher_sync_signature(slot_key: str) -> tuple[UUID, UUID, int, time, time] | None:
+    if not slot_key.startswith("series-signature::"):
+        return None
+    parts = slot_key.split("::", 1)[1].split("|")
+    if len(parts) != 5:
+        return None
+    try:
+        location_id = UUID(parts[0])
+        course_type_id = UUID(parts[1])
+        weekday = int(parts[2])
+        start_time = time.fromisoformat(parts[3])
+        end_time = time.fromisoformat(parts[4])
+    except (TypeError, ValueError):
+        return None
+    if weekday < 0 or weekday > 6 or end_time <= start_time:
+        return None
+    return location_id, course_type_id, weekday, start_time, end_time
+
+
+def _teacher_sync_assignment_is_syncable(
+    db: Session,
+    assignment: PlanningSimulationTeacherAssignment,
+) -> bool:
+    # Quote-only slots are useful for forecasting teacher needs, but no production
+    # session exists yet and therefore there is nothing to synchronize.
+    if assignment.slot_key.startswith("quote::"):
+        return False
+    signature = _teacher_sync_signature(assignment.slot_key)
+    if signature is not None:
+        course_type = db.get(CourseType, signature[1])
+        return course_type is None or bool(course_type.requires_professor)
+    series_id = _teacher_sync_series_id(assignment.slot_key)
+    if series_id is None:
+        return True
+    requires_professor = db.scalar(
+        select(CourseType.requires_professor)
+        .join(CourseSession, CourseSession.course_type_id == CourseType.id)
+        .where(CourseSession.recurrence_group_id == series_id)
+        .limit(1)
+    )
+    return requires_professor is None or bool(requires_professor)
+
+
+def _teacher_sync_target_sessions(
+    db: Session,
+    *,
+    assignment: PlanningSimulationTeacherAssignment,
+    effective_from: datetime,
+    school_year_bounds: tuple[date, date],
+    lock: bool = False,
+) -> tuple[list[CourseSession], str | None]:
+    _, school_year_end = school_year_bounds
+    query_end = datetime.combine(school_year_end + timedelta(days=2), time.min, tzinfo=timezone.utc)
+    series_id = _teacher_sync_series_id(assignment.slot_key)
+    if series_id is not None:
+        statement = select(CourseSession).where(
+            CourseSession.recurrence_group_id == series_id,
+            CourseSession.start_at_utc >= effective_from,
+            CourseSession.start_at_utc < query_end,
+            CourseSession.status == SessionStatus.SCHEDULED,
+        )
+        if lock:
+            statement = statement.with_for_update()
+        return list(db.scalars(statement).all()), None
+
+    signature = _teacher_sync_signature(assignment.slot_key)
+    if signature is None:
+        return [], "Ce créneau simulé ne correspond pas à un créneau de production."
+    location_id, course_type_id, weekday, expected_start, expected_end = signature
+    statement = select(CourseSession).where(
+        CourseSession.location_id == location_id,
+        CourseSession.course_type_id == course_type_id,
+        CourseSession.start_at_utc >= effective_from,
+        CourseSession.start_at_utc < query_end,
+        CourseSession.status == SessionStatus.SCHEDULED,
+        CourseSession.recurrence_group_id.is_(None),
+    )
+    if lock:
+        statement = statement.with_for_update()
+    candidates = db.scalars(statement).all()
+    matches: list[CourseSession] = []
+    for session_obj in candidates:
+        zone = _safe_zoneinfo(session_obj.timezone)
+        local_start = session_obj.start_at_utc.astimezone(zone)
+        local_end = session_obj.end_at_utc.astimezone(zone)
+        if (
+            local_start.weekday() == weekday
+            and local_start.time().replace(tzinfo=None) == expected_start
+            and local_end.time().replace(tzinfo=None) == expected_end
+        ):
+            matches.append(session_obj)
+    return matches, None
+
+
+def _teacher_sync_session_state(db: Session, session_id: UUID) -> list[dict[str, object]]:
+    rows = db.scalars(
+        select(CourseSessionProfessor)
+        .where(CourseSessionProfessor.session_id == session_id)
+        .order_by(CourseSessionProfessor.position.asc())
+    ).all()
+    return [{"position": row.position, "professor_id": str(row.professor_id)} for row in rows]
+
+
+def _teacher_sync_professor_label(db: Session, professor_id: UUID | None) -> str | None:
+    if professor_id is None:
+        return None
+    professor = db.get(Professor, professor_id)
+    if professor is None:
+        return f"Professeur inconnu ({professor_id})"
+    return " ".join(part for part in (professor.first_name, professor.last_name) if part).strip()
+
+
+def _teacher_sync_slot_details(
+    db: Session,
+    *,
+    assignment: PlanningSimulationTeacherAssignment,
+    sessions: list[CourseSession],
+) -> dict[str, object]:
+    ordered_sessions = sorted(sessions, key=lambda session_obj: session_obj.start_at_utc)
+    if ordered_sessions:
+        first_session = ordered_sessions[0]
+        last_session = ordered_sessions[-1]
+        zone = _safe_zoneinfo(first_session.timezone)
+        local_start = first_session.start_at_utc.astimezone(zone)
+        local_end = first_session.end_at_utc.astimezone(zone)
+        location = db.get(Location, first_session.location_id)
+        course_type = db.get(CourseType, first_session.course_type_id)
+        return {
+            "location_name": location.name if location is not None else None,
+            "course_type_name": course_type.name if course_type is not None else first_session.title,
+            "weekday": local_start.weekday(),
+            "start_time": local_start.strftime("%H:%M"),
+            "end_time": local_end.strftime("%H:%M"),
+            "first_session_at": first_session.start_at_utc,
+            "last_session_at": last_session.start_at_utc,
+        }
+
+    signature = _teacher_sync_signature(assignment.slot_key)
+    if signature is None:
+        return {}
+    location_id, course_type_id, weekday, expected_start, expected_end = signature
+    location = db.get(Location, location_id)
+    course_type = db.get(CourseType, course_type_id)
+    return {
+        "location_name": location.name if location is not None else None,
+        "course_type_name": course_type.name if course_type is not None else None,
+        "weekday": weekday,
+        "start_time": expected_start.strftime("%H:%M"),
+        "end_time": expected_end.strftime("%H:%M"),
+    }
+
+
+def _teacher_sync_last_run(db: Session, school_year_label: str) -> PlanningSimulationTeacherSyncRun | None:
+    return db.scalar(
+        select(PlanningSimulationTeacherSyncRun)
+        .where(PlanningSimulationTeacherSyncRun.school_year_label == school_year_label)
+        .order_by(PlanningSimulationTeacherSyncRun.created_at.desc())
+        .limit(1)
+    )
+
+
+def _teacher_sync_change_selection_key(change: AdminPlanningTeacherSyncChangeOut) -> str:
+    payload = {
+        "slot_key": change.slot_key,
+        "position": change.position,
+        "professor_id": str(change.professor_id) if change.professor_id is not None else None,
+        "current_teacher_label": change.current_teacher_label,
+        "planned_teacher_label": change.planned_teacher_label,
+        "operation": change.operation,
+        "session_count": change.session_count,
+        "first_session_at": change.first_session_at.isoformat() if change.first_session_at is not None else None,
+        "last_session_at": change.last_session_at.isoformat() if change.last_session_at is not None else None,
+        "conflict": change.conflict,
+        "conflict_reason": change.conflict_reason,
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=True).encode("utf-8")).hexdigest()
+
+
+def _teacher_sync_preview(
+    db: Session,
+    *,
+    school_year_label: str,
+    effective_from: datetime,
+) -> AdminPlanningTeacherSyncPreviewOut:
+    school_year_bounds = _parse_school_year_bounds(school_year_label)
+    if school_year_bounds is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid school year label")
+    last_run = _teacher_sync_last_run(db, school_year_label)
+    query = select(PlanningSimulationTeacherAssignment).where(
+        PlanningSimulationTeacherAssignment.school_year_label == school_year_label
+    )
+    assignments = db.scalars(query.order_by(PlanningSimulationTeacherAssignment.updated_at.asc())).all()
+    baseline_by_session: dict[str, list[dict[str, object]]] = {}
+    if last_run is not None and last_run.status == "APPLIED":
+        for row in list((last_run.snapshot or {}).get("sessions") or []):
+            baseline_by_session[str(row.get("session_id") or "")] = list(row.get("after") or [])
+
+    changes: list[AdminPlanningTeacherSyncChangeOut] = []
+    unique_sessions: set[UUID] = set()
+    for assignment in assignments:
+        if not _teacher_sync_assignment_is_syncable(db, assignment):
+            continue
+        sessions, target_error = _teacher_sync_target_sessions(
+            db,
+            assignment=assignment,
+            effective_from=effective_from,
+            school_year_bounds=school_year_bounds,
+        )
+        if target_error is not None:
+            planned_teacher_label = (
+                "Non affecté"
+                if assignment.deleted_at is not None
+                else _teacher_sync_professor_label(db, assignment.professor_id) or assignment.teacher_label
+            )
+            changes.append(AdminPlanningTeacherSyncChangeOut(
+                slot_key=assignment.slot_key,
+                position=assignment.position,
+                teacher_label=assignment.teacher_label,
+                planned_teacher_label=planned_teacher_label,
+                professor_id=assignment.professor_id,
+                operation="REMOVE" if assignment.deleted_at is not None else "ADD",
+                session_count=0,
+                conflict=True,
+                conflict_reason=target_error,
+                **_teacher_sync_slot_details(db, assignment=assignment, sessions=[]),
+            ))
+            continue
+        desired = None if assignment.deleted_at is not None else assignment.professor_id
+        differing_sessions: list[CourseSession] = []
+        current_professor_ids: set[UUID] = set()
+        has_unassigned_current = False
+        conflict_reason: str | None = None
+        for session_obj in sessions:
+            state = _teacher_sync_session_state(db, session_obj.id)
+            current = next((row for row in state if int(row["position"]) == assignment.position), None)
+            current_professor_id = UUID(str(current["professor_id"])) if current else None
+            if current_professor_id != desired:
+                differing_sessions.append(session_obj)
+                unique_sessions.add(session_obj.id)
+                if current_professor_id is None:
+                    has_unassigned_current = True
+                else:
+                    current_professor_ids.add(current_professor_id)
+            baseline = baseline_by_session.get(str(session_obj.id))
+            if baseline is not None and baseline != state:
+                conflict_reason = "La production a été modifiée depuis la dernière synchronisation."
+        if assignment.deleted_at is None and desired is None:
+            conflict_reason = "Un libellé provisoire sans fiche professeur ne peut pas être synchronisé."
+        if not differing_sessions and conflict_reason is None:
+            continue
+        operation = "REMOVE" if desired is None else ("ADD" if not current_professor_ids else "REPLACE")
+        current_labels = sorted(
+            label
+            for professor_id in current_professor_ids
+            if (label := _teacher_sync_professor_label(db, professor_id)) is not None
+        )
+        if has_unassigned_current:
+            current_labels.insert(0, "Non affecté")
+        current_teacher_label = " / ".join(current_labels) if current_labels else "Non affecté"
+        planned_teacher_label = (
+            "Non affecté"
+            if desired is None
+            else _teacher_sync_professor_label(db, desired) or assignment.teacher_label
+        )
+        changes.append(AdminPlanningTeacherSyncChangeOut(
+            slot_key=assignment.slot_key,
+            position=assignment.position,
+            teacher_label=assignment.teacher_label,
+            current_teacher_label=current_teacher_label,
+            planned_teacher_label=planned_teacher_label,
+            professor_id=desired,
+            operation=operation,
+            session_count=len(differing_sessions),
+            conflict=conflict_reason is not None,
+            conflict_reason=conflict_reason,
+            **_teacher_sync_slot_details(db, assignment=assignment, sessions=differing_sessions or sessions),
+        ))
+    for change in changes:
+        change.selection_key = _teacher_sync_change_selection_key(change)
+    return AdminPlanningTeacherSyncPreviewOut(
+        school_year_label=school_year_label,
+        effective_from=effective_from,
+        last_sync_at=last_run.created_at if last_run is not None else None,
+        change_count=len(changes),
+        session_count=len(unique_sessions),
+        conflict_count=sum(1 for change in changes if change.conflict),
+        changes=changes,
+    )
+
+
+@router.get("/plannings/simulation/teacher-sync/preview", response_model=AdminPlanningTeacherSyncPreviewOut)
+def preview_planning_simulation_teacher_sync(
+    school_year_label: str,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin_or_permissions("can_edit_planning")),
+) -> AdminPlanningTeacherSyncPreviewOut:
+    return _teacher_sync_preview(db, school_year_label=school_year_label.strip(), effective_from=_utcnow())
+
+
+@router.post("/plannings/simulation/teacher-sync", response_model=AdminPlanningTeacherSyncRunOut)
+def apply_planning_simulation_teacher_sync(
+    payload: AdminPlanningTeacherSyncRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin_or_permissions("can_edit_planning")),
+) -> AdminPlanningTeacherSyncRunOut:
+    if not payload.confirmed:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Confirmation explicite requise")
+    selected_change_keys = set(payload.selected_change_keys or [])
+    if not selected_change_keys:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Sélectionnez au moins un changement à synchroniser.")
+    effective_from = _utcnow()
+    preview = _teacher_sync_preview(
+        db, school_year_label=payload.school_year_label.strip(), effective_from=effective_from
+    )
+    preview_by_key = {change.selection_key: change for change in preview.changes}
+    if not selected_change_keys.issubset(preview_by_key):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="L’analyse a changé. Relancez-la avant de confirmer la synchronisation.",
+        )
+    selected_changes = [preview_by_key[key] for key in selected_change_keys]
+    if any(change.conflict for change in selected_changes):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Synchronisation bloquée : la sélection contient un conflit.",
+        )
+    selected_identities = {(change.slot_key, change.position) for change in selected_changes}
+    snapshot_by_session: dict[str, dict[str, object]] = {}
+    school_year_bounds = _parse_school_year_bounds(preview.school_year_label)
+    if school_year_bounds is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid school year label")
+    assignments = db.scalars(
+        select(PlanningSimulationTeacherAssignment).where(
+            PlanningSimulationTeacherAssignment.school_year_label == preview.school_year_label,
+        )
+    ).all()
+    assignment_targets: list[tuple[PlanningSimulationTeacherAssignment, list[CourseSession]]] = []
+    for assignment in assignments:
+        if (assignment.slot_key, assignment.position) not in selected_identities:
+            continue
+        if not _teacher_sync_assignment_is_syncable(db, assignment):
+            continue
+        sessions, target_error = _teacher_sync_target_sessions(
+            db,
+            assignment=assignment,
+            effective_from=effective_from,
+            school_year_bounds=school_year_bounds,
+            lock=True,
+        )
+        if target_error is not None:
+            continue
+        assignment_targets.append((assignment, sessions))
+        session_ids = [session_obj.id for session_obj in sessions]
+        if session_ids:
+            db.scalars(
+                select(CourseSessionProfessor)
+                .where(CourseSessionProfessor.session_id.in_(session_ids))
+                .with_for_update()
+            ).all()
+
+    locked_preview = _teacher_sync_preview(
+        db, school_year_label=preview.school_year_label, effective_from=effective_from
+    )
+    locked_by_key = {change.selection_key: change for change in locked_preview.changes}
+    if not selected_change_keys.issubset(locked_by_key) or any(
+        locked_by_key[key].conflict for key in selected_change_keys
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "La production ou la simulation a changé pendant la confirmation. "
+                "Rechargez l’aperçu avant de synchroniser."
+            ),
+        )
+
+    for assignment, sessions in assignment_targets:
+        for session_obj in sessions:
+            existing = db.scalar(select(CourseSessionProfessor).where(
+                CourseSessionProfessor.session_id == session_obj.id,
+                CourseSessionProfessor.position == assignment.position,
+            ).with_for_update())
+            desired = None if assignment.deleted_at is not None else assignment.professor_id
+            current_professor_id = existing.professor_id if existing is not None else None
+            if current_professor_id == desired:
+                continue
+            key = str(session_obj.id)
+            snapshot_by_session.setdefault(key, {
+                "session_id": key,
+                "before": _teacher_sync_session_state(db, session_obj.id),
+            })
+            if existing is not None:
+                db.delete(existing)
+                db.flush()
+            if assignment.deleted_at is None and assignment.professor_id is not None:
+                duplicate = db.scalar(select(CourseSessionProfessor).where(
+                    CourseSessionProfessor.session_id == session_obj.id,
+                    CourseSessionProfessor.professor_id == assignment.professor_id,
+                ).with_for_update())
+                if duplicate is not None:
+                    db.delete(duplicate)
+                    db.flush()
+                db.add(CourseSessionProfessor(
+                    session_id=session_obj.id,
+                    professor_id=assignment.professor_id,
+                    position=assignment.position,
+                ))
+            db.flush()
+            if assignment.position == 1:
+                session_obj.professor_id = None if assignment.deleted_at is not None else assignment.professor_id
+                db.add(session_obj)
+    for item in snapshot_by_session.values():
+        session_id = UUID(str(item["session_id"]))
+        after = _teacher_sync_session_state(db, session_id)
+        item["after"] = after
+        session_obj = db.get(CourseSession, session_id)
+        if session_obj is not None:
+            primary = next((row for row in after if int(row["position"]) == 1), None)
+            session_obj.professor_id = UUID(str(primary["professor_id"])) if primary else None
+            db.add(session_obj)
+    run = PlanningSimulationTeacherSyncRun(
+        school_year_label=preview.school_year_label,
+        effective_from=effective_from,
+        status="APPLIED",
+        change_count=len(selected_changes),
+        session_count=len(snapshot_by_session),
+        snapshot={"sessions": list(snapshot_by_session.values())},
+        summary={
+            **preview.model_dump(mode="json"),
+            "change_count": len(selected_changes),
+            "session_count": len(snapshot_by_session),
+            "conflict_count": 0,
+            "changes": [change.model_dump(mode="json") for change in selected_changes],
+        },
+        created_by_user_id=current_user.id,
+    )
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+    return AdminPlanningTeacherSyncRunOut.model_validate(run, from_attributes=True)
+
+
+@router.get("/plannings/simulation/teacher-sync/runs", response_model=list[AdminPlanningTeacherSyncRunOut])
+def list_planning_simulation_teacher_sync_runs(
+    school_year_label: str,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin_or_permissions("can_edit_planning")),
+) -> list[AdminPlanningTeacherSyncRunOut]:
+    rows = db.scalars(select(PlanningSimulationTeacherSyncRun).where(
+        PlanningSimulationTeacherSyncRun.school_year_label == school_year_label.strip()
+    ).order_by(PlanningSimulationTeacherSyncRun.created_at.desc()).limit(10)).all()
+    return [AdminPlanningTeacherSyncRunOut.model_validate(row, from_attributes=True) for row in rows]
+
+
+@router.post("/plannings/simulation/teacher-sync/{run_id}/rollback", response_model=AdminPlanningTeacherSyncRunOut)
+def rollback_planning_simulation_teacher_sync(
+    run_id: UUID,
+    payload: AdminPlanningTeacherSyncRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin_or_permissions("can_edit_planning")),
+) -> AdminPlanningTeacherSyncRunOut:
+    if not payload.confirmed:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Confirmation explicite requise")
+    run = db.scalar(select(PlanningSimulationTeacherSyncRun).where(
+        PlanningSimulationTeacherSyncRun.id == run_id
+    ).with_for_update())
+    if run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Synchronisation introuvable")
+    if run.status != "APPLIED":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Cette synchronisation est déjà annulée")
+    latest_run = _teacher_sync_last_run(db, run.school_year_label)
+    if latest_run is None or latest_run.id != run.id:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Seule la dernière synchronisation peut être annulée.")
+    snapshots = list((run.snapshot or {}).get("sessions") or [])
+    for item in snapshots:
+        session_id = UUID(str(item["session_id"]))
+        if _teacher_sync_session_state(db, session_id) != list(item.get("after") or []):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Rollback bloqué : la production a été modifiée après cette synchronisation.",
+            )
+    for item in snapshots:
+        session_id = UUID(str(item["session_id"]))
+        db.query(CourseSessionProfessor).filter(CourseSessionProfessor.session_id == session_id).delete()
+        before = list(item.get("before") or [])
+        for row in before:
+            db.add(CourseSessionProfessor(
+                session_id=session_id,
+                professor_id=UUID(str(row["professor_id"])),
+                position=int(row["position"]),
+            ))
+        session_obj = db.get(CourseSession, session_id)
+        if session_obj is not None:
+            primary = next((row for row in before if int(row["position"]) == 1), None)
+            session_obj.professor_id = UUID(str(primary["professor_id"])) if primary else None
+            db.add(session_obj)
+    now = _utcnow()
+    run.status = "ROLLED_BACK"
+    run.rolled_back_at = now
+    run.rolled_back_by_user_id = current_user.id
+    changed_assignment_keys = {
+        (str(row.get("slot_key") or ""), int(row.get("position") or 0))
+        for row in list((run.summary or {}).get("changes") or [])
+    }
+    if changed_assignment_keys:
+        for assignment in db.scalars(select(PlanningSimulationTeacherAssignment).where(
+            PlanningSimulationTeacherAssignment.school_year_label == run.school_year_label
+        )).all():
+            if (assignment.slot_key, assignment.position) in changed_assignment_keys:
+                assignment.updated_at = now
+                db.add(assignment)
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+    return AdminPlanningTeacherSyncRunOut.model_validate(run, from_attributes=True)
 
 
 @router.get("/plannings/simulation", response_model=AdminPlanningSimulationOut)
@@ -3764,6 +4303,7 @@ def get_planning_simulation(
         slot_label_activity_name: str,
         slot_label_activity_color: str | None,
         slot_label_activity_mode: DeliveryMode | None,
+        requires_professor: bool,
         weekday: int,
         start_time: str,
         end_time: str,
@@ -3786,6 +4326,7 @@ def get_planning_simulation(
             "course_type_name": slot_label_activity_name,
             "course_type_color_hex": slot_label_activity_color,
             "course_type_mode": slot_label_activity_mode,
+            "requires_professor": requires_professor,
             "weekday": weekday,
             "weekday_label": _weekday_label(weekday),
             "start_time": start_time,
@@ -3886,6 +4427,7 @@ def get_planning_simulation(
             slot_label_activity_name=course_type.name,
             slot_label_activity_color=course_type.color_hex,
             slot_label_activity_mode=course_type.mode,
+            requires_professor=bool(course_type.requires_professor),
             weekday=weekday,
             start_time=start_time,
             end_time=end_time,
@@ -4073,6 +4615,7 @@ def get_planning_simulation(
                 ),
                 slot_label_activity_color=block_course_type.color_hex if block_course_type is not None else None,
                 slot_label_activity_mode=block_course_type.mode if block_course_type is not None else None,
+                requires_professor=bool(block_course_type.requires_professor) if block_course_type is not None else True,
                 weekday=block_weekday,
                 start_time=block_start_time,
                 end_time=block_end_time,
@@ -4117,6 +4660,7 @@ def get_planning_simulation(
     for assignment in db.scalars(
         select(PlanningSimulationTeacherAssignment)
         .where(PlanningSimulationTeacherAssignment.school_year_label == requested_school_year)
+        .where(PlanningSimulationTeacherAssignment.deleted_at.is_(None))
         .order_by(
             PlanningSimulationTeacherAssignment.slot_key.asc(),
             PlanningSimulationTeacherAssignment.position.asc(),
@@ -4173,6 +4717,7 @@ def get_planning_simulation(
                 course_type_name=str(entry["course_type_name"]),
                 course_type_color_hex=str(entry["course_type_color_hex"]) if entry["course_type_color_hex"] else None,
                 course_type_mode=entry["course_type_mode"] if isinstance(entry["course_type_mode"], DeliveryMode) else None,
+                requires_professor=bool(entry["requires_professor"]),
                 weekday=int(entry["weekday"]),
                 weekday_label=str(entry["weekday_label"]),
                 start_time=str(entry["start_time"]),

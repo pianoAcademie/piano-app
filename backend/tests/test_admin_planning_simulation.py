@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, time
 from pathlib import Path
 import sys
 import unittest
@@ -29,6 +29,10 @@ from app.api.routes.admin import (
     _planning_simulation_teacher_assignment_warnings,
     _planning_simulation_teacher_needs,
     _safe_zoneinfo,
+    _teacher_sync_signature,
+    _teacher_sync_assignment_is_syncable,
+    _teacher_sync_change_selection_key,
+    _teacher_sync_series_id,
     update_planning_simulation_teacher_assignment,
 )
 from app.models.catalog import DeliveryMode
@@ -131,6 +135,7 @@ class AdminPlanningSimulationTests(unittest.TestCase):
         slot_key: str | None = None,
         teacher_assignment_professor_id: object | None = None,
         teacher_assignment_label: str | None = None,
+        requires_professor: bool = True,
     ) -> SimpleNamespace:
         return SimpleNamespace(
             slot_key=slot_key or f"slot-{uuid4()}",
@@ -146,6 +151,7 @@ class AdminPlanningSimulationTests(unittest.TestCase):
             occurrence_dates=occurrence_dates or [],
             teacher_assignment_professor_id=teacher_assignment_professor_id,
             teacher_assignment_label=teacher_assignment_label,
+            requires_professor=requires_professor,
         )
 
     def test_parse_school_year_bounds_accepts_standard_label(self) -> None:
@@ -163,6 +169,61 @@ class AdminPlanningSimulationTests(unittest.TestCase):
         self.assertEqual(_safe_zoneinfo(None).key, "Europe/Paris")
         self.assertEqual(_safe_zoneinfo("not-a-timezone").key, "Europe/Paris")
         self.assertEqual(_safe_zoneinfo("UTC").key, "UTC")
+
+    def test_teacher_sync_series_id_only_accepts_production_series_keys(self) -> None:
+        series_id = uuid4()
+
+        self.assertEqual(_teacher_sync_series_id(f"series::{series_id}"), series_id)
+        self.assertIsNone(_teacher_sync_series_id("live:test-slot"))
+        self.assertIsNone(_teacher_sync_series_id("series::invalid"))
+
+    def test_teacher_sync_signature_accepts_non_recurring_production_slots(self) -> None:
+        location_id = uuid4()
+        course_type_id = uuid4()
+        signature = _teacher_sync_signature(
+            f"series-signature::{location_id}|{course_type_id}|3|17:00|18:00"
+        )
+
+        self.assertEqual(signature, (location_id, course_type_id, 3, time(17, 0), time(18, 0)))
+        self.assertIsNone(_teacher_sync_signature("series-signature::invalid"))
+
+    def test_teacher_sync_ignores_quote_only_slots_without_production_sessions(self) -> None:
+        assignment = SimpleNamespace(slot_key=f"quote::{uuid4()}|{uuid4()}|5|11:00|12:00")
+
+        self.assertFalse(_teacher_sync_assignment_is_syncable(SimpleNamespace(), assignment))
+
+    def test_teacher_sync_selection_key_detects_a_changed_preview(self) -> None:
+        from app.schemas.admin import AdminPlanningTeacherSyncChangeOut
+
+        change = AdminPlanningTeacherSyncChangeOut(
+            slot_key="series::00000000-0000-0000-0000-000000000001",
+            position=1,
+            current_teacher_label="Professeur Review",
+            planned_teacher_label="Service Administration",
+            operation="REPLACE",
+            session_count=2,
+        )
+        initial_key = _teacher_sync_change_selection_key(change)
+        self.assertEqual(initial_key, _teacher_sync_change_selection_key(change))
+        changed_key = _teacher_sync_change_selection_key(
+            change.model_copy(update={"planned_teacher_label": "Eléna Ortu"})
+        )
+        self.assertNotEqual(initial_key, changed_key)
+
+    def test_teacher_needs_ignore_activities_without_professor(self) -> None:
+        teaching_slot = self._teacher_need_slot(
+            activity_id=uuid4(), activity_name="Piano", weekday=0, weekday_label="Lundi",
+            start_time="17:00", end_time="18:00",
+        )
+        studio_slot = self._teacher_need_slot(
+            activity_id=uuid4(), activity_name="Studio", weekday=0, weekday_label="Lundi",
+            start_time="19:00", end_time="20:00", requires_professor=False,
+        )
+
+        needs = _planning_simulation_teacher_needs([teaching_slot, studio_slot])
+
+        self.assertEqual(needs.summary.slot_count, 1)
+        self.assertEqual([item.course_type_name for item in needs.activities], ["Piano"])
 
     def test_planning_simulation_hides_uuid_location_labels(self) -> None:
         self.assertEqual(
@@ -649,7 +710,9 @@ class AdminPlanningSimulationTests(unittest.TestCase):
             SimpleNamespace(id=uuid4()),  # type: ignore[arg-type]
         )
 
-        self.assertEqual(db.deleted, [assignment])
+        self.assertEqual(db.deleted, [])
+        self.assertEqual(db.added, [assignment])
+        self.assertIsNotNone(assignment.deleted_at)
         self.assertTrue(result.deleted)
         self.assertEqual(db.commits, 1)
 

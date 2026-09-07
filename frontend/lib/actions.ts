@@ -4152,6 +4152,57 @@ export async function adminUpdatePlanningSimulationTeacherAssignmentAction(formD
   );
 }
 
+export async function adminApplyPlanningTeacherSyncAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) redirect("/login?error_code=session_expired");
+  const language = await ensureAdminAndGetLanguage(token);
+  const schoolYearLabel = String(formData.get("school_year_label") ?? "").trim();
+  const selectedChangeKeys = formData.getAll("selected_change_key").map(String).filter(Boolean);
+  const returnTo = safeAdminReturnPath(formData, "/admin/simulation-planning?view=teacher_needs");
+  const result = await backendRequest<{ session_count: number }>(
+    "/api/v1/admin/plannings/simulation/teacher-sync",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        school_year_label: schoolYearLabel,
+        confirmed: true,
+        selected_change_keys: selectedChangeKeys,
+      }),
+    },
+    token,
+  );
+  if (!result.ok) redirect(appendQueryMessage(returnTo, "error", result.message));
+  revalidatePath("/admin/simulation-planning");
+  redirect(appendQueryMessage(
+    returnTo,
+    "ok",
+    language === "en"
+      ? `${result.data.session_count} production session(s) updated.`
+      : `${result.data.session_count} séance(s) de production mise(s) à jour.`,
+  ));
+}
+
+export async function adminRollbackPlanningTeacherSyncAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) redirect("/login?error_code=session_expired");
+  const language = await ensureAdminAndGetLanguage(token);
+  const runId = String(formData.get("run_id") ?? "").trim();
+  const schoolYearLabel = String(formData.get("school_year_label") ?? "").trim();
+  const returnTo = safeAdminReturnPath(formData, "/admin/simulation-planning?view=teacher_needs");
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/admin/plannings/simulation/teacher-sync/${runId}/rollback`,
+    { method: "POST", body: JSON.stringify({ school_year_label: schoolYearLabel, confirmed: true }) },
+    token,
+  );
+  if (!result.ok) redirect(appendQueryMessage(returnTo, "error", result.message));
+  revalidatePath("/admin/simulation-planning");
+  redirect(appendQueryMessage(
+    returnTo,
+    "ok",
+    language === "en" ? "Synchronization rolled back." : "Synchronisation annulée et production restaurée.",
+  ));
+}
+
 export async function adminRemoveClientFromSessionAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {

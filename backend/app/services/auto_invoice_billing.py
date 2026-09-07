@@ -4,15 +4,20 @@ from calendar import monthrange
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 import logging
+from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.routes.admin_clients import create_admin_client_range_invoice
+from app.api.routes.admin_clients import (
+    _build_admin_client_payments,
+    create_admin_client_range_invoice,
+    send_admin_client_range_invoice_email,
+)
 from app.models.client_record import ClientAutoInvoiceOccurrence, ClientAutoInvoiceRule
 from app.models.user import User, UserRole
-from app.schemas.admin import AdminRangeInvoiceCreateRequest
+from app.schemas.admin import AdminRangeInvoiceCreateRequest, AdminRangeInvoiceEmailRequest
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +88,28 @@ def _auto_period_scope_from_timing(billing_timing: str) -> str:
     return "PAST" if (billing_timing or "").strip().upper() == "PREVIOUS_LESSONS" else "FUTURE"
 
 
+def _next_scheduled_course_due_date(
+    db: Session,
+    *,
+    client_id,
+    period_start: date,
+    period_end: date,
+    today: date,
+    fallback: date,
+) -> date:
+    paris = ZoneInfo("Europe/Paris")
+    course_dates = sorted(
+        {
+            row.occurred_at.astimezone(paris).date()
+            for row in _build_admin_client_payments(db, client_id=client_id)
+            if (row.source or "").strip().upper() == "BOOKING"
+            and period_start <= row.occurred_at.astimezone(paris).date() <= period_end
+            and row.occurred_at.astimezone(paris).date() >= today
+        }
+    )
+    return course_dates[0] if course_dates else fallback
+
+
 def run_auto_invoice_billing_job(db: Session, *, now: datetime, limit: int = 200) -> AutoInvoiceBillingJobResult:
     today = now.date()
     rules = db.scalars(
@@ -148,6 +175,15 @@ def run_auto_invoice_billing_job(db: Session, *, now: datetime, limit: int = 200
                     due_date_rule_type=rule.due_date_rule_type,
                     due_date_days_offset=rule.due_date_days_offset,
                 )
+                if (rule.billing_timing or "").strip().upper() == "UPCOMING_LESSONS":
+                    due_date = _next_scheduled_course_due_date(
+                        db,
+                        client_id=rule.user_id,
+                        period_start=period_start,
+                        period_end=period_end,
+                        today=today,
+                        fallback=due_date,
+                    )
 
                 occurrence = ClientAutoInvoiceOccurrence(
                     rule_id=rule.id,
@@ -183,7 +219,7 @@ def run_auto_invoice_billing_job(db: Session, *, now: datetime, limit: int = 200
                             auto_repeat_every=_months_for_frequency(rule.frequency),
                             auto_layout_style="CONDENSED",
                             auto_include_previous_balance=True,
-                            auto_send_email=False,
+                            auto_send_email=True,
                             auto_footer_note=None,
                             auto_exclude_pack_subscription_lines=False,
                             invoice_number=None,
@@ -222,6 +258,24 @@ def run_auto_invoice_billing_job(db: Session, *, now: datetime, limit: int = 200
                 db.add(occurrence)
                 db.add(rule)
                 db.commit()
+                try:
+                    send_admin_client_range_invoice_email(
+                        client_id=rule.user_id,
+                        note_id=invoice_out.note_id,
+                        payload=AdminRangeInvoiceEmailRequest(kind="INVOICE"),
+                        db=db,
+                        actor=actor,
+                    )
+                except Exception:
+                    # Invoice issuance is authoritative even if the provider is
+                    # temporarily unavailable.  Keep it visible and traceable;
+                    # an administrator can resend it without creating a duplicate.
+                    db.rollback()
+                    logger.exception(
+                        "Automatic invoice email failed | rule_id=%s | note_id=%s",
+                        rule.id,
+                        invoice_out.note_id,
+                    )
                 generated += 1
         except Exception:
             db.rollback()

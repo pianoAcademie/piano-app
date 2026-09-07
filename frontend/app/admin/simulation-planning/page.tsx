@@ -4,13 +4,20 @@ import { redirect } from "next/navigation";
 import type { CSSProperties } from "react";
 
 import { backendRequest } from "../../../lib/backend";
-import { adminUpdatePlanningSimulationTeacherAssignmentAction } from "../../../lib/actions";
+import {
+  adminApplyPlanningTeacherSyncAction,
+  adminRollbackPlanningTeacherSyncAction,
+  adminUpdatePlanningSimulationTeacherAssignmentAction,
+} from "../../../lib/actions";
 import { hasAdminPermission } from "../../../lib/admin-access";
 import type {
   AdminProfessorOut,
   AdminPlanningSimulationOut,
   AdminPlanningSimulationSlotOut,
   AdminPlanningSimulationTeacherNeedsOut,
+  AdminPlanningTeacherSyncChangeOut,
+  AdminPlanningTeacherSyncPreviewOut,
+  AdminPlanningTeacherSyncRunOut,
   CourseTypeOut,
   LocationOut,
   UserOut,
@@ -18,6 +25,7 @@ import type {
 import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage } from "../../../lib/ui-i18n";
 import { SimulationPlanningFilterForm } from "./filter-form";
 import { TeacherAssignmentGridCell } from "./assignment-grid-cell";
+import { TeacherSyncConfirmForm, TeacherSyncSelectionButtons } from "./teacher-sync-confirm-form";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -134,6 +142,33 @@ function formatDateTime(value: string | null, language: UiLanguage): string {
     dateStyle: "medium",
     timeStyle: "short",
   });
+}
+
+function formatSyncDate(value: string | null, language: UiLanguage): string {
+  if (!value) return "-";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleDateString(localeForUiLanguage(language), {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function teacherSyncWeekdayLabel(weekday: number | null, language: UiLanguage): string {
+  const labels = language === "en"
+    ? ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    : ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"];
+  return weekday === null ? "-" : labels[weekday] ?? "-";
+}
+
+function teacherSyncActionLabel(
+  change: AdminPlanningTeacherSyncChangeOut,
+  language: UiLanguage,
+): string {
+  if (change.operation === "ADD") return text(language, "Affectation", "Assignment");
+  if (change.operation === "REMOVE") return text(language, "Retrait", "Removal");
+  return text(language, "Remplacement", "Replacement");
 }
 
 function formatTeachingMinutes(minutes: number, language: UiLanguage): string {
@@ -1297,6 +1332,7 @@ export default async function AdminSimulationPlanningPage({
     : "";
   const requestedActivityGroup =
     requestedActivityFilter === DEFAULT_SIMULATION_ACTIVITY_FILTER ? "collective_piano" : "";
+  const syncAnalysisRequested = readParam(searchParams ?? {}, "sync_analysis").trim() === "1";
 
   const simulationQuery = new URLSearchParams();
   if (requestedSchoolYear) simulationQuery.set("school_year_label", requestedSchoolYear);
@@ -1350,9 +1386,10 @@ export default async function AdminSimulationPlanningPage({
       : permittedLocations;
   const courseTypes = courseTypesResult.ok
     ? courseTypesResult.data.filter(
-        (courseType) =>
-          courseType.code.toUpperCase() !== VACATION_COURSE_TYPE_CODE &&
-          (requestedView !== "teacher_needs" || !isOnlineSolfegeCourseType(courseType)),
+      (courseType) =>
+        courseType.code.toUpperCase() !== VACATION_COURSE_TYPE_CODE &&
+        (requestedView !== "teacher_needs" || courseType.requires_professor) &&
+        (requestedView !== "teacher_needs" || !isOnlineSolfegeCourseType(courseType)),
       )
     : [];
   const simulation = simulationResult.ok ? simulationResult.data : null;
@@ -1379,6 +1416,31 @@ export default async function AdminSimulationPlanningPage({
   if (requestedLocationId) assignmentReturnParams.set("location_id", requestedLocationId);
   assignmentReturnParams.set("activity_filter", requestedActivityFilter);
   const assignmentReturnTo = `/admin/simulation-planning?${assignmentReturnParams.toString()}`;
+  const [syncPreviewResult, syncRunsResult] = requestedView === "teacher_needs" && canEditSimulation
+    ? await Promise.all([
+        syncAnalysisRequested
+          ? backendRequest<AdminPlanningTeacherSyncPreviewOut>(
+              `/api/v1/admin/plannings/simulation/teacher-sync/preview?school_year_label=${encodeURIComponent(effectiveSchoolYear)}`,
+              {},
+              token,
+            )
+          : Promise.resolve(null),
+        backendRequest<AdminPlanningTeacherSyncRunOut[]>(
+          `/api/v1/admin/plannings/simulation/teacher-sync/runs?school_year_label=${encodeURIComponent(effectiveSchoolYear)}`,
+          {},
+          token,
+        ),
+      ])
+    : [null, null];
+  const syncPreview = syncPreviewResult?.ok ? syncPreviewResult.data : null;
+  const latestSync = syncRunsResult?.ok ? syncRunsResult.data[0] ?? null : null;
+  const latestAppliedSync = latestSync?.status === "APPLIED" ? latestSync : null;
+  const syncConflicts = syncPreview?.changes.filter((change) => change.conflict) ?? [];
+  const applicableSyncChanges = syncPreview?.changes.filter((change) => !change.conflict) ?? [];
+  const teacherRequiredSlots = simulation?.slots.filter((slot) => slot.requires_professor) ?? [];
+  const syncAnalysisParams = new URLSearchParams(assignmentReturnParams);
+  syncAnalysisParams.set("sync_analysis", "1");
+  const syncAnalysisReturnTo = `/admin/simulation-planning?${syncAnalysisParams.toString()}`;
 
   return (
     <section className="admin-page-grid">
@@ -1407,6 +1469,243 @@ export default async function AdminSimulationPlanningPage({
 
       {okMessage ? <section className="flash-ok">{okMessage}</section> : null}
       {actionError ? <section className="flash-err">{actionError}</section> : null}
+      {requestedView === "teacher_needs" && syncPreviewResult && !syncPreviewResult.ok ? (
+        <section className="flash-err">{syncPreviewResult.message}</section>
+      ) : null}
+
+      {requestedView === "teacher_needs" && canEditSimulation && !syncAnalysisRequested ? (
+        <section className="card">
+          <div className="row spread">
+            <div>
+              <h3>{text(language, "Synchronisation vers la production", "Synchronization to production")}</h3>
+              <p className="muted">
+                {text(
+                  language,
+                  "L’analyse des écarts n’est lancée que sur demande afin de garder cette page rapide.",
+                  "Difference analysis only runs on demand to keep this page fast.",
+                )}
+              </p>
+            </div>
+            <div className="row">
+              {latestAppliedSync ? (
+                <TeacherSyncConfirmForm
+                  action={adminRollbackPlanningTeacherSyncAction}
+                  message={text(
+                    language,
+                    "Confirmer le rollback ? La production sera restaurée à son état précédant cette synchronisation.",
+                    "Confirm rollback? Production will be restored to its state before this synchronization.",
+                  )}
+                >
+                  <input type="hidden" name="run_id" value={latestAppliedSync.id} />
+                  <input type="hidden" name="school_year_label" value={effectiveSchoolYear} />
+                  <input type="hidden" name="return_to" value={assignmentReturnTo} />
+                  <button type="submit" className="ghost">
+                    {text(language, "Annuler la dernière synchronisation", "Roll back last synchronization")}
+                  </button>
+                </TeacherSyncConfirmForm>
+              ) : null}
+              <Link className="primary" href={syncAnalysisReturnTo}>
+                {text(language, "Analyser les changements", "Analyze changes")}
+              </Link>
+            </div>
+          </div>
+        </section>
+      ) : null}
+
+      {requestedView === "teacher_needs" && canEditSimulation && syncPreview ? (
+        <section className="card">
+          <div className="row spread">
+            <div>
+              <h3>{text(language, "Synchronisation vers la production", "Synchronization to production")}</h3>
+              <p className="muted">
+                {text(
+                  language,
+                  "La simulation reste indépendante. Seules les modifications depuis la dernière synchronisation seront appliquées aux séances futures.",
+                  "The simulation remains independent. Only changes since the last synchronization will be applied to future sessions.",
+                )}
+              </p>
+            </div>
+            <div className="row">
+              <Link className="ghost" href={syncAnalysisReturnTo}>
+                {text(language, "Relancer l’analyse", "Run analysis again")}
+              </Link>
+              {latestAppliedSync ? (
+                <TeacherSyncConfirmForm
+                  action={adminRollbackPlanningTeacherSyncAction}
+                  message={text(
+                    language,
+                    "Confirmer le rollback ? La production sera restaurée à son état précédant cette synchronisation.",
+                    "Confirm rollback? Production will be restored to its state before this synchronization.",
+                  )}
+                >
+                  <input type="hidden" name="run_id" value={latestAppliedSync.id} />
+                  <input type="hidden" name="school_year_label" value={effectiveSchoolYear} />
+                  <input type="hidden" name="return_to" value={syncAnalysisReturnTo} />
+                  <button type="submit" className="ghost">
+                    {text(language, "Annuler la dernière synchronisation", "Roll back last synchronization")}
+                  </button>
+                </TeacherSyncConfirmForm>
+              ) : null}
+            </div>
+          </div>
+          <p>
+            <strong>{syncPreview.change_count}</strong> {text(language, "changement(s)", "change(s)")} ·{" "}
+            <strong>{syncPreview.session_count}</strong> {text(language, "séance(s) future(s)", "future session(s)")} ·{" "}
+            <strong>{syncPreview.conflict_count}</strong> {text(language, "conflit(s)", "conflict(s)")}
+          </p>
+          {syncConflicts.length ? (
+            <div className="flash-err">
+              <strong>
+                {text(
+                  language,
+                  `${syncConflicts.length} conflit(s) exclu(s) de la sélection`,
+                  `${syncConflicts.length} conflict(s) excluded from selection`,
+                )}
+              </strong>
+              <ul>
+                {syncConflicts.map((change) => (
+                  <li key={`conflict-${change.slot_key}-${change.position}`}>
+                    <strong>
+                      {teacherSyncWeekdayLabel(change.weekday, language)} {change.start_time || "-"}
+                      {change.end_time ? `–${change.end_time}` : ""} · {change.location_name || text(language, "Lieu inconnu", "Unknown location")}
+                    </strong>
+                    {" — "}{change.course_type_name || text(language, "Cours inconnu", "Unknown course")}
+                    {" : "}{change.conflict_reason}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
+          {applicableSyncChanges.length ? (
+            <TeacherSyncConfirmForm
+              action={adminApplyPlanningTeacherSyncAction}
+              className="stack"
+              message={text(
+                language,
+                "Dernière confirmation : synchroniser les {count} changement(s) coché(s) vers la production ? Un rollback sera disponible.",
+                "Final confirmation: synchronize the {count} selected change(s) to production? A rollback will be available.",
+              )}
+              selectionInputName="selected_change_key"
+              emptySelectionMessage={text(
+                language,
+                "Sélectionnez au moins un changement à synchroniser.",
+                "Select at least one change to synchronize.",
+              )}
+            >
+              <input type="hidden" name="school_year_label" value={effectiveSchoolYear} />
+              <input type="hidden" name="return_to" value={syncAnalysisReturnTo} />
+              <div className="row spread">
+                <p className="muted">
+                  {text(
+                    language,
+                    "Cochez uniquement les changements à appliquer. Les lignes « Professeur Review » sont protégées et ne seront pas synchronisées.",
+                    "Select only the changes to apply. ‘Professeur Review’ rows are protected and will not be synchronized.",
+                  )}
+                </p>
+                <TeacherSyncSelectionButtons
+                  inputName="selected_change_key"
+                  selectAllLabel={text(language, "Tout sélectionner", "Select all")}
+                  clearAllLabel={text(language, "Tout désélectionner", "Clear all")}
+                />
+              </div>
+              <div className="table-scroll">
+                <table>
+                  <thead><tr>
+                    <th>{text(language, "Choix", "Select")}</th>
+                    <th>{text(language, "Créneau concerné", "Affected slot")}</th>
+                    <th>{text(language, "Planning de production actuel", "Current production schedule")}</th>
+                    <th>{text(language, "Planning des besoins", "Teacher-needs plan")}</th>
+                    <th>{text(language, "Conséquence", "Impact")}</th>
+                  </tr></thead>
+                  <tbody>
+                    {applicableSyncChanges.map((change) => {
+                      const keepReviewTeacher = (change.current_teacher_label || "").trim().toLocaleLowerCase("fr") === "professeur review";
+                      return (
+                        <tr key={`${change.slot_key}-${change.position}`}>
+                          <td>
+                            <input
+                              type="checkbox"
+                              name="selected_change_key"
+                              value={change.selection_key}
+                              defaultChecked={!keepReviewTeacher}
+                              disabled={keepReviewTeacher}
+                              aria-label={text(language, "Sélectionner ce changement", "Select this change")}
+                            />
+                          </td>
+                          <td>
+                            <strong>
+                              {teacherSyncWeekdayLabel(change.weekday, language)} · {change.start_time || "-"}
+                              {change.end_time ? `–${change.end_time}` : ""}
+                            </strong>
+                            <br />
+                            {change.location_name || text(language, "Lieu inconnu", "Unknown location")}
+                            <br />
+                            <span className="muted">{change.course_type_name || text(language, "Cours inconnu", "Unknown course")}</span>
+                          </td>
+                          <td>
+                            <span className="muted">{text(language, "Professeur actuellement affecté", "Currently assigned teacher")}</span>
+                            <br />
+                            <strong>{change.current_teacher_label || text(language, "Non affecté", "Unassigned")}</strong>
+                            {keepReviewTeacher ? (
+                              <><br /><span className="status-pill status-info">{text(language, "Protégé — non synchronisé", "Protected — not synchronized")}</span></>
+                            ) : null}
+                          </td>
+                          <td>
+                            <span className="muted">{text(language, "Professeur prévu", "Planned teacher")}</span>
+                            <br />
+                            <strong>{change.planned_teacher_label || change.teacher_label || text(language, "Non affecté", "Unassigned")}</strong>
+                          </td>
+                          <td>
+                            <span className="status-pill status-warn">{teacherSyncActionLabel(change, language)}</span>
+                            <br />
+                            <strong>{change.session_count}</strong> {text(language, "séance(s)", "session(s)")}
+                            {change.first_session_at ? (
+                              <>
+                                <br />
+                                <span className="muted">
+                                  {formatSyncDate(change.first_session_at, language)}
+                                  {change.last_session_at && change.last_session_at !== change.first_session_at
+                                    ? ` → ${formatSyncDate(change.last_session_at, language)}`
+                                    : ""}
+                                </span>
+                              </>
+                            ) : null}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <label className="row">
+                <input type="checkbox" required />
+                <span>
+                  {text(
+                    language,
+                    "J’ai vérifié chaque changement sélectionné, le professeur actuel et le professeur prévu.",
+                    "I have checked every selected change, current teacher, and planned teacher.",
+                  )}
+                </span>
+              </label>
+              <div>
+                <button
+                  type="submit"
+                  className="primary"
+                >
+                  {text(
+                    language,
+                    "Synchroniser la sélection maintenant",
+                    "Synchronize selected changes now",
+                  )}
+                </button>
+              </div>
+            </TeacherSyncConfirmForm>
+          ) : syncPreview.changes.length === 0 ? (
+            <p className="muted">{text(language, "Aucun changement à synchroniser.", "No changes to synchronize.")}</p>
+          ) : null}
+        </section>
+      ) : null}
 
       <nav className="simulation-planning-tabs" aria-label={text(language, "Vues de simulation", "Simulation views")}>
         <Link
@@ -1526,7 +1825,7 @@ export default async function AdminSimulationPlanningPage({
             <>
             <TeacherNeedsDashboard
               needs={simulation.teacher_needs}
-              slots={simulation.slots}
+              slots={teacherRequiredSlots}
               professors={professors}
               schoolYearLabel={effectiveSchoolYear}
               returnTo={assignmentReturnTo}
@@ -1534,7 +1833,7 @@ export default async function AdminSimulationPlanningPage({
               language={language}
             />
             <TeacherAssignmentBoard
-              slots={simulation.slots}
+              slots={teacherRequiredSlots}
               professors={professors}
               schoolYearLabel={effectiveSchoolYear}
               returnTo={assignmentReturnTo}
