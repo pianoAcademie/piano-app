@@ -16,6 +16,7 @@ from app.api.deps import get_db, require_roles
 from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, DeliveryMode, Location
 from app.models.catalog import Professor as ProfessorModel
 from app.models.catalog import SessionStatus
+from app.models.family import ClientFamilyLink
 from app.models.ops import CommunicationLog, CommunicationSenderCategory, MessageFormat, ProfessorSessionMessage
 from app.models.notification_engine import Notification
 from app.models.payout import PayoutStatus, ProfessorHourlyRate, ProfessorSessionPayout
@@ -102,6 +103,18 @@ def _deserialize_languages(raw: str | None) -> list[str]:
 def _display_name(user: User) -> str:
     full_name = f"{(user.first_name or '').strip()} {(user.last_name or '').strip()}".strip()
     return full_name or user.email
+
+
+def _deliverable_client_email(user: User) -> str | None:
+    """Return a real client address, excluding synthetic import placeholders."""
+    for raw_value in (user.contact_email, user.email):
+        candidate = (raw_value or "").strip().lower()
+        if not candidate:
+            continue
+        if candidate.endswith("@no-email.local") or candidate.endswith("@piano-academie.invalid"):
+            continue
+        return candidate
+    return None
 
 
 def _split_professor_booking_note(value: str | None) -> tuple[str | None, str | None]:
@@ -1672,8 +1685,8 @@ def send_session_message(
         recipients = [(target.email.strip().lower(), target.id)]
         target_display_name = _display_name(target)
     else:
-        recipient_rows = db.execute(
-            select(User.id, User.email)
+        student_rows = db.scalars(
+            select(User)
             .join(Booking, Booking.user_id == User.id)
             .where(
                 Booking.session_id == session_id,
@@ -1681,14 +1694,26 @@ def send_session_message(
                 User.email_opt_in.is_(True),
             )
         ).all()
-        recipients = sorted(
-            {
-                (((email or "").strip().lower()), user_id)
-                for user_id, email in recipient_rows
-                if email and email.strip()
-            },
-            key=lambda item: item[0],
-        )
+        student_ids = {student.id for student in student_rows}
+        recipient_map: dict[str, UUID] = {}
+        for student in student_rows:
+            if email := _deliverable_client_email(student):
+                recipient_map.setdefault(email, student.id)
+
+        if student_ids:
+            parent_rows = db.scalars(
+                select(User)
+                .join(ClientFamilyLink, ClientFamilyLink.adult_user_id == User.id)
+                .where(
+                    ClientFamilyLink.child_user_id.in_(student_ids),
+                    User.email_opt_in.is_(True),
+                )
+            ).all()
+            for parent in parent_rows:
+                if email := _deliverable_client_email(parent):
+                    recipient_map.setdefault(email, parent.id)
+
+        recipients = sorted(recipient_map.items(), key=lambda item: item[0])
 
     if not recipients:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="No valid recipient found")
