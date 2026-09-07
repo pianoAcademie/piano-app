@@ -52,7 +52,7 @@ from app.models.catalog import (
     SessionStatus,
 )
 from app.models.family import ClientFamilyLink
-from app.models.client_record import ClientBillingAdjustment, PaymentReceipt, StudentQuoteChange
+from app.models.client_record import AnnualSeriesTransferRequest, ClientBillingAdjustment, PaymentReceipt, StudentQuoteChange
 from app.models.ops import (
     AppSetting,
     CommunicationChannel,
@@ -116,6 +116,11 @@ from app.services.session_teachers import (
 from app.services.session_notifications import send_session_operation_email
 from app.services.providers.sms import send_provider_sms
 from app.schemas.admin import (
+    AdminAnnualSeriesOptionOut,
+    AdminAnnualSeriesTransferRequestCreate,
+    AdminAnnualSeriesTransferRequestOut,
+    AdminAnnualSeriesTransfersOut,
+    AdminAnnualSeriesTransferStatusUpdate,
     AdminInternalNoteUpdateRequest,
     AdminSessionBroadcastAudience,
     AdminSessionBroadcastOut,
@@ -4785,6 +4790,198 @@ def get_planning_simulation(
         teacher_needs=_planning_simulation_teacher_needs(slot_payloads),
         slots=slot_payloads,
     )
+
+
+_OPEN_ANNUAL_TRANSFER_STATUSES = ("WAITING", "PARENT_CONTACTED")
+_ANNUAL_TRANSFER_WEEKDAYS_FR = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche")
+
+
+def _annual_series_label(session_obj: CourseSession, course_type: CourseType, location: Location) -> str:
+    zone = _safe_zoneinfo(session_obj.timezone or location.timezone or "Europe/Paris")
+    local = session_obj.start_at_utc.astimezone(zone)
+    return f"{course_type.name} · {_ANNUAL_TRANSFER_WEEKDAYS_FR[local.weekday()]} {local.strftime('%H:%M')} · {_session_location_label(location)}"
+
+
+def _annual_series_options(
+    db: Session,
+    *,
+    now: datetime,
+    student_user_id: UUID | None = None,
+) -> list[AdminAnnualSeriesOptionOut]:
+    rows = db.execute(
+        select(CourseSession, CourseType, Location)
+        .join(CourseType, CourseType.id == CourseSession.course_type_id)
+        .join(Location, Location.id == CourseSession.location_id)
+        .where(
+            CourseSession.recurrence_group_id.is_not(None),
+            CourseSession.status == SessionStatus.SCHEDULED,
+            CourseSession.start_at_utc > now,
+        )
+        .order_by(CourseSession.start_at_utc.asc())
+    ).all()
+    grouped: dict[UUID, list[tuple[CourseSession, CourseType, Location]]] = {}
+    for session_obj, course_type, location in rows:
+        grouped.setdefault(session_obj.recurrence_group_id, []).append((session_obj, course_type, location))
+
+    student_bookings: dict[UUID, Booking] = {}
+    if student_user_id is not None:
+        booking_rows = db.scalars(
+            select(Booking)
+            .join(CourseSession, CourseSession.id == Booking.session_id)
+            .where(
+                Booking.user_id == student_user_id,
+                Booking.status.in_(BOOKING_STATUSES_ACTIVE),
+                CourseSession.start_at_utc > now,
+                CourseSession.recurrence_group_id.is_not(None),
+            )
+            .order_by(CourseSession.start_at_utc.asc())
+        ).all()
+        session_groups = dict(db.execute(
+            select(CourseSession.id, CourseSession.recurrence_group_id)
+            .where(CourseSession.id.in_([booking.session_id for booking in booking_rows]))
+        ).all()) if booking_rows else {}
+        for booking in booking_rows:
+            group_id = session_groups.get(booking.session_id)
+            if group_id is not None:
+                student_bookings.setdefault(group_id, booking)
+
+    options: list[AdminAnnualSeriesOptionOut] = []
+    for group_id, group_rows in grouped.items():
+        first_session, course_type, location = group_rows[0]
+        counts = _booked_counts_map(db, [row[0].id for row in group_rows])
+        minimum_remaining = min(
+            max(0, row[0].capacity_max - counts.get(row[0].id, 0))
+            for row in group_rows
+        )
+        options.append(AdminAnnualSeriesOptionOut(
+            recurrence_group_id=group_id,
+            session_id=first_session.id,
+            booking_id=student_bookings.get(group_id).id if group_id in student_bookings else None,
+            label=_annual_series_label(first_session, course_type, location),
+            first_start_at_utc=first_session.start_at_utc,
+            last_start_at_utc=group_rows[-1][0].start_at_utc,
+            occurrence_count=len(group_rows),
+            capacity_max=first_session.capacity_max,
+            minimum_remaining_places=minimum_remaining,
+        ))
+    return options
+
+
+@router.get("/annual-series-transfers", response_model=AdminAnnualSeriesTransfersOut)
+def list_annual_series_transfers(
+    student_user_id: UUID | None = Query(default=None),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin_or_permissions("can_edit_planning")),
+) -> AdminAnnualSeriesTransfersOut:
+    now = _utcnow()
+    options = _annual_series_options(db, now=now, student_user_id=student_user_id)
+    option_by_group = {option.recurrence_group_id: option for option in options}
+    all_requests = db.scalars(
+        select(AnnualSeriesTransferRequest).order_by(AnnualSeriesTransferRequest.requested_at.asc())
+    ).all()
+    requests = (
+        [request for request in all_requests if request.student_user_id == student_user_id]
+        if student_user_id is not None
+        else all_requests
+    )
+    students = {row.id: row for row in db.scalars(
+        select(User).where(User.id.in_({request.student_user_id for request in requests}))
+    ).all()} if requests else {}
+    priority_by_request: dict[UUID, int] = {}
+    counters: dict[UUID, int] = {}
+    for request in all_requests:
+        if request.status not in _OPEN_ANNUAL_TRANSFER_STATUSES:
+            continue
+        counters[request.target_recurrence_group_id] = counters.get(request.target_recurrence_group_id, 0) + 1
+        priority_by_request[request.id] = counters[request.target_recurrence_group_id]
+
+    output: list[AdminAnnualSeriesTransferRequestOut] = []
+    for request in requests:
+        source = option_by_group.get(request.source_recurrence_group_id)
+        target = option_by_group.get(request.target_recurrence_group_id)
+        student = students.get(request.student_user_id)
+        output.append(AdminAnnualSeriesTransferRequestOut(
+            id=request.id,
+            student_user_id=request.student_user_id,
+            student_display_name=_client_display_name(student) if student is not None else "Élève supprimé",
+            source_booking_id=request.source_booking_id,
+            source_label=source.label if source is not None else "Ancienne série / série terminée",
+            target_session_id=target.session_id if target is not None else request.target_session_id,
+            target_label=target.label if target is not None else "Série cible indisponible",
+            status=request.status,
+            priority_position=priority_by_request.get(request.id, 0),
+            place_available=bool(target and target.minimum_remaining_places > 0),
+            internal_note=request.internal_note,
+            requested_at=request.requested_at,
+            reserved_until=request.reserved_until,
+            resolved_at=request.resolved_at,
+        ))
+    source_options = [option for option in options if option.booking_id is not None] if student_user_id else []
+    return AdminAnnualSeriesTransfersOut(requests=output, source_series=source_options, target_series=options)
+
+
+@router.post("/annual-series-transfers", response_model=AdminAnnualSeriesTransferRequestOut, status_code=201)
+def create_annual_series_transfer(
+    payload: AdminAnnualSeriesTransferRequestCreate,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_admin_or_permissions("can_edit_planning")),
+) -> AdminAnnualSeriesTransferRequestOut:
+    source_booking, source_session, target_session = _planning_reorganization_load_move(
+        db, booking_id=payload.source_booking_id, target_session_id=payload.target_session_id
+    )
+    if source_booking.user_id != payload.student_user_id:
+        raise HTTPException(422, "La réservation source n'appartient pas à cet élève.")
+    if source_session.recurrence_group_id is None or target_session.recurrence_group_id is None:
+        raise HTTPException(409, "La demande doit concerner deux séries annuelles.")
+    if source_session.recurrence_group_id == target_session.recurrence_group_id:
+        raise HTTPException(409, "Le créneau souhaité est déjà le créneau actuel.")
+    if source_session.course_type_id != target_session.course_type_id or source_session.location_id != target_session.location_id:
+        raise HTTPException(409, "Activité ou lieu différents : un avenant est nécessaire.")
+    if source_session.end_at_utc - source_session.start_at_utc != target_session.end_at_utc - target_session.start_at_utc:
+        raise HTTPException(409, "La durée diffère : un avenant est nécessaire.")
+    duplicate = db.scalar(select(AnnualSeriesTransferRequest.id).where(
+        AnnualSeriesTransferRequest.student_user_id == payload.student_user_id,
+        AnnualSeriesTransferRequest.target_recurrence_group_id == target_session.recurrence_group_id,
+        AnnualSeriesTransferRequest.status.in_(_OPEN_ANNUAL_TRANSFER_STATUSES),
+    ).limit(1))
+    if duplicate is not None:
+        raise HTTPException(409, "Une demande active existe déjà pour cette série.")
+    request = AnnualSeriesTransferRequest(
+        student_user_id=payload.student_user_id,
+        source_booking_id=source_booking.id,
+        source_recurrence_group_id=source_session.recurrence_group_id,
+        target_session_id=target_session.id,
+        target_recurrence_group_id=target_session.recurrence_group_id,
+        status="WAITING",
+        internal_note=(payload.internal_note or "").strip() or None,
+        created_by_user_id=actor.id,
+        updated_by_user_id=actor.id,
+    )
+    db.add(request)
+    db.commit()
+    refreshed = list_annual_series_transfers(student_user_id=payload.student_user_id, db=db, _=actor)
+    created = next((row for row in refreshed.requests if row.id == request.id), None)
+    if created is None:
+        raise HTTPException(500, "La demande a été créée mais ne peut pas être relue.")
+    return created
+
+
+@router.patch("/annual-series-transfers/{request_id}", response_model=dict)
+def update_annual_series_transfer_status(
+    request_id: UUID,
+    payload: AdminAnnualSeriesTransferStatusUpdate,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_admin_or_permissions("can_edit_planning")),
+) -> dict[str, str]:
+    request = db.scalar(select(AnnualSeriesTransferRequest).where(AnnualSeriesTransferRequest.id == request_id).with_for_update())
+    if request is None:
+        raise HTTPException(404, "Demande introuvable")
+    request.status = payload.status
+    request.updated_by_user_id = actor.id
+    request.updated_at = _utcnow()
+    request.resolved_at = _utcnow() if payload.status in {"COMPLETED", "CANCELLED", "DECLINED"} else None
+    db.commit()
+    return {"status": request.status}
 
 
 @router.get("/planning-reorganization", response_model=AdminPlanningReorganizationOut)

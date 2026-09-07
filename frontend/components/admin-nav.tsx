@@ -30,6 +30,7 @@ const NAV_SECTIONS: NavSection[] = [
       { href: "/admin/tasks", label: { fr: "Tâches", en: "Tasks" }, icon: "📋", permission: "can_manage_tasks" },
       { href: "/admin/events", label: { fr: "Événements", en: "Events" }, icon: "🎟️", permission: "can_manage_events" },
       { href: "/admin/planning-reorganization", label: { fr: "Reorganisation saison", en: "Season reorg" }, icon: "🧩", permission: "can_edit_planning" },
+      { href: "/admin/series-transfers", label: { fr: "Changements de série", en: "Series transfers" }, icon: "🔄", permission: "can_edit_planning" },
       { href: "/admin/simulation-planning", label: { fr: "Simulation planning", en: "Planning simulation" }, icon: "🧮", permission: "can_view_planning_simulation" },
       { href: "/admin/clients", label: { fr: "Clients", en: "Clients" }, icon: "👥", permission: "can_view_clients" },
       { href: "/admin/professors", label: { fr: "Collaborateurs", en: "Collaborators" }, icon: "🧑‍🏫", permission: "can_access_collaborators" },

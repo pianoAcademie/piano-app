@@ -4285,6 +4285,53 @@ export async function movePlanningReorganizationBookingAction(formData: FormData
   redirect(appendQueryMessage(returnTo, result.data.moved_count > 0 ? "ok" : "error", message));
 }
 
+export async function createAnnualSeriesTransferAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) redirect("/login?error_code=session_expired");
+  const returnTo = safeAdminReturnPath(formData, "/admin/series-transfers");
+  const studentUserId = String(formData.get("student_user_id") ?? "").trim();
+  const sourceBookingId = String(formData.get("source_booking_id") ?? "").trim();
+  const targetSessionId = String(formData.get("target_session_id") ?? "").trim();
+  if (!studentUserId || !sourceBookingId || !targetSessionId) {
+    redirect(appendQueryMessage(returnTo, "error", "Élève, série actuelle ou série souhaitée manquante."));
+  }
+  const result = await backendRequest<Record<string, unknown>>(
+    "/api/v1/admin/annual-series-transfers",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        student_user_id: studentUserId,
+        source_booking_id: sourceBookingId,
+        target_session_id: targetSessionId,
+        internal_note: String(formData.get("internal_note") ?? "").trim() || null,
+      }),
+    },
+    token,
+  );
+  if (!result.ok) redirect(appendQueryMessage(returnTo, "error", result.message));
+  revalidatePath("/admin/series-transfers");
+  redirect(appendQueryMessage(returnTo, "ok", "La demande annuelle a été enregistrée avec sa priorité."));
+}
+
+export async function updateAnnualSeriesTransferStatusAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) redirect("/login?error_code=session_expired");
+  const returnTo = safeAdminReturnPath(formData, "/admin/series-transfers");
+  const requestId = String(formData.get("request_id") ?? "").trim();
+  const status = String(formData.get("status") ?? "").trim();
+  if (!requestId || !["WAITING", "PARENT_CONTACTED", "COMPLETED", "CANCELLED", "DECLINED"].includes(status)) {
+    redirect(appendQueryMessage(returnTo, "error", "Mise à jour invalide."));
+  }
+  const result = await backendRequest<Record<string, string>>(
+    `/api/v1/admin/annual-series-transfers/${requestId}`,
+    { method: "PATCH", body: JSON.stringify({ status }) },
+    token,
+  );
+  if (!result.ok) redirect(appendQueryMessage(returnTo, "error", result.message));
+  revalidatePath("/admin/series-transfers");
+  redirect(appendQueryMessage(returnTo, "ok", "La demande a été mise à jour."));
+}
+
 export type PlanningReorganizationMovePreview = {
   version: string;
   financial_impact_ttc: string;

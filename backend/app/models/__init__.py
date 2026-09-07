@@ -8,6 +8,7 @@ from app.models.makeup import MakeupPassPurchase, MakeupRequest, MakeupRequestSt
 from app.models.client_group import ClientGroup, ClientGroupMembership
 from app.models.client_news import ClientNewsArticle
 from app.models.client_record import (
+    AnnualSeriesTransferRequest,
     ClientAutoInvoiceOccurrence,
     ClientAutoInvoiceRule,
     BankTransferOrder,
@@ -244,6 +245,7 @@ __all__ = [
     "PlanPrice",
     "PasswordResetToken",
     "Notification",
+    "AnnualSeriesTransferRequest",
     "NotificationRule",
     "Professor",
     "ProfessorHourlyRate",

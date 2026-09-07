@@ -71,6 +71,31 @@ class ClientNoteEntry(Base):
     )
 
 
+class AnnualSeriesTransferRequest(Base):
+    """Priority request to move an enrolled student to another annual series."""
+
+    __tablename__ = "annual_series_transfer_requests"
+    __table_args__ = (
+        Index("ix_annual_series_transfer_open_priority", "status", "target_recurrence_group_id", "requested_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
+    student_user_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    source_booking_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("bookings.id", ondelete="RESTRICT"), nullable=False)
+    source_recurrence_group_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    target_session_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("course_sessions.id", ondelete="RESTRICT"), nullable=False)
+    target_recurrence_group_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, server_default=text("'WAITING'"))
+    internal_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+    reserved_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by_user_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    updated_by_user_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+
+
 class ClientLegacyInvoice(Base):
     __tablename__ = "client_legacy_invoices"
     __table_args__ = (

@@ -2708,6 +2708,52 @@ class AdminPlanningReorganizationMoveOut(BaseModel):
     details: list[str] = Field(default_factory=list)
 
 
+class AdminAnnualSeriesOptionOut(BaseModel):
+    recurrence_group_id: UUID
+    session_id: UUID
+    booking_id: UUID | None = None
+    label: str
+    first_start_at_utc: datetime
+    last_start_at_utc: datetime
+    occurrence_count: int
+    capacity_max: int
+    minimum_remaining_places: int
+
+
+class AdminAnnualSeriesTransferRequestCreate(BaseModel):
+    student_user_id: UUID
+    source_booking_id: UUID
+    target_session_id: UUID
+    internal_note: str | None = Field(default=None, max_length=4000)
+
+
+class AdminAnnualSeriesTransferStatusUpdate(BaseModel):
+    status: Literal["WAITING", "PARENT_CONTACTED", "COMPLETED", "CANCELLED", "DECLINED"]
+
+
+class AdminAnnualSeriesTransferRequestOut(BaseModel):
+    id: UUID
+    student_user_id: UUID
+    student_display_name: str
+    source_booking_id: UUID
+    source_label: str
+    target_session_id: UUID
+    target_label: str
+    status: str
+    priority_position: int
+    place_available: bool
+    internal_note: str | None = None
+    requested_at: datetime
+    reserved_until: datetime | None = None
+    resolved_at: datetime | None = None
+
+
+class AdminAnnualSeriesTransfersOut(BaseModel):
+    requests: list[AdminAnnualSeriesTransferRequestOut] = Field(default_factory=list)
+    source_series: list[AdminAnnualSeriesOptionOut] = Field(default_factory=list)
+    target_series: list[AdminAnnualSeriesOptionOut] = Field(default_factory=list)
+
+
 class AdminSessionDuplicateRequest(BaseModel):
     target_start_at_utc: datetime
 
