@@ -9,7 +9,7 @@ import styles from "./partition-distribution.module.css";
 export type DistributionData = {
   week: string; is_admin: boolean;
   products: { id: string; title: string }[];
-  needs: { student_id: string; student_name: string; professor_id: string; professor: string; site: string; course_at: string;
+  needs: { student_id: string; student_name: string; professor_id: string; professor: string; site: string; course_at: string; session_id: string;
     assignment_id: string | null; product_id: string | null; title: string; status: string }[];
   totals: { professor_id: string; professor: string; product_id: string; title: string; needed: number; held: number; pending: number; to_pickup: number; richelieu: number }[];
   movements: { id: string; professor_id: string; product_id: string; professor: string; title: string; kind: string; state: string; quantity: number; created_at: string; confirmed_at: string | null;
@@ -46,11 +46,13 @@ function ActionForm({ children, portal }: { children: React.ReactNode; portal: s
 const hidden = (name: string, value: string) => <input type="hidden" name={name} value={value} />;
 const dateText = (value: string) => new Date(value).toLocaleString("fr-FR", { timeZone: "Europe/Paris", dateStyle: "short", timeStyle: "short" });
 
-export default function PartitionDistribution({ data, studentId = "" }: { data: DistributionData; studentId?: string }) {
+export default function PartitionDistribution({ data, studentId = "", sessionId = "" }: { data: DistributionData; studentId?: string; sessionId?: string }) {
   const portal = data.is_admin ? "admin" : "prof";
   const pickupCount = data.totals.reduce((total, row) => total + Math.max(0, row.needed - row.held), 0);
   const stockShortage = data.totals.some(row => row.needed - row.held > row.richelieu);
-  const needs = [...data.needs].sort((a, b) => Number(b.student_id === studentId) - Number(a.student_id === studentId));
+  const courses = Array.from(new Map(data.needs.map(row => [row.session_id, row])).values());
+  const [selectedCourse, setSelectedCourse] = useState(sessionId || data.needs.find(row => row.student_id === studentId)?.session_id || courses[0]?.session_id || "");
+  const needs = data.needs.filter(row => data.is_admin || row.session_id === selectedCourse).sort((a, b) => Number(b.student_id === studentId) - Number(a.student_id === studentId));
   const pickup = <details className={`card ${styles.accordion}`}>
       <summary>Quantités à récupérer à Richelieu
         <span className={styles.summaryNote}>{pickupCount} exemplaire(s) à récupérer{stockShortage ? " · Stock insuffisant pour certaines partitions" : ""} — ouvrir le détail</span>
@@ -86,8 +88,14 @@ export default function PartitionDistribution({ data, studentId = "" }: { data: 
     <p>Confirmez ci-dessous les partitions remises aux élèves. Les retraits à Richelieu sont regroupés plus bas.</p>
     <form method="get" className={styles.week}><label>Semaine du <input type="date" name="week" defaultValue={data.week} required /></label>{studentId && hidden("student", studentId)}<button>Afficher</button></form>
     <section className="card" id="remises"><h2>Remettre une partition à un élève</h2>
+      {!data.is_admin && <label>Cours concerné
+        <select value={selectedCourse} onChange={event => setSelectedCourse(event.target.value)}>
+          {!courses.some(row => row.session_id === selectedCourse) && <option value={selectedCourse}>Aucune remise à prévoir pour le cours sélectionné</option>}
+          {courses.map(row => <option key={row.session_id} value={row.session_id}>{dateText(row.course_at)} · {row.site}</option>)}
+        </select>
+      </label>}
       {studentId && !data.needs.some(row => row.student_id === studentId) && <p role="status">Aucune remise à prévoir pour cet élève cette semaine. Vérifiez la semaine ou l’historique des remises ci-dessous.</p>}
-      {!data.needs.length && <p>Aucune remise à prévoir pour cette semaine.</p>}
+      {!needs.length && <p>Aucune remise à prévoir pour ce cours.</p>}
       {needs.map(row => <article key={`${row.student_id}-${row.assignment_id}`} className={row.student_id === studentId ? styles.selected : undefined} style={{ borderBottom: "1px solid #ddd", padding: "12px 0" }}>
         <h3>{row.student_name} — {row.title}</h3>
         <p>{row.site} · {dateText(row.course_at)} · {row.professor}</p>

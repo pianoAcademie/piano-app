@@ -1854,7 +1854,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                           <>
                             <LearningCard studentId={student.user_id} studentName={student.display_name}
                               sessionId={selectedSession.id} catalog={repertoireCatalog} initial={student.learning_progress} />
-                            <Link href={`/prof/partitions?student=${encodeURIComponent(student.user_id)}&week=${encodeURIComponent(agendaDate)}#remises`}>Remise des partitions →</Link>
+                            <Link href={`/prof/partitions?student=${encodeURIComponent(student.user_id)}&session=${encodeURIComponent(selectedSession.id)}&week=${encodeURIComponent(agendaDate)}#remises`}>Remise des partitions →</Link>
                           </>
                         ) : null}
                       </article>
