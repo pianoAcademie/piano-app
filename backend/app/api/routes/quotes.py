@@ -53,7 +53,13 @@ from app.api.routes.bookings import (
     _restore_pack_credit,
 )
 from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, DeliveryMode, Location, SessionStatus
-from app.models.client_record import ClientAutoInvoiceRule, ClientInvoiceLine, ClientManualTransaction, ClientNoteEntry
+from app.models.client_record import (
+    ClientAutoInvoiceOccurrence,
+    ClientAutoInvoiceRule,
+    ClientInvoiceLine,
+    ClientManualTransaction,
+    ClientNoteEntry,
+)
 from app.models.family import ClientFamilyLink
 from app.models.makeup import MakeupPassPurchase
 from app.models.ops import AppSetting, CommunicationSenderCategory, LegalEntity
@@ -671,6 +677,21 @@ def _create_followup_fixed_monthly_installments(
         raise HTTPException(status_code=409, detail="Le total de l'echeancier fixe differe du total du devis")
 
 
+def _quote_monthly_rule_next_run_date(
+    *,
+    today: date,
+    first_cycle_already_processed: bool,
+    last_generated_at: datetime | None,
+) -> date:
+    if not first_cycle_already_processed and last_generated_at is None:
+        return QUOTE_MONTHLY_CARD_BILLING_START_DATE
+    return _compute_auto_invoice_next_run_date(
+        cycle_start_date=QUOTE_MONTHLY_CARD_BILLING_START_DATE,
+        frequency="MONTHLY",
+        today=today,
+    )
+
+
 def _upsert_quote_monthly_card_auto_invoice_rule(
     db: Session,
     *,
@@ -682,11 +703,6 @@ def _upsert_quote_monthly_card_auto_invoice_rule(
         return None
 
     now = _utcnow()
-    next_run_date = _compute_auto_invoice_next_run_date(
-        cycle_start_date=QUOTE_MONTHLY_CARD_BILLING_START_DATE,
-        frequency="MONTHLY",
-        today=now.date(),
-    )
     rule = db.scalar(
         select(ClientAutoInvoiceRule)
         .where(
@@ -707,6 +723,29 @@ def _upsert_quote_monthly_card_auto_invoice_rule(
             created_at=now,
             updated_at=now,
         )
+
+    # A quote can be transformed after the monthly anchor has passed.  The
+    # first invoice still has to cover the current school-month; advancing the
+    # new rule immediately to the next month would silently skip it.  Existing
+    # rules which have already generated an occurrence keep their own cursor.
+    first_cycle_already_processed = bool(
+        rule.id
+        and db.scalar(
+            select(ClientAutoInvoiceOccurrence.id)
+            .where(
+                ClientAutoInvoiceOccurrence.rule_id == rule.id,
+                ClientAutoInvoiceOccurrence.cycle_key.like(
+                    f"{QUOTE_MONTHLY_CARD_BILLING_START_DATE.isoformat()}::%"
+                ),
+            )
+            .limit(1)
+        )
+    )
+    next_run_date = _quote_monthly_rule_next_run_date(
+        today=now.date(),
+        first_cycle_already_processed=first_cycle_already_processed,
+        last_generated_at=rule.last_generated_at,
+    )
 
     rule.cycle_start_date = QUOTE_MONTHLY_CARD_BILLING_START_DATE
     rule.frequency = "MONTHLY"

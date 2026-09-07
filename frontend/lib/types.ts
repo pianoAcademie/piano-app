@@ -2908,6 +2908,7 @@ export type AdminPlanningSimulationSlotOut = {
   course_type_name: string;
   course_type_color_hex: string | null;
   course_type_mode: "ONLINE" | "ONSITE" | "ANY" | string | null;
+  requires_professor: boolean;
   weekday: number;
   weekday_label: string;
   start_time: string;
@@ -3018,6 +3019,48 @@ export type AdminPlanningSimulationOut = {
   summary: AdminPlanningSimulationSummaryOut;
   teacher_needs: AdminPlanningSimulationTeacherNeedsOut;
   slots: AdminPlanningSimulationSlotOut[];
+};
+
+export type AdminPlanningTeacherSyncChangeOut = {
+  selection_key: string;
+  slot_key: string;
+  position: number;
+  teacher_label: string | null;
+  current_teacher_label: string | null;
+  planned_teacher_label: string | null;
+  professor_id: string | null;
+  location_name: string | null;
+  course_type_name: string | null;
+  weekday: number | null;
+  start_time: string | null;
+  end_time: string | null;
+  first_session_at: string | null;
+  last_session_at: string | null;
+  operation: "ADD" | "REPLACE" | "REMOVE";
+  session_count: number;
+  conflict: boolean;
+  conflict_reason: string | null;
+};
+
+export type AdminPlanningTeacherSyncPreviewOut = {
+  school_year_label: string;
+  effective_from: string;
+  last_sync_at: string | null;
+  change_count: number;
+  session_count: number;
+  conflict_count: number;
+  changes: AdminPlanningTeacherSyncChangeOut[];
+};
+
+export type AdminPlanningTeacherSyncRunOut = {
+  id: string;
+  school_year_label: string;
+  effective_from: string;
+  status: "APPLIED" | "ROLLED_BACK";
+  change_count: number;
+  session_count: number;
+  created_at: string;
+  rolled_back_at: string | null;
 };
 
 export type AdminQuotePlanningAuditItemOut = {
