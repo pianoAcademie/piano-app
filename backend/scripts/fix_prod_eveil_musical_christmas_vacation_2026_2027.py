@@ -1,218 +1,97 @@
 from __future__ import annotations
 
-import argparse
-import json
-import os
-import sys
-import traceback
-from collections import defaultdict
-from datetime import date, datetime, time, timedelta, timezone
+import argparse, os, sys
+from datetime import date, datetime, time, timezone
+from uuid import UUID
 from zoneinfo import ZoneInfo
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-
-from sqlalchemy import select
-
+from sqlalchemy import func, select
+from app.api.routes.admin import BOOKING_STATUSES_ACTIVE, BOOKING_STATUSES_COUNTED_AS_RESERVED, _move_planning_reorganization_booking_occurrence
 from app.db.session import SessionLocal
-from app.models.catalog import CourseSession, CourseType, Location, SessionStatus
-from app.models.ops import AppSetting
-from app.services.quotes.quote_documents import (
-    QUOTE_SCHOOL_CALENDARS_SETTING_KEY,
-    _calendar_row_applies_to_session,
-    _expand_calendar_vacation_dates,
-    _is_true,
-    _json_list,
-    _json_object,
-    _parse_iso_date_set,
-)
+from app.models.catalog import Booking, CourseSession, Location, Professor, SessionStatus
+from app.models.client_record import ClientNoteEntry
+from app.models.user import User
 
-SCRIPT_PREFIX = "PROD_REPAIR_BAR_LE_DUC_MISSING_SESSIONS"
-LOCATION_CODE = "BAR_LE_DUC"
-EXPECTED_END = date(2027, 6, 19)
+SCRIPT = "MOVE_VIRGILE_TARDIEU_POMPE_17_TO_SCHEFFER_16_20260907"
+STUDENT_ID = UUID("1e14b135-af1f-4116-82bb-f874a94b2052")
+SOURCE_FIRST_BOOKING_ID = UUID("b769c7a4-865e-40ab-95c5-90fc7d021efc")
+TARGET_FIRST_SESSION_ID = UUID("3bdfd4c8-91c6-45ac-bf1c-b5af6c99dbc9")
+TARGET_GROUP_ID = UUID("90a2f267-3b69-5ecc-8448-b732b32b68dd")
+START_DATE, EXPECTED_COUNT = date(2026, 9, 9), 32
+PARIS = ZoneInfo("Europe/Paris")
 
+def local_parts(row):
+    tz = ZoneInfo(row.timezone or "Europe/Paris")
+    start, end = row.start_at_utc.astimezone(tz), row.end_at_utc.astimezone(tz)
+    return start.date(), start.time().replace(tzinfo=None), end.time().replace(tzinfo=None)
 
-def _print(line: str) -> None:
-    print(f"[{SCRIPT_PREFIX}] {line}")
+def guard_location(db, row, code, name):
+    location = db.get(Location, row.location_id)
+    if location is None or str(location.code or "").upper() != code or name not in str(location.name or "").casefold():
+        raise SystemExit(f"[{SCRIPT}] location_guard_failed session={row.id}")
 
-
-def _local_parts(session_obj: CourseSession) -> tuple[date, int, time, time]:
-    tz = ZoneInfo(session_obj.timezone or "Europe/Paris")
-    start = session_obj.start_at_utc.astimezone(tz)
-    end = session_obj.end_at_utc.astimezone(tz)
-    return start.date(), start.date().weekday(), start.time().replace(tzinfo=None), end.time().replace(tzinfo=None)
-
-
-def _excluded_dates_for_location(db, *, location_id: str) -> set[date]:
-    setting = db.scalar(select(AppSetting).where(AppSetting.key == QUOTE_SCHOOL_CALENDARS_SETTING_KEY))
-    rows = _json_list(json.loads(setting.value or "[]")) if setting else []
-    excluded: set[date] = set()
-    for raw in rows:
-        row = _json_object(raw)
-        if not _is_true(row.get("is_active", True)):
-            continue
-        if not _calendar_row_applies_to_session(row, location_id=location_id, session_date=date(2027, 4, 12)):
-            continue
-        excluded |= _parse_iso_date_set(row.get("holiday_dates"))
-        excluded |= _parse_iso_date_set(row.get("closure_dates"))
-        excluded |= _expand_calendar_vacation_dates(row)
-    return excluded
-
-
-def _expected_missing_dates(last_date: date, *, weekday: int, excluded: set[date]) -> list[date]:
-    cursor = last_date + timedelta(days=1)
-    cursor += timedelta(days=(weekday - cursor.weekday()) % 7)
-    rows: list[date] = []
-    while cursor <= EXPECTED_END:
-        if cursor not in excluded:
-            rows.append(cursor)
-        cursor += timedelta(days=7)
-    return rows
-
-
-def _copy_session(template: CourseSession, *, target_date: date) -> CourseSession:
-    local_date, _weekday, start_time, end_time = _local_parts(template)
-    del local_date
-    tz = ZoneInfo(template.timezone or "Europe/Paris")
-    start_utc = datetime.combine(target_date, start_time, tzinfo=tz).astimezone(timezone.utc)
-    end_utc = datetime.combine(target_date, end_time, tzinfo=tz).astimezone(timezone.utc)
-    deadline_delta = template.start_at_utc - template.auto_cancel_deadline_utc
-    if deadline_delta.total_seconds() <= 0:
-        deadline_delta = template.end_at_utc - template.start_at_utc
-    return CourseSession(
-        course_type_id=template.course_type_id,
-        billing_entity_snapshot=template.billing_entity_snapshot,
-        snapshot_seller_legal_entity_id=template.snapshot_seller_legal_entity_id,
-        snapshot_payor_legal_entity_id=template.snapshot_payor_legal_entity_id,
-        location_id=template.location_id,
-        professor_id=template.professor_id,
-        substitute_teacher_id=template.substitute_teacher_id,
-        substitute_set_at=template.substitute_set_at,
-        substitute_set_by=template.substitute_set_by,
-        substitute_note=template.substitute_note,
-        title=template.title,
-        description=template.description,
-        private_description=template.private_description,
-        group_note=template.group_note,
-        professor_reminder_note=template.professor_reminder_note,
-        start_at_utc=start_utc,
-        end_at_utc=end_utc,
-        is_all_day=template.is_all_day,
-        capacity_max=template.capacity_max,
-        status=SessionStatus.SCHEDULED,
-        auto_cancel_deadline_utc=start_utc - deadline_delta,
-        cancel_reason=None,
-        zoom_link=template.zoom_link,
-        is_private=template.is_private,
-        allow_online_booking=template.allow_online_booking,
-        visibility_scope=template.visibility_scope,
-        booking_scope=template.booking_scope,
-        external_booking_price_ttc=template.external_booking_price_ttc,
-        show_external_remaining_seats=template.show_external_remaining_seats,
-        timezone=template.timezone,
-        recurrence_group_id=template.recurrence_group_id,
-        recurrence_rule=template.recurrence_rule,
-        recurrence_until_date=template.recurrence_until_date,
-    )
-
-
-def main() -> None:
+def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--apply", action="store_true", help="Create missing Bar-le-Duc sessions.")
+    parser.add_argument("--apply", action="store_true")
     args = parser.parse_args()
-
+    now = datetime.now(timezone.utc)
+    start_utc = datetime(2026, 9, 9, tzinfo=PARIS).astimezone(timezone.utc)
     with SessionLocal() as db:
-        location = db.scalar(select(Location).where(Location.code == LOCATION_CODE).limit(1))
-        if location is None:
-            raise RuntimeError(f"Location not found: {LOCATION_CODE}")
-        excluded = _excluded_dates_for_location(db, location_id=str(location.id))
-
-        rows = db.execute(
-            select(CourseSession, CourseType)
-            .join(CourseType, CourseType.id == CourseSession.course_type_id)
-            .where(
-                CourseSession.location_id == location.id,
-                CourseSession.status == SessionStatus.SCHEDULED,
-                CourseSession.recurrence_group_id.is_not(None),
-                CourseSession.start_at_utc >= datetime(2026, 9, 1, tzinfo=timezone.utc),
-                CourseSession.start_at_utc < datetime(2027, 7, 1, tzinfo=timezone.utc),
-            )
-            .order_by(CourseSession.start_at_utc.asc())
-        ).all()
-
-        by_group: dict[str, list[tuple[CourseSession, CourseType]]] = defaultdict(list)
-        for session_obj, course in rows:
-            name = str(course.name or "").casefold()
-            if "bar-le-duc" not in name or "vacances" in name:
-                continue
-            by_group[str(session_obj.recurrence_group_id)].append((session_obj, course))
-
-        created_dates: list[str] = []
-        already_present = 0
-        planned_creates = 0
-
-        for group_id, group_rows in sorted(by_group.items()):
-            group_sessions = [item[0] for item in group_rows]
-            course = group_rows[0][1]
-            local_rows = [(_local_parts(session_obj), session_obj) for session_obj in group_sessions]
-            weekdays = sorted({parts[1] for parts, _session_obj in local_rows})
-            starts = sorted({parts[2] for parts, _session_obj in local_rows})
-            ends = sorted({parts[3] for parts, _session_obj in local_rows})
-            if len(weekdays) != 1 or len(starts) != 1 or len(ends) != 1:
-                _print(f"skip_mixed_group={group_id}|course={course.name}")
-                continue
-            last_date = max(parts[0] for parts, _session_obj in local_rows)
-            missing_dates = _expected_missing_dates(last_date, weekday=weekdays[0], excluded=excluded)
-            template = max(group_sessions, key=lambda session_obj: _local_parts(session_obj)[0])
-            _print(
-                f"group={group_id}|course={course.name}|weekday={weekdays[0]}|"
-                f"time={starts[0].strftime('%H:%M')}-{ends[0].strftime('%H:%M')}|"
-                f"last={last_date.isoformat()}|missing={','.join(day.isoformat() for day in missing_dates) or '-'}"
-            )
-            for target_date in missing_dates:
-                tz = ZoneInfo(template.timezone or "Europe/Paris")
-                start_utc = datetime.combine(target_date, starts[0], tzinfo=tz).astimezone(timezone.utc)
-                end_utc = datetime.combine(target_date, ends[0], tzinfo=tz).astimezone(timezone.utc)
-                existing = db.scalar(
-                    select(CourseSession.id)
-                    .where(
-                        CourseSession.course_type_id == template.course_type_id,
-                        CourseSession.location_id == template.location_id,
-                        CourseSession.status == SessionStatus.SCHEDULED,
-                        CourseSession.start_at_utc == start_utc,
-                        CourseSession.end_at_utc == end_utc,
-                    )
-                    .limit(1)
-                )
-                if existing is not None:
-                    already_present += 1
-                    continue
-                planned_creates += 1
-                if args.apply:
-                    session_obj = _copy_session(template, target_date=target_date)
-                    db.add(session_obj)
-                    db.flush()
-                    created_dates.append(target_date.isoformat())
-
-        try:
-            if args.apply:
-                db.commit()
-            else:
-                db.rollback()
-        except Exception as exc:
-            db.rollback()
-            _print(f"exception={type(exc).__name__}|message={exc}")
-            traceback.print_exc()
-            print(f"::error title=Bar-le-Duc repair failed::{type(exc).__name__}: {exc}")
-            raise
-
-        summary = (
-            f"apply={args.apply}|groups={len(by_group)}|planned_creates={planned_creates}|"
-            f"created={len(created_dates)}|already_present={already_present}|"
-            f"created_dates={','.join(created_dates) or '-'}"
-        )
-        _print(f"summary {summary}")
-        print(f"::notice title=Bar-le-Duc missing sessions repair::{summary}")
-
+        student = db.scalar(select(User).where(User.id == STUDENT_ID).with_for_update())
+        if student is None or student.first_name.strip().casefold() != "virgile" or student.last_name.strip().casefold() != "tardieu":
+            raise SystemExit(f"[{SCRIPT}] student_guard_failed")
+        first_booking = db.scalar(select(Booking).where(Booking.id == SOURCE_FIRST_BOOKING_ID).with_for_update())
+        if first_booking is None or first_booking.user_id != STUDENT_ID:
+            raise SystemExit(f"[{SCRIPT}] source_booking_guard_failed")
+        first_source = db.get(CourseSession, first_booking.session_id)
+        if first_source is None or first_source.recurrence_group_id is None:
+            raise SystemExit(f"[{SCRIPT}] source_session_guard_failed")
+        source_group_id = first_source.recurrence_group_id
+        guard_location(db, first_source, "POMPE", "pompe")
+        if local_parts(first_source) != (START_DATE, time(17), time(18)):
+            raise SystemExit(f"[{SCRIPT}] source_schedule_guard_failed actual={local_parts(first_source)}")
+        target_first = db.scalar(select(CourseSession).where(CourseSession.id == TARGET_FIRST_SESSION_ID).with_for_update())
+        if target_first is None or target_first.recurrence_group_id != TARGET_GROUP_ID:
+            raise SystemExit(f"[{SCRIPT}] target_session_guard_failed")
+        guard_location(db, target_first, "SCHEFFER", "scheffer")
+        professor = db.get(Professor, target_first.professor_id) if target_first.professor_id else None
+        if professor is None or professor.first_name.strip().casefold() != "stephanie" or "araniyadi" not in professor.last_name.strip().casefold():
+            raise SystemExit(f"[{SCRIPT}] target_professor_guard_failed")
+        if local_parts(target_first) != (START_DATE, time(16), time(17)):
+            raise SystemExit(f"[{SCRIPT}] target_schedule_guard_failed actual={local_parts(target_first)}")
+        source_rows = db.execute(select(Booking, CourseSession).join(CourseSession, CourseSession.id == Booking.session_id).where(Booking.user_id == STUDENT_ID, Booking.status.in_(BOOKING_STATUSES_ACTIVE), CourseSession.recurrence_group_id == source_group_id, CourseSession.start_at_utc >= start_utc, CourseSession.status == SessionStatus.SCHEDULED).order_by(CourseSession.start_at_utc).with_for_update()).all()
+        targets = db.scalars(select(CourseSession).where(CourseSession.recurrence_group_id == TARGET_GROUP_ID, CourseSession.start_at_utc >= start_utc, CourseSession.status == SessionStatus.SCHEDULED).order_by(CourseSession.start_at_utc).with_for_update()).all()
+        if len(source_rows) != EXPECTED_COUNT or len(targets) != EXPECTED_COUNT:
+            raise SystemExit(f"[{SCRIPT}] series_count_guard_failed source={len(source_rows)} target={len(targets)}")
+        source_by_date = {local_parts(s)[0]: (b, s) for b, s in source_rows}
+        target_by_date = {local_parts(s)[0]: s for s in targets}
+        if len(source_by_date) != EXPECTED_COUNT or len(target_by_date) != EXPECTED_COUNT or set(source_by_date) != set(target_by_date):
+            raise SystemExit(f"[{SCRIPT}] calendar_alignment_guard_failed source_dates={sorted(source_by_date)} target_dates={sorted(target_by_date)}")
+        existing = db.scalar(select(func.count()).select_from(Booking).join(CourseSession, CourseSession.id == Booking.session_id).where(Booking.user_id == STUDENT_ID, Booking.status.in_(BOOKING_STATUSES_ACTIVE), CourseSession.recurrence_group_id == TARGET_GROUP_ID))
+        if int(existing or 0):
+            raise SystemExit(f"[{SCRIPT}] target_already_booked count={existing}")
+        for target in targets:
+            reserved = db.scalar(select(func.count()).select_from(Booking).where(Booking.session_id == target.id, Booking.status.in_(BOOKING_STATUSES_COUNTED_AS_RESERVED)))
+            if int(reserved or 0) >= int(target.capacity_max):
+                raise SystemExit(f"[{SCRIPT}] target_full session={target.id} reserved={reserved}")
+        days = sorted(source_by_date)
+        print(f"[{SCRIPT}] mode={'apply' if args.apply else 'dry-run'} student=Virgile_Tardieu move=32 source=Wed_17_Pompe target=Wed_16_Scheffer first={days[0]} last={days[-1]} price=keep_source notifications=none")
+        if not args.apply:
+            db.rollback(); print(f"[{SCRIPT}] committed=false"); return
+        for day in days:
+            booking, source = source_by_date[day]
+            ok, detail = _move_planning_reorganization_booking_occurrence(db, booking=booking, source_session=source, target_session=target_by_date[day], now=now, target_price_snapshot=None, lock_price_snapshot=True)
+            if not ok:
+                raise SystemExit(f"[{SCRIPT}] move_failed day={day} booking={booking.id} detail={detail}")
+        db.add(ClientNoteEntry(user_id=STUDENT_ID, author_user_id=None, entry_type="AUTO", message=f"{SCRIPT} - 32 reservations transferees a compter du 09/09/2026 : mercredi 17h Rue de la Pompe vers mercredi 16h Rue Scheffer (Stephanie Araniyadi). Tarifs et rattachements financiers conserves. Aucune notification envoyee."))
+        db.flush()
+        source_after = db.scalar(select(func.count()).select_from(Booking).join(CourseSession, CourseSession.id == Booking.session_id).where(Booking.user_id == STUDENT_ID, Booking.status.in_(BOOKING_STATUSES_ACTIVE), CourseSession.recurrence_group_id == source_group_id, CourseSession.start_at_utc >= start_utc))
+        target_after = db.scalar(select(func.count()).select_from(Booking).join(CourseSession, CourseSession.id == Booking.session_id).where(Booking.user_id == STUDENT_ID, Booking.status.in_(BOOKING_STATUSES_ACTIVE), CourseSession.recurrence_group_id == TARGET_GROUP_ID, CourseSession.start_at_utc >= start_utc))
+        if int(source_after or 0) != 0 or int(target_after or 0) != EXPECTED_COUNT:
+            raise SystemExit(f"[{SCRIPT}] postcheck_failed source={source_after} target={target_after}")
+        db.commit()
+        print(f"[{SCRIPT}] committed=true moved=32 source_after=0 target_after={target_after}")
 
 if __name__ == "__main__":
     main()
