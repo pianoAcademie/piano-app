@@ -40,6 +40,8 @@ type RichMessageEditorProps = {
   language?: UiLanguage | string;
   labels?: Partial<RichMessageEditorLabels>;
   onValueChange?: (value: string) => void;
+  attachmentName?: string;
+  maxAttachments?: number;
 };
 
 function defaultLabels(language: UiLanguage): RichMessageEditorLabels {
@@ -146,6 +148,8 @@ export default function RichMessageEditor({
   language: languageProp = "fr",
   labels,
   onValueChange,
+  attachmentName,
+  maxAttachments = 5,
 }: RichMessageEditorProps) {
   const language = normalizeUiLanguage(languageProp);
   const ui = { ...defaultLabels(language), ...labels };
@@ -163,6 +167,7 @@ export default function RichMessageEditor({
   const editorRef = useRef<HTMLDivElement | null>(null);
   const imageFileInputRef = useRef<HTMLInputElement | null>(null);
   const attachmentFileInputRef = useRef<HTMLInputElement | null>(null);
+  const [attachmentNames, setAttachmentNames] = useState<string[]>([]);
 
   useEffect(() => {
     if (mode !== "WYSIWYG" || !editorRef.current) {
@@ -255,15 +260,6 @@ export default function RichMessageEditor({
       return;
     }
     applyCommand("insertImage", src);
-  };
-
-  const insertAttachmentFromFile = async (file: File | null) => {
-    if (!file || mode !== "WYSIWYG") {
-      return;
-    }
-    const dataUrl = await readFileAsDataUrl(file);
-    const safeName = escapeHtml(file.name || ui.defaultFileName);
-    insertHtmlAtCursor(`<a href="${dataUrl}" download="${safeName}" target="_blank" rel="noreferrer">📎 ${safeName}</a>`);
   };
 
   const insertImageFromFile = async (file: File | null) => {
@@ -409,7 +405,9 @@ export default function RichMessageEditor({
                 <button type="button" onClick={insertLink}>{ui.insertLink}</button>
                 <button type="button" onClick={insertImageUrl}>{ui.insertImageUrl}</button>
                 <button type="button" onClick={() => imageFileInputRef.current?.click()}>{ui.insertImageFile}</button>
-                <button type="button" onClick={() => attachmentFileInputRef.current?.click()}>{ui.addFile}</button>
+                {attachmentName ? (
+                  <button type="button" onClick={() => attachmentFileInputRef.current?.click()}>{ui.addFile}</button>
+                ) : null}
               </div>
 
               <div className="toolbar-group">
@@ -456,16 +454,31 @@ export default function RichMessageEditor({
           event.currentTarget.value = "";
         }}
       />
-      <input
-        ref={attachmentFileInputRef}
-        type="file"
-        className="hidden-file-input"
-        onChange={async (event) => {
-          const file = event.currentTarget.files?.[0] ?? null;
-          await insertAttachmentFromFile(file);
-          event.currentTarget.value = "";
-        }}
-      />
+      {attachmentName ? (
+        <>
+          <input
+            ref={attachmentFileInputRef}
+            type="file"
+            name={attachmentName}
+            multiple
+            className="hidden-file-input"
+            onChange={(event) => {
+              const files = Array.from(event.currentTarget.files ?? []).slice(0, maxAttachments);
+              if (event.currentTarget.files && files.length !== event.currentTarget.files.length) {
+                const transfer = new DataTransfer();
+                files.forEach((file) => transfer.items.add(file));
+                event.currentTarget.files = transfer.files;
+              }
+              setAttachmentNames(files.map((file) => file.name || ui.defaultFileName));
+            }}
+          />
+          {attachmentNames.length > 0 ? (
+            <div className="muted top-gap-sm" role="status">
+              {attachmentNames.map((fileName, index) => <div key={`${fileName}-${index}`}>📎 {fileName}</div>)}
+            </div>
+          ) : null}
+        </>
+      ) : null}
 
       <input type="hidden" name={name} value={value} />
       <input type="hidden" name={formatName} value={currentFormat} />

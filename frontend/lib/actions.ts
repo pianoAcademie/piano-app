@@ -5128,6 +5128,9 @@ export async function sendAdminClientMessageAction(formData: FormData): Promise<
   const bodyFormatRaw = String(formData.get("body_format") ?? "HTML").trim().toUpperCase();
   const bodyFormat = bodyFormatRaw === "TEXT" ? "TEXT" : "HTML";
   const source = optionalField(formData, "source");
+  const attachmentFiles = formData.getAll("attachments").filter(
+    (entry): entry is File => typeof entry !== "string" && entry.size > 0,
+  );
   const messagesMonthsRaw = String(formData.get("messages_months") ?? "").trim();
   const messagesMonths = messagesMonthsRaw === "6" || messagesMonthsRaw === "12" ? messagesMonthsRaw : "3";
   const messagesQuery = String(formData.get("messages_q") ?? "").trim();
@@ -5149,6 +5152,25 @@ export async function sendAdminClientMessageAction(formData: FormData): Promise<
     redirect(`/admin/clients/${clientId}?${messageSearch.toString()}`);
   }
 
+  const maxAttachmentCount = 5;
+  const maxAttachmentBytes = 10 * 1024 * 1024;
+  const maxTotalAttachmentBytes = 20 * 1024 * 1024;
+  const totalAttachmentBytes = attachmentFiles.reduce((total, file) => total + file.size, 0);
+  if (
+    attachmentFiles.length > maxAttachmentCount
+    || attachmentFiles.some((file) => file.size > maxAttachmentBytes)
+    || totalAttachmentBytes > maxTotalAttachmentBytes
+  ) {
+    messageSearch.set("message_modal", "compose");
+    messageSearch.set("error", "Pièces jointes refusées : 5 fichiers maximum, 10 Mo par fichier et 20 Mo au total.");
+    redirect(`/admin/clients/${clientId}?${messageSearch.toString()}`);
+  }
+  const attachments = await Promise.all(attachmentFiles.map(async (file) => ({
+    file_name: file.name || "piece-jointe",
+    content_type: file.type || "application/octet-stream",
+    content_base64: Buffer.from(await file.arrayBuffer()).toString("base64"),
+  })));
+
   const result = await backendRequest<{ sent_at: string; to_recipients: string[]; cc_recipients: string[]; message_ids: string[] }>(
     `/api/v1/admin/clients/${clientId}/messages/email`,
     {
@@ -5161,6 +5183,7 @@ export async function sendAdminClientMessageAction(formData: FormData): Promise<
         body,
         body_format: bodyFormat,
         source,
+        attachments,
       }),
     },
     token,

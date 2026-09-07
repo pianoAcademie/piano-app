@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from app.services.email_delivery import EmailDeliveryError, send_email
+from app.services.email_delivery import EmailDeliveryError, _build_message, send_email
 from app.services.messaging_templates import MessagingDeliveryConfig
 
 
@@ -130,6 +130,22 @@ class EmailDeliveryTests(unittest.TestCase):
                 )
 
         self.assertEqual(str(context.exception), "SMTP send exception")
+
+    def test_build_message_adds_real_mime_attachment(self) -> None:
+        message = _build_message(
+            to_email="parent@example.com",
+            subject="Partition",
+            body="La partition est jointe.",
+            body_format="HTML",
+            attachments=[("partition.pdf", b"%PDF-test", "application/pdf")],
+            delivery_config=self.config,
+        )
+
+        attachments = list(message.iter_attachments())
+        self.assertEqual(len(attachments), 1)
+        self.assertEqual(attachments[0].get_filename(), "partition.pdf")
+        self.assertEqual(attachments[0].get_content_type(), "application/pdf")
+        self.assertEqual(attachments[0].get_payload(decode=True), b"%PDF-test")
 
 
 if __name__ == "__main__":

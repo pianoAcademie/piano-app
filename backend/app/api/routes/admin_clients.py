@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import csv
 import html
 import io
@@ -9655,6 +9657,40 @@ def send_admin_client_message_email(
         getattr(actor, "last_name", None),
         getattr(actor, "email", None),
     )
+    email_attachments: list[tuple[str, bytes, str]] = []
+    total_attachment_bytes = 0
+    for attachment in payload.attachments:
+        safe_file_name = (
+            attachment.file_name.replace("\\", "_")
+            .replace("/", "_")
+            .replace("\r", "")
+            .replace("\n", "")
+            .strip()
+        )
+        if not safe_file_name:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Nom de pièce jointe invalide",
+            )
+        try:
+            content = base64.b64decode(attachment.content_base64, validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Pièce jointe invalide",
+            ) from exc
+        if len(content) > 10 * 1024 * 1024:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail="Une pièce jointe dépasse 10 Mo",
+            )
+        total_attachment_bytes += len(content)
+        email_attachments.append((safe_file_name, content, attachment.content_type))
+    if total_attachment_bytes > 20 * 1024 * 1024:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Les pièces jointes dépassent 20 Mo au total",
+        )
 
     billing_profile = resolve_billing_profile(db, client)
     default_recipients = _normalize_email_recipients([client.email, billing_profile.email])
@@ -9703,6 +9739,7 @@ def send_admin_client_message_email(
                 sender_category=CommunicationSenderCategory.OTHER_USER,
                 recipient_user_id=recipient_user_id,
                 communication_type=COMMUNICATION_TYPE_OPERATIONAL,
+                attachments=email_attachments,
             )
         )
 

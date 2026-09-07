@@ -5913,6 +5913,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 <RichMessageEditor
                   name="body"
                   formatName="body_format"
+                  attachmentName="attachments"
                   defaultValue={messageComposeBody}
                   defaultFormat={messageComposeBodyFormat}
                   rows={12}

@@ -1795,6 +1795,12 @@ class AdminClientMessageOut(BaseModel):
     can_forward: bool = False
 
 
+class AdminClientMessageEmailAttachment(BaseModel):
+    file_name: str = Field(min_length=1, max_length=255)
+    content_type: str = Field(default="application/octet-stream", min_length=1, max_length=255)
+    content_base64: str = Field(min_length=1, max_length=28_000_000)
+
+
 class AdminClientMessageEmailRequest(BaseModel):
     to_emails: list[str] | None = None
     cc_emails: list[str] | None = None
@@ -1803,6 +1809,7 @@ class AdminClientMessageEmailRequest(BaseModel):
     body: str = Field(min_length=1, max_length=20000)
     body_format: Literal["TEXT", "HTML"] = "HTML"
     source: str | None = Field(default=None, max_length=120)
+    attachments: list[AdminClientMessageEmailAttachment] = Field(default_factory=list, max_length=5)
 
 
 class AdminClientMessageEmailOut(BaseModel):
