@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { partitionDistributionAction } from "../lib/partition-distribution-actions";
+import styles from "./partition-distribution.module.css";
 
 export type DistributionData = {
   week: string; is_admin: boolean;
@@ -45,14 +46,15 @@ function ActionForm({ children, portal }: { children: React.ReactNode; portal: s
 const hidden = (name: string, value: string) => <input type="hidden" name={name} value={value} />;
 const dateText = (value: string) => new Date(value).toLocaleString("fr-FR", { timeZone: "Europe/Paris", dateStyle: "short", timeStyle: "short" });
 
-export default function PartitionDistribution({ data }: { data: DistributionData }) {
+export default function PartitionDistribution({ data, studentId = "" }: { data: DistributionData; studentId?: string }) {
   const portal = data.is_admin ? "admin" : "prof";
-  return <main className="page teacher-shell">
-    <Link href={data.is_admin ? "/admin/products" : "/prof"}>← Retour</Link>
-    <h1>{data.is_admin ? "Distribution des partitions — Paris" : "Mes partitions — Paris"}</h1>
-    <p>Retrait à Richelieu, puis remise à chaque élève. Les besoins suivent le premier cours de chaque élève dans la semaine.</p>
-    <form method="get"><label>Semaine du <input type="date" name="week" defaultValue={data.week} required /></label> <button>Afficher</button></form>
-    <section className="card"><h2>Quantités à récupérer à Richelieu</h2>
+  const pickupCount = data.totals.reduce((total, row) => total + Math.max(0, row.needed - row.held), 0);
+  const stockShortage = data.totals.some(row => row.needed - row.held > row.richelieu);
+  const needs = [...data.needs].sort((a, b) => Number(b.student_id === studentId) - Number(a.student_id === studentId));
+  const pickup = <details className={`card ${styles.accordion}`}>
+      <summary>Quantités à récupérer à Richelieu
+        <span className={styles.summaryNote}>{pickupCount} exemplaire(s) à récupérer{stockShortage ? " · Stock insuffisant pour certaines partitions" : ""} — ouvrir le détail</span>
+      </summary>
       {!data.totals.length && <p>Aucun besoin de partition renseigné pour cette semaine.</p>}
       {data.totals.map(row => <article key={`${row.professor_id}-${row.product_id}`} style={{ borderBottom: "1px solid #ddd", padding: "12px 0" }}>
         <h3>{row.title}{data.is_admin ? ` — ${row.professor}` : ""}</h3>
@@ -77,10 +79,16 @@ export default function PartitionDistribution({ data }: { data: DistributionData
           <label>Exemplaires à rendre <input name="quantity" type="number" min="1" max={row.held} defaultValue="1" required /></label> <button>Déclarer un retour à Richelieu</button>
         </ActionForm>}
       </article>)}
-    </section>
-    <section className="card"><h2>Élèves à servir</h2>
+    </details>;
+  return <main className={`page teacher-shell ${styles.page}`}>
+    <Link href={data.is_admin ? "/admin/products" : "/prof"}>← Retour</Link>
+    <h1>{data.is_admin ? "Distribution des partitions — Paris" : "Mes partitions — Paris"}</h1>
+    <p>Confirmez ci-dessous les partitions remises aux élèves. Les retraits à Richelieu sont regroupés plus bas.</p>
+    <form method="get" className={styles.week}><label>Semaine du <input type="date" name="week" defaultValue={data.week} required /></label>{studentId && hidden("student", studentId)}<button>Afficher</button></form>
+    <section className="card" id="remises"><h2>Remettre une partition à un élève</h2>
+      {studentId && !data.needs.some(row => row.student_id === studentId) && <p role="status">Aucune remise à prévoir pour cet élève cette semaine. Vérifiez la semaine ou l’historique des remises ci-dessous.</p>}
       {!data.needs.length && <p>Aucune remise à prévoir pour cette semaine.</p>}
-      {data.needs.map(row => <article key={`${row.student_id}-${row.assignment_id}`} style={{ borderBottom: "1px solid #ddd", padding: "12px 0" }}>
+      {needs.map(row => <article key={`${row.student_id}-${row.assignment_id}`} className={row.student_id === studentId ? styles.selected : undefined} style={{ borderBottom: "1px solid #ddd", padding: "12px 0" }}>
         <h3>{row.student_name} — {row.title}</h3>
         <p>{row.site} · {dateText(row.course_at)} · {row.professor}</p>
         {row.assignment_id && <details><summary>Changer la partition prévue avant le retrait</summary>
@@ -100,7 +108,8 @@ export default function PartitionDistribution({ data }: { data: DistributionData
         </ActionForm>
       </article>)}
     </section>
-    <section className="card"><h2>Retraits, retours et remises</h2>
+    {pickup}
+    <details className={`card ${styles.accordion}`}><summary>Historique des retraits, retours et remises<span className={styles.summaryNote}>{data.movements.length} mouvement(s) — ouvrir le détail</span></summary>
       {data.movements.length === 0 && <p>Aucun mouvement enregistré.</p>}
       {data.movements.map(row => <article key={row.id} style={{ borderBottom: "1px solid #ddd", padding: "8px 0" }}>
         {row.student && <strong>Élève : {row.student}</strong>}
@@ -112,6 +121,6 @@ export default function PartitionDistribution({ data }: { data: DistributionData
           <label>Quantité réellement {row.kind === "RETURN" ? "reçue" : "remise au professeur"} <input name="quantity" type="number" min="1" max="500" required /></label> <button>Valider le {row.kind === "RETURN" ? "retour" : "retrait"}</button>
         </ActionForm>}
       </article>)}
-    </section>
+    </details>
   </main>;
 }

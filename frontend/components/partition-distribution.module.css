@@ -1,0 +1,16 @@
+.page { min-width: 0; }
+.page h1 { font-size: clamp(1.6rem, 5vw, 2.4rem); }
+.page h2 { font-size: clamp(1.25rem, 4vw, 1.7rem); }
+.page article { overflow-wrap: anywhere; min-width: 0; }
+.page fieldset { min-width: 0; display: grid; gap: 12px; }
+.page label { display: block; }
+.page select, .page input:not([type="checkbox"]):not([type="hidden"]) { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; font-size: 16px; min-height: 44px; }
+.page button { min-height: 48px; white-space: normal; width: 100%; }
+.week { display: grid; gap: 12px; margin-bottom: 20px; }
+.accordion > summary { cursor: pointer; min-height: 44px; font-size: 1.15rem; font-weight: 700; padding: 8px 0; }
+.summaryNote { display: block; font-size: .9rem; font-weight: 400; margin-top: 8px; }
+.selected { border-left: 4px solid #c98224; padding-left: 12px !important; }
+@media (min-width: 640px) {
+  .week { grid-template-columns: minmax(0, 260px) auto; align-items: end; justify-content: start; }
+  .page button { width: auto; justify-self: start; }
+}
