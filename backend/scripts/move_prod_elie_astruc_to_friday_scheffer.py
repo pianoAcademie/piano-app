@@ -22,6 +22,8 @@ from app.db.session import SessionLocal
 from app.models.catalog import Booking, BookingStatus, CourseSession, Location, Professor
 from app.models.client_record import StudentQuoteChange
 from app.models.user import User, UserRole
+from app.services.makeup_accounting import makeup_role
+from app.services.makeup_passes import revoke_pending_makeup_for_corrected_absence
 from app.services.reminders import ensure_booking_reminder
 
 
@@ -107,6 +109,8 @@ def main() -> None:
         first_booking = source_rows[0][0]
         if first_booking.status != BookingStatus.EXCUSED_ABSENCE:
             abort(f"first_status_guard_failed actual={first_booking.status}")
+        if makeup_role(first_booking) != "original":
+            abort(f"first_makeup_guard_failed actual={makeup_role(first_booking)}")
         if any(booking.status != BookingStatus.BOOKED for booking, _ in source_rows[1:]):
             abort("future_booking_status_guard_failed")
 
@@ -159,6 +163,12 @@ def main() -> None:
             print(f"[{SCRIPT}] committed=false")
             return
 
+        if not revoke_pending_makeup_for_corrected_absence(db, booking=first_booking, now=now):
+            abort("pending_makeup_revoke_failed")
+        first_booking.status = BookingStatus.BOOKED
+        first_booking.cancelled_at = None
+        first_booking.cancellation_reason = None
+
         moved_count = 0
         for index, ((booking, source_session), target_session) in enumerate(
             zip(source_rows, target_sessions, strict=True)
@@ -176,9 +186,6 @@ def main() -> None:
             if not moved:
                 abort(f"move_failed index={index} booking={booking.id} detail={detail}")
             if index == 0:
-                booking.status = BookingStatus.BOOKED
-                booking.cancelled_at = None
-                booking.cancellation_reason = None
                 ensure_booking_reminder(db, booking=booking, session_obj=target_session, now=now)
             moved_count += 1
 
@@ -243,7 +250,7 @@ def main() -> None:
             abort("postcheck_first_target_failed")
         print(
             f"[{SCRIPT}] committed=true moved={moved_count} source_remaining=0 target_bookings=32 "
-            "invoice_change=0 notification=false"
+            "makeup_credit_restored=true invoice_change=0 notification=false"
         )
 
 
