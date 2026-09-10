@@ -5200,7 +5200,11 @@ def _planning_reorganization_move_pairs(
     # occurrence in the same relative week. This keeps the selected sessions as
     # the first pair and never silently drops an active booking.
     ordered_target_sessions = sorted(
-        target_sessions,
+        (
+            session_obj
+            for session_obj in target_sessions
+            if getattr(session_obj, "status", SessionStatus.SCHEDULED) == SessionStatus.SCHEDULED
+        ),
         key=lambda session_obj: (session_obj.start_at_utc, str(session_obj.id)),
     )
     valid_source_rows = [

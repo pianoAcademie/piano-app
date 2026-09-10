@@ -236,6 +236,53 @@ class AdminPlanningReorganizationTests(unittest.TestCase):
             apply_scope="SERIES_FUTURE",
         )
 
+    def test_series_move_skips_cancelled_target_occurrences(self) -> None:
+        start_at = datetime(2027, 1, 7, 16, 0, tzinfo=timezone.utc)
+        source_group_id = uuid4()
+        target_group_id = uuid4()
+        user_id = uuid4()
+        source_sessions = [
+            SimpleNamespace(
+                id=uuid4(), recurrence_group_id=source_group_id,
+                start_at_utc=start_at + timedelta(days=7 * index), timezone="Europe/Paris",
+            )
+            for index in range(2)
+        ]
+        target_sessions = [
+            SimpleNamespace(
+                id=uuid4(), recurrence_group_id=target_group_id,
+                start_at_utc=start_at + timedelta(days=7 * index), timezone="Europe/Paris",
+                status=status,
+            )
+            for index, status in enumerate(
+                [SessionStatus.SCHEDULED, SessionStatus.CANCELLED, SessionStatus.SCHEDULED]
+            )
+        ]
+        bookings = [
+            SimpleNamespace(
+                id=uuid4(), session_id=session.id, user_id=user_id,
+                status=BookingStatus.BOOKED, booked_at=start_at - timedelta(days=30),
+            )
+            for session in source_sessions
+        ]
+        db = _FakeSession([], scalars_values=[bookings])
+
+        with patch(
+            "app.api.routes.admin._target_sessions_for_scope",
+            side_effect=[source_sessions, target_sessions],
+        ):
+            pairs, skipped, details = _planning_reorganization_move_pairs(
+                db,  # type: ignore[arg-type]
+                source_booking=bookings[0],
+                source_session=source_sessions[0],
+                target_session=target_sessions[0],
+                scope="series_future",
+            )
+
+        assert [target for _, _, target in pairs] == [target_sessions[0], target_sessions[2]]
+        assert skipped == 0
+        assert details == []
+
     def test_series_move_with_shorter_target_fails_closed_without_losing_a_booking(self) -> None:
         start_at = datetime(2027, 1, 13, 14, 0, tzinfo=timezone.utc)
         source_sessions = [
