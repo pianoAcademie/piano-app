@@ -138,7 +138,7 @@ def main() -> None:
         price_changes = [
             (booking.id, booking.total_incl_vat_snapshot)
             for booking, _ in source_rows
-            if Decimal(booking.total_incl_vat_snapshot) != Decimal("38.00")
+            if Decimal(booking.total_incl_vat_snapshot) != Decimal("36.00")
             or str(booking.currency_snapshot).upper() != "EUR"
         ]
         if price_changes:
