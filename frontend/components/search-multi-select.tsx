@@ -171,7 +171,10 @@ export default function SearchMultiSelect({
       return;
     }
     const onSubmit = (event: Event): void => {
-      if (selected.length > 0) {
+      const submittedSelection = new FormData(form)
+        .getAll(name)
+        .some((value) => String(value).trim().length > 0);
+      if (submittedSelection) {
         setSelectionError("");
         return;
       }
@@ -180,7 +183,7 @@ export default function SearchMultiSelect({
     };
     form.addEventListener("submit", onSubmit);
     return () => form.removeEventListener("submit", onSubmit);
-  }, [requiredSelection, resolvedRequiredSelectionMessage, selected]);
+  }, [name, requiredSelection, resolvedRequiredSelectionMessage]);
 
   useEffect(() => {
     if (selected.length > 0 && selectionError) {
