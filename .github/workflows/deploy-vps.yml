@@ -108,8 +108,10 @@ jobs:
             --exclude ".env.*" \
             --exclude "backend/.venv" \
             --exclude "backend/__pycache__" \
+            --exclude "backend/uploads" \
             --exclude "frontend/.next" \
             --exclude "frontend/node_modules" \
+            --exclude "welcome-to-docker" \
             -e "ssh -i ~/.ssh/id_ed25519 -p ${VPS_PORT:-22}" \
             ./ "${VPS_USER}@${VPS_HOST}:${VPS_PATH}/"
 
