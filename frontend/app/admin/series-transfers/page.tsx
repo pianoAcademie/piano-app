@@ -22,7 +22,8 @@ type TransferRequest = {
   student_display_name: string;
   source_booking_id: string;
   source_label: string;
-  target_session_id: string;
+  target_session_id: string | null;
+  matching_series: SeriesOption[];
   target_label: string;
   status: string;
   priority_position: number;
@@ -38,6 +39,7 @@ function param(params: SearchParams, key: string): string {
 }
 
 function statusLabel(status: string): string {
+  if (status === "WAITING_OPENING") return "En attente d’ouverture";
   if (status === "COMPLETED") return "Changement effectué";
   if (status === "PARENT_CONTACTED") return "Parent contacté";
   if (status === "CANCELLED") return "Annulée";
@@ -59,7 +61,9 @@ export default async function AdminSeriesTransfersPage({ searchParams }: { searc
   const result = await backendRequest<TransfersOut>(endpoint, {}, token);
   const data = result.ok ? result.data : { requests: [], source_series: [], target_series: [] };
   const returnTo = studentId ? `/admin/series-transfers?student_id=${encodeURIComponent(studentId)}` : "/admin/series-transfers";
-  const open = data.requests.filter((request) => request.status === "WAITING" || request.status === "PARENT_CONTACTED");
+  const open = data.requests.filter((request) => ["WAITING", "PARENT_CONTACTED", "WAITING_OPENING"].includes(request.status));
+  const wishes = open.filter((request) => request.status === "WAITING_OPENING");
+  const wishGroups = Array.from(new Set(wishes.map((request) => request.target_label))).map((label) => ({ label, count: wishes.filter((request) => request.target_label === label).length }));
   const history = data.requests.filter((request) => !open.includes(request));
 
   return (
@@ -84,13 +88,19 @@ export default async function AdminSeriesTransfersPage({ searchParams }: { searc
             </select>
           </label>
           <label>Série souhaitée pour toute l’année
-            <select name="target_session_id" required defaultValue="">
-              <option value="" disabled>Choisir le nouveau créneau</option>
+            <select name="target_session_id" defaultValue="">
+              <option value="">Créneau souhaité à créer</option>
               {data.target_series.map((series) => (
                 <option key={series.recurrence_group_id} value={series.session_id}>{series.label} · {series.minimum_remaining_places} place(s) min.</option>
               ))}
             </select>
           </label>
+          <fieldset className="stack-md">
+            <legend>Si le créneau est à créer</legend>
+            <p className="muted">Le lieu, l’activité et la durée sont ceux de la série actuelle choisie ci-dessus.</p>
+            <label>Jour souhaité<select name="desired_weekday" defaultValue=""><option value="">Choisir un jour</option>{["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"].map((day, index) => <option key={day} value={index}>{day}</option>)}</select></label>
+            <label>Heure souhaitée<input type="time" name="desired_time" /></label>
+          </fieldset>
           <label>Note interne
             <textarea name="internal_note" rows={3} placeholder="Contexte, contraintes de la famille, date de la demande…" />
           </label>
@@ -100,18 +110,26 @@ export default async function AdminSeriesTransfersPage({ searchParams }: { searc
         <section className="card"><p>Pour créer une demande, ouvrez la fiche de l’élève, onglet Réservations, puis cliquez sur <strong>Demande annuelle</strong>.</p></section>
       )}
 
+      {wishGroups.length ? <section className="card stack-md"><h2>Créneaux à ouvrir ({wishes.length} demande(s))</h2><p>Souhaits regroupés pour préparer les nouvelles affectations.</p>{wishGroups.map((group) => <p key={group.label}><strong>{group.label}</strong> · {group.count} demande(s)</p>)}</section> : null}
       <section className="card stack-md">
         <h2>Demandes actives ({open.length})</h2>
         {open.length === 0 ? <p className="muted">Aucune demande active.</p> : open.map((request) => (
           <article className="card" key={request.id}>
             <div className="row gap-sm">
               <strong>{request.student_display_name}</strong>
-              <span className={`status-pill ${request.place_available ? "success" : "warning"}`}>{request.place_available ? "Place disponible" : "En attente d’une place"}</span>
+              <span className={`status-pill ${request.place_available ? "success" : "warning"}`}>{request.status === "WAITING_OPENING" ? "En attente d’ouverture" : request.place_available ? "Place disponible" : "En attente d’une place"}</span>
               <span className="status-pill neutral">Priorité n° {request.priority_position}</span>
             </div>
             <p><strong>Actuel :</strong> {request.source_label}<br /><strong>Souhaité :</strong> {request.target_label}</p>
             {request.internal_note ? <p className="muted">{request.internal_note}</p> : null}
             <div className="row gap-sm">
+              {request.status === "WAITING_OPENING" ? <>
+                {request.matching_series.length ? <form action={updateAnnualSeriesTransferStatusAction}>
+                  <input type="hidden" name="request_id" value={request.id} /><input type="hidden" name="return_to" value={returnTo} /><input type="hidden" name="status" value="WAITING" />
+                  <label>Série compatible créée<select name="target_session_id" required>{request.matching_series.map((series) => <option key={series.session_id} value={series.session_id}>{series.label} · {series.minimum_remaining_places} place(s) min.</option>)}</select></label>
+                  <button type="submit">Rattacher à cette série</button>
+                </form> : <p className="muted">Aucune série compatible créée pour le moment.</p>}
+              </> : <>
               <Link className="button secondary" href={`/admin/planning-reorganization?booking_id=${encodeURIComponent(request.source_booking_id)}&scope=series_future`}>Préparer le déplacement</Link>
               <form action={updateAnnualSeriesTransferStatusAction}>
                 <input type="hidden" name="request_id" value={request.id} /><input type="hidden" name="return_to" value={returnTo} /><input type="hidden" name="status" value="COMPLETED" />
@@ -122,6 +140,7 @@ export default async function AdminSeriesTransfersPage({ searchParams }: { searc
                 <input type="hidden" name="status" value={request.status === "WAITING" ? "PARENT_CONTACTED" : "WAITING"} />
                 <button className="secondary" type="submit">{request.status === "WAITING" ? "Parent contacté" : "Remettre en attente"}</button>
               </form>
+              </>}
               <form action={updateAnnualSeriesTransferStatusAction}>
                 <input type="hidden" name="request_id" value={request.id} /><input type="hidden" name="return_to" value={returnTo} /><input type="hidden" name="status" value="CANCELLED" />
                 <button className="secondary" type="submit">Annuler la demande</button>

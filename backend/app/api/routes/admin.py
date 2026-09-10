@@ -4798,7 +4798,7 @@ def get_planning_simulation(
     )
 
 
-_OPEN_ANNUAL_TRANSFER_STATUSES = ("WAITING", "PARENT_CONTACTED")
+_OPEN_ANNUAL_TRANSFER_STATUSES = ("WAITING", "PARENT_CONTACTED", "WAITING_OPENING")
 _ANNUAL_TRANSFER_WEEKDAYS_FR = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche")
 
 
@@ -4894,18 +4894,37 @@ def list_annual_series_transfers(
         select(User).where(User.id.in_({request.student_user_id for request in requests}))
     ).all()} if requests else {}
     priority_by_request: dict[UUID, int] = {}
-    counters: dict[UUID, int] = {}
+    counters = {}
+    source_sessions = {r.id: db.get(CourseSession, db.get(Booking, r.source_booking_id).session_id) for r in all_requests}
+    def wish_key(r):
+        s = source_sessions[r.id]
+        return r.target_recurrence_group_id or (s.location_id, s.course_type_id, s.end_at_utc - s.start_at_utc, r.desired_weekday, r.desired_time)
     for request in all_requests:
         if request.status not in _OPEN_ANNUAL_TRANSFER_STATUSES:
             continue
-        counters[request.target_recurrence_group_id] = counters.get(request.target_recurrence_group_id, 0) + 1
-        priority_by_request[request.id] = counters[request.target_recurrence_group_id]
+        key = wish_key(request)
+        counters[key] = counters.get(key, 0) + 1
+        priority_by_request[request.id] = counters[key]
 
     output: list[AdminAnnualSeriesTransferRequestOut] = []
     for request in requests:
         source = option_by_group.get(request.source_recurrence_group_id)
         target = option_by_group.get(request.target_recurrence_group_id)
         student = students.get(request.student_user_id)
+        source_session = source_sessions[request.id]
+        wish_label = "Série cible indisponible"
+        matches = []
+        if request.target_session_id is None:
+            activity = db.get(CourseType, source_session.course_type_id)
+            location = db.get(Location, source_session.location_id)
+            wish_label = f"{activity.name} · {_ANNUAL_TRANSFER_WEEKDAYS_FR[request.desired_weekday]} {request.desired_time} · {_session_location_label(location)}"
+            for option in options:
+                candidate = db.get(CourseSession, option.session_id)
+                local = candidate.start_at_utc.astimezone(_safe_zoneinfo(candidate.timezone or location.timezone or "Europe/Paris"))
+                if (candidate.course_type_id == source_session.course_type_id and candidate.location_id == source_session.location_id
+                    and candidate.end_at_utc - candidate.start_at_utc == source_session.end_at_utc - source_session.start_at_utc
+                    and local.weekday() == request.desired_weekday and local.strftime("%H:%M") == request.desired_time):
+                    matches.append(option)
         output.append(AdminAnnualSeriesTransferRequestOut(
             id=request.id,
             student_user_id=request.student_user_id,
@@ -4913,7 +4932,8 @@ def list_annual_series_transfers(
             source_booking_id=request.source_booking_id,
             source_label=source.label if source is not None else "Ancienne série / série terminée",
             target_session_id=target.session_id if target is not None else request.target_session_id,
-            target_label=target.label if target is not None else "Série cible indisponible",
+            target_label=target.label if target is not None else wish_label,
+            matching_series=matches,
             status=request.status,
             priority_position=priority_by_request.get(request.id, 0),
             place_available=bool(target and target.minimum_remaining_places > 0),
@@ -4932,6 +4952,38 @@ def create_annual_series_transfer(
     db: Session = Depends(get_db),
     actor: User = Depends(require_admin_or_permissions("can_edit_planning")),
 ) -> AdminAnnualSeriesTransferRequestOut:
+    if payload.target_session_id is None:
+        if payload.desired_weekday is None or payload.desired_time is None:
+            raise HTTPException(422, "Indiquez le jour et l'heure du créneau à créer.")
+        booking = db.scalar(select(Booking).where(Booking.id == payload.source_booking_id).with_for_update())
+        if booking is None or booking.user_id != payload.student_user_id or booking.status not in BOOKING_STATUSES_ACTIVE:
+            raise HTTPException(422, "Réservation actuelle invalide pour cet élève.")
+        source = db.get(CourseSession, booking.session_id)
+        if source.recurrence_group_id is None:
+            raise HTTPException(409, "La réservation actuelle doit appartenir à une série.")
+        local = source.start_at_utc.astimezone(_safe_zoneinfo(source.timezone or "Europe/Paris"))
+        if local.weekday() == payload.desired_weekday and local.strftime("%H:%M") == payload.desired_time:
+            raise HTTPException(409, "Cet horaire est déjà celui du cours actuel.")
+        duplicate = db.scalar(select(AnnualSeriesTransferRequest.id).where(
+            AnnualSeriesTransferRequest.student_user_id == payload.student_user_id,
+            AnnualSeriesTransferRequest.source_recurrence_group_id == source.recurrence_group_id,
+            AnnualSeriesTransferRequest.target_session_id.is_(None),
+            AnnualSeriesTransferRequest.desired_weekday == payload.desired_weekday,
+            AnnualSeriesTransferRequest.desired_time == payload.desired_time,
+            AnnualSeriesTransferRequest.status.in_(_OPEN_ANNUAL_TRANSFER_STATUSES),
+        ))
+        if duplicate:
+            raise HTTPException(409, "Une demande active existe déjà pour ce souhait.")
+        request = AnnualSeriesTransferRequest(
+            student_user_id=payload.student_user_id, source_booking_id=booking.id,
+            source_recurrence_group_id=source.recurrence_group_id,
+            desired_weekday=payload.desired_weekday, desired_time=payload.desired_time,
+            status="WAITING_OPENING", internal_note=(payload.internal_note or "").strip() or None,
+            created_by_user_id=actor.id, updated_by_user_id=actor.id,
+        )
+        db.add(request)
+        db.commit()
+        return next(r for r in list_annual_series_transfers(student_user_id=payload.student_user_id, db=db, _=actor).requests if r.id == request.id)
     source_booking, source_session, target_session = _planning_reorganization_load_move(
         db, booking_id=payload.source_booking_id, target_session_id=payload.target_session_id
     )
@@ -4982,6 +5034,25 @@ def update_annual_series_transfer_status(
     request = db.scalar(select(AnnualSeriesTransferRequest).where(AnnualSeriesTransferRequest.id == request_id).with_for_update())
     if request is None:
         raise HTTPException(404, "Demande introuvable")
+    if payload.target_session_id is not None:
+        if request.status != "WAITING_OPENING" or request.target_session_id is not None:
+            raise HTTPException(409, "Seul un souhait en attente d'ouverture peut être rattaché.")
+        current = next(r for r in list_annual_series_transfers(student_user_id=request.student_user_id, db=db, _=actor).requests if r.id == request.id)
+        match = next((s for s in current.matching_series if s.session_id == payload.target_session_id), None)
+        if match is None:
+            raise HTTPException(409, "La série ne correspond pas au lieu, à l'activité, à la durée et à l'horaire souhaités.")
+        duplicate = db.scalar(select(AnnualSeriesTransferRequest.id).where(
+            AnnualSeriesTransferRequest.student_user_id == request.student_user_id,
+            AnnualSeriesTransferRequest.target_recurrence_group_id == match.recurrence_group_id,
+            AnnualSeriesTransferRequest.status.in_(_OPEN_ANNUAL_TRANSFER_STATUSES),
+            AnnualSeriesTransferRequest.id != request.id,
+        ))
+        if duplicate:
+            raise HTTPException(409, "Une demande active existe déjà pour cette série.")
+        request.target_session_id = match.session_id
+        request.target_recurrence_group_id = match.recurrence_group_id
+    if request.target_session_id is None and payload.status not in {"CANCELLED", "DECLINED"}:
+        raise HTTPException(409, "Rattachez d'abord le souhait à une série existante.")
     request.status = payload.status
     request.updated_by_user_id = actor.id
     request.updated_at = _utcnow()

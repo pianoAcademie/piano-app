@@ -7086,6 +7086,19 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   language={language}
                 />
               ) : null}
+              {manualTransactionTypeCode === "REFUND" ? (
+                <label>
+                  {t("admin.client_detail.category_required")}
+                  <select name="category" required>
+                    <option value="">{t("admin.client_detail.manual_select_placeholder")}</option>
+                    {manualChargeCategories.map((category) => (
+                      <option key={category} value={category}>
+                        {category}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
               <label>
                 {t("admin.client_detail.student_optional")}
                 <select name="student_id" defaultValue={manualRepeatStudentId}>

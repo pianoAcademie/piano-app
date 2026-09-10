@@ -2723,12 +2723,15 @@ class AdminAnnualSeriesOptionOut(BaseModel):
 class AdminAnnualSeriesTransferRequestCreate(BaseModel):
     student_user_id: UUID
     source_booking_id: UUID
-    target_session_id: UUID
+    target_session_id: UUID | None = None
+    desired_weekday: int | None = Field(default=None, ge=0, le=6)
+    desired_time: str | None = Field(default=None, pattern=r"^([01][0-9]|2[0-3]):[0-5][0-9]$")
     internal_note: str | None = Field(default=None, max_length=4000)
 
 
 class AdminAnnualSeriesTransferStatusUpdate(BaseModel):
     status: Literal["WAITING", "PARENT_CONTACTED", "COMPLETED", "CANCELLED", "DECLINED"]
+    target_session_id: UUID | None = None
 
 
 class AdminAnnualSeriesTransferRequestOut(BaseModel):
@@ -2737,7 +2740,8 @@ class AdminAnnualSeriesTransferRequestOut(BaseModel):
     student_display_name: str
     source_booking_id: UUID
     source_label: str
-    target_session_id: UUID
+    target_session_id: UUID | None
+    matching_series: list[AdminAnnualSeriesOptionOut] = Field(default_factory=list)
     target_label: str
     status: str
     priority_position: int

@@ -4292,7 +4292,9 @@ export async function createAnnualSeriesTransferAction(formData: FormData): Prom
   const studentUserId = String(formData.get("student_user_id") ?? "").trim();
   const sourceBookingId = String(formData.get("source_booking_id") ?? "").trim();
   const targetSessionId = String(formData.get("target_session_id") ?? "").trim();
-  if (!studentUserId || !sourceBookingId || !targetSessionId) {
+  const desiredTime = String(formData.get("desired_time") ?? "").trim();
+  const desiredWeekday = String(formData.get("desired_weekday") ?? "").trim();
+  if (!studentUserId || !sourceBookingId || (!targetSessionId && (!desiredTime || !desiredWeekday))) {
     redirect(appendQueryMessage(returnTo, "error", "Élève, série actuelle ou série souhaitée manquante."));
   }
   const result = await backendRequest<Record<string, unknown>>(
@@ -4302,7 +4304,9 @@ export async function createAnnualSeriesTransferAction(formData: FormData): Prom
       body: JSON.stringify({
         student_user_id: studentUserId,
         source_booking_id: sourceBookingId,
-        target_session_id: targetSessionId,
+        target_session_id: targetSessionId || null,
+        desired_weekday: !targetSessionId && desiredWeekday ? Number(desiredWeekday) : null,
+        desired_time: !targetSessionId ? desiredTime || null : null,
         internal_note: String(formData.get("internal_note") ?? "").trim() || null,
       }),
     },
@@ -4324,7 +4328,7 @@ export async function updateAnnualSeriesTransferStatusAction(formData: FormData)
   }
   const result = await backendRequest<Record<string, string>>(
     `/api/v1/admin/annual-series-transfers/${requestId}`,
-    { method: "PATCH", body: JSON.stringify({ status }) },
+    { method: "PATCH", body: JSON.stringify({ status, target_session_id: String(formData.get("target_session_id") ?? "").trim() || null }) },
     token,
   );
   if (!result.ok) redirect(appendQueryMessage(returnTo, "error", result.message));
