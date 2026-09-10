@@ -6820,11 +6820,33 @@ def _filtered_clients_stmt(
     else:
         for search_token in [token for token in normalized_search.split() if token]:
             pattern = f"%{search_token}%"
+            matching_range_invoice = (
+                select(ClientNoteEntry.id)
+                .where(
+                    ClientNoteEntry.user_id == User.id,
+                    ClientNoteEntry.message.contains(INVOICE_RANGE_NOTE_PREFIX),
+                    ClientNoteEntry.message.ilike(pattern),
+                )
+                .exists()
+            )
+            matching_legacy_invoice = (
+                select(ClientLegacyInvoice.id)
+                .where(
+                    ClientLegacyInvoice.user_id == User.id,
+                    or_(
+                        ClientLegacyInvoice.external_reference.ilike(pattern),
+                        ClientLegacyInvoice.label.ilike(pattern),
+                    ),
+                )
+                .exists()
+            )
             stmt = stmt.where(
                 or_(
                     User.email.ilike(pattern),
                     User.first_name.ilike(pattern),
                     User.last_name.ilike(pattern),
+                    matching_range_invoice,
+                    matching_legacy_invoice,
                 )
             )
 

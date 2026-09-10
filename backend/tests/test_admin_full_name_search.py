@@ -68,6 +68,22 @@ class AdminFullNameSearchTests(unittest.TestCase):
 
         self.assertIn(ClientKind.ADULT, _parameter_values(statement))
 
+    def test_clients_search_current_and_legacy_invoice_numbers(self) -> None:
+        statement = _filtered_clients_stmt(
+            search="PA26-0923",
+            client_kind=None,
+            client_status=None,
+            student_site=None,
+            group_id=None,
+            include_archived=True,
+            active_only=False,
+        )
+
+        sql = str(statement.compile())
+        self.assertIn("client_note_entries", sql)
+        self.assertIn("client_legacy_invoices", sql)
+        self.assertIn("%PA26-0923%", _parameter_values(statement))
+
     def test_clients_search_phone_in_all_phone_fields(self) -> None:
         statement = _filtered_clients_stmt(
             search="+33 6 12 34 56 78",

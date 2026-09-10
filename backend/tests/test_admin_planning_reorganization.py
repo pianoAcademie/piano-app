@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 import sys
@@ -16,6 +16,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 from app.api.routes.admin import (
     _checked_move_version,
     _move_planning_reorganization_booking_occurrence,
+    _planning_reorganization_today,
     _planning_reorganization_move_pairs,
     _planning_reorganization_price_rows,
     move_planning_reorganization_booking,
@@ -58,6 +59,14 @@ class _FakeSession:
 
 
 class AdminPlanningReorganizationTests(unittest.TestCase):
+    def test_default_day_uses_location_local_date(self) -> None:
+        reference = datetime(2026, 9, 8, 22, 30, tzinfo=timezone.utc)
+
+        self.assertEqual(
+            _planning_reorganization_today("Europe/Paris", now=reference),
+            date(2026, 9, 9),
+        )
+
     def setUp(self):
         # Route orchestration fixtures; real validation is covered separately.
         for target, result in [("_checked_move_version", ("preview", [])), ("_bind_moved_contract", None)]:

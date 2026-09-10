@@ -747,6 +747,12 @@ def _planning_reorganization_available_days(
     )
 
 
+def _planning_reorganization_today(timezone_name: str, *, now: datetime | None = None) -> date:
+    reference = now or _utcnow()
+    zone = _safe_zoneinfo(_normalize_session_timezone(timezone_name))
+    return reference.astimezone(zone).date()
+
+
 def _planning_reorganization_session_out(
     session_obj: CourseSession,
     *,
@@ -5029,8 +5035,10 @@ def get_planning_reorganization_day(
             season_start_utc=season_start_utc,
             season_end_utc=season_end_utc,
         )
-        if selected_day is None and available_days:
-            selected_day = available_days[0]
+        if selected_day is None:
+            selected_day = _planning_reorganization_today(selected_location.timezone)
+            if selected_day not in available_days:
+                available_days = sorted([*available_days, selected_day])
 
     if selected_location is not None and selected_day is not None:
         zone = _safe_zoneinfo(_normalize_session_timezone(selected_location.timezone))
