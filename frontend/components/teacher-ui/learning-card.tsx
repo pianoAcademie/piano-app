@@ -10,8 +10,14 @@ type Props = { studentId: string; studentName: string; sessionId: string; catalo
 type Mode = "CORRECT" | "HISTORY" | "NEXT_BOOK" | "FINISH" | null;
 const labels: Record<PieceStatus, string> = { UNKNOWN: "À vérifier", REVIEW: "À reprendre", COMPLETED: "Terminé" };
 
-export default function LearningCard({ studentId, studentName, sessionId, catalog, initial }: Props) {
+export default function LearningCard({ studentId, studentName, sessionId, catalog: schoolCatalog, initial }: Props) {
   const [snapshot, setSnapshot] = useState(initial);
+  const catalog: RepertoirePartitionOut[] = [...schoolCatalog, ...Object.entries(snapshot.state.books)
+    .filter(([, entry]) => entry.external).map(([id, entry]) => ({ product_id: id,
+      title: `${entry.title}${entry.composer ? ` — ${entry.composer}` : ""} · hors catalogue`,
+      pieces: [{ id, title: entry.title ?? "Morceau personnel", position: 0, video_url: null }] }))];
+  const [externalTitle, setExternalTitle] = useState("");
+  const [externalComposer, setExternalComposer] = useState("");
   const [mode, setMode] = useState<Mode>(null);
   const [productId, setProductId] = useState(initial.state.product_id ?? "");
   const [pieceId, setPieceId] = useState("");
@@ -27,12 +33,15 @@ export default function LearningCard({ studentId, studentName, sessionId, catalo
   const piece = current?.pieces.find((p) => p.id === book?.current_piece_id);
   const completed = current?.pieces.filter((p) => book?.pieces[p.id]?.status === "COMPLETED").length ?? 0;
   const editor = catalog.find((p) => p.product_id === productId);
+  const isExternal = productId === "external-new" || Boolean(snapshot.state.books[productId]?.external);
   const allDone = Boolean(current?.pieces.length && completed === current.pieces.length);
   const remaining = current?.pieces.filter((p) => p.id !== book?.current_piece_id && book?.pieces[p.id]?.status !== "COMPLETED") ?? [];
 
   function selectBook(id: string) {
     setProductId(id);
     const prior = snapshot.state.books[id];
+    setExternalTitle(prior?.title ?? "");
+    setExternalComposer(prior?.composer ?? "");
     setNote(prior?.note ?? "");
     setPieceId(prior?.current_piece_id ?? "");
     setStatuses(Object.fromEntries(Object.entries(prior?.pieces ?? {}).map(([key, value]) => [key, value.status])));
@@ -74,6 +83,9 @@ export default function LearningCard({ studentId, studentName, sessionId, catalo
     {current?.pieces.length ? <small>{completed} morceau{completed > 1 ? "x" : ""} terminé{completed > 1 ? "s" : ""} sur {current.pieces.length}</small> :
       <p className={styles.help}>{current ? "Aucun morceau enregistré dans cette partition. Vous pouvez déjà corriger la partition actuelle." : "Choisissez la partition et le morceau réellement travaillés."}</p>}
     {!mode && <>
+      <div className={styles.actions}>
+        <button type="button" disabled={busy} onClick={() => open("CORRECT")}>Changer la partition / le morceau</button>
+      </div>
       {!book?.completed && piece && <div className={styles.actions}>
         <button type="button" disabled={busy} onClick={() => save({ action: "CONTINUE" })}>Continuer ce morceau</button>
         <button type="button" className={styles.primary} disabled={busy} onClick={() => open("FINISH")}>Terminé → suivant</button>
@@ -81,9 +93,8 @@ export default function LearningCard({ studentId, studentName, sessionId, catalo
       {!piece && !book?.completed && <div className={styles.actions}><button type="button" className={styles.primary} disabled={busy} onClick={() => open("CORRECT")}>Choisir le morceau travaillé</button></div>}
       {allDone && !book?.completed && <button type="button" disabled={busy} onClick={() => save({ action: "COMPLETE_BOOK" })}>Terminer cette partition</button>}
       {book?.completed && <button type="button" className={styles.primary} disabled={busy} onClick={() => open("NEXT_BOOK")}>Choisir la prochaine partition</button>}
-      <details className={styles.more}><summary>Partition et morceaux déjà travaillés</summary>
+      <details className={styles.more}><summary>Historique des partitions et morceaux</summary>
         <div className={styles.links}>
-          <button type="button" disabled={busy} onClick={() => open("CORRECT")}>Changer la partition ou le morceau</button>
           <button type="button" disabled={busy} onClick={() => open("HISTORY")}>Indiquer les morceaux déjà terminés</button>
           <button type="button" disabled={busy} onClick={() => reload(!showHistory)}>Consulter la progression</button>
         </div>
@@ -92,7 +103,9 @@ export default function LearningCard({ studentId, studentName, sessionId, catalo
     {mode && <form onSubmit={(event) => {
       event.preventDefault();
       save(mode === "FINISH" ? { action: "COMPLETE_PIECE", piece_id: pieceId || null } :
-        { action: mode, product_id: productId, piece_id: pieceId || null, note, ...(mode === "HISTORY" ? { statuses } : {}) });
+        { action: mode, product_id: productId === "external-new" ? null : productId, piece_id: pieceId || null, note,
+          ...(isExternal && mode !== "HISTORY" ? { external_title: externalTitle, external_composer: externalComposer } : {}),
+          ...(mode === "HISTORY" ? { statuses } : {}) });
     }}>
       <fieldset disabled={busy} className={styles.editor}>
         <legend>{mode === "FINISH" ? "Choisir le prochain morceau" : mode === "HISTORY" ? "Morceaux déjà terminés" : mode === "NEXT_BOOK" ? "Prochaine partition" : "Partition et morceau travaillés"}</legend>
@@ -100,18 +113,24 @@ export default function LearningCard({ studentId, studentName, sessionId, catalo
           <select required value={productId} onChange={(e) => selectBook(e.target.value)}>
             <option value="">Choisir une partition</option>
             {catalog.filter((p) => mode !== "NEXT_BOOK" || p.product_id !== current?.product_id).map((p) => <option key={p.product_id} value={p.product_id}>{p.title}</option>)}
+            {mode !== "HISTORY" && <option value="external-new">Autre partition / morceau hors catalogue</option>}
           </select>
         </label>}
-        <label>{mode === "FINISH" ? "Morceau suivant" : "Morceau actuel"}
+        {isExternal && mode !== "FINISH" && mode !== "HISTORY" && <>
+          <label>Nom du morceau ou de la partition<input required maxLength={255} value={externalTitle} onChange={(e) => setExternalTitle(e.target.value)} /></label>
+          <label>Compositeur / artiste (facultatif)<input maxLength={255} value={externalComposer} onChange={(e) => setExternalComposer(e.target.value)} /></label>
+          <p className={styles.help}>Enregistré uniquement dans le suivi de cet élève, sans ajout au catalogue, au stock ou à la facturation.</p>
+        </>}
+        {(!isExternal || mode === "FINISH" || mode === "HISTORY") && <label>{mode === "FINISH" ? "Morceau suivant" : "Morceau actuel"}
           <select required={mode === "FINISH" && remaining.length > 0} value={pieceId} onChange={(e) => setPieceId(e.target.value)}>
             <option value="">{mode === "FINISH" ? "Aucun : tous les morceaux sont terminés" : "À définir plus tard"}</option>
             {(mode === "FINISH" ? current?.pieces : editor?.pieces)?.filter((p) => mode !== "FINISH" || p.id !== book?.current_piece_id).map((p) =>
               <option key={p.id} value={p.id}>{p.title}{book?.pieces[p.id]?.status === "COMPLETED" && mode === "FINISH" ? " · déjà terminé, à reprendre" : ""}</option>)}
           </select>
-        </label>
+        </label>}
         {mode === "FINISH" && <p className={styles.help}>« {piece?.title} » sera marqué terminé. Vous pouvez choisir un morceau dans n’importe quel ordre.</p>}
         {mode === "CORRECT" && <p className={styles.help}>Corrige le morceau ou la partition actuelle. Aucun morceau n’est déclaré terminé ; la remise du livre reste suivie séparément.</p>}
-        {mode === "NEXT_BOOK" && <p className={styles.help}>La remise physique de cette partition se confirme dans « Mes partitions ».</p>}
+        {mode === "NEXT_BOOK" && !isExternal && <p className={styles.help}>La remise physique de cette partition se confirme dans « Mes partitions ».</p>}
         {mode === "HISTORY" && <>
           <p className={styles.help}>Cochez les morceaux déjà terminés. Les autres restent à vérifier. Aucune date de fin passée ne sera inventée.</p>
           <button type="button" disabled={!pieceId} onClick={() => {

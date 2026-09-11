@@ -1,5 +1,6 @@
 from copy import deepcopy
 from datetime import datetime, timezone
+from uuid import uuid4
 
 from fastapi import HTTPException
 from sqlalchemy import case, select
@@ -33,11 +34,26 @@ def learning_snapshot(db, student_id):
     return {"revision": 0, "state": initial_learning_state(assignments)}
 
 
-def apply_learning_change(state, *, action, product_id, piece_id, statuses, catalog, session_id, now=None):
+def apply_learning_change(state, *, action, product_id, piece_id, statuses, catalog, session_id, now=None, external_title=None, external_composer=None):
     """Pure transition; callers lock the student and enforce access/revision."""
     result = deepcopy(state)
     books = result["books"]
     active_id = result.get("product_id")
+    catalog = dict(catalog)
+    for key, existing in books.items():
+        if existing.get("external"):
+            catalog[key] = [key]
+    if external_title is not None:
+        title = external_title.strip()
+        if not title or len(title) > 255 or action not in {"CORRECT", "NEXT_BOOK"}:
+            raise HTTPException(422, "Renseignez le nom du morceau hors catalogue (255 caractères maximum).")
+        if product_id and not books.get(product_id, {}).get("external"):
+            raise HTTPException(422, "Cette partition n’est pas un morceau hors catalogue de cet élève.")
+        product_id = product_id or str(uuid4())
+        external = books.setdefault(product_id, {"pieces": {}, "current_piece_id": None, "completed": False})
+        external.update(external=True, title=title, composer=(external_composer or "").strip())
+        catalog[product_id] = [product_id]
+        piece_id = product_id
     if action in {"CORRECT", "HISTORY", "NEXT_BOOK"}:
         if product_id not in catalog:
             raise HTTPException(422, "Choisissez une partition active.")

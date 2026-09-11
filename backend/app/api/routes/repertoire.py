@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import re
+import unicodedata
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -32,6 +34,8 @@ class LearningChange(BaseModel):
     statuses: dict[UUID, Literal["UNKNOWN", "REVIEW", "COMPLETED"]] | None = None
     undo_event_id: UUID | None = None
     note: str | None = Field(default=None, max_length=4000)
+    external_title: str | None = Field(default=None, max_length=255)
+    external_composer: str | None = Field(default=None, max_length=255)
 
 
 def _require_learning_access(db, actor, student_id, session_id):
@@ -88,7 +92,8 @@ def professor_change_learning(student_id: UUID, payload: LearningChange, db: Ses
             product_id=str(payload.product_id) if payload.product_id else None,
             piece_id=str(payload.piece_id) if payload.piece_id else None,
             statuses={str(key): value for key, value in payload.statuses.items()} if payload.statuses is not None else None,
-            catalog=catalog, session_id=payload.session_id)
+            catalog=catalog, session_id=payload.session_id,
+            external_title=payload.external_title, external_composer=payload.external_composer)
         if payload.note is not None and after.get("product_id"):
             after["books"][after["product_id"]]["note"] = payload.note.strip()
     row = db.get(StudentLearningProgress, student_id)
@@ -153,8 +158,15 @@ class AssignmentUpdate(BaseModel):
     internal_note: str | None = Field(default=None, max_length=4000)
 
 
+def _partition_sort_key(product):
+    title = "".join(char for char in unicodedata.normalize("NFKD", product.title.casefold())
+                    if not unicodedata.combining(char))
+    degree = re.search(r"\bdegre\s*(\d+)\b", title)
+    return (0, int(degree.group(1)), title) if degree else (1, 0, title)
+
+
 def _partition_products(db: Session) -> list[CatalogProduct]:
-    return list(
+    return sorted(
         db.scalars(
             select(CatalogProduct)
             .outerjoin(ProductCategory, ProductCategory.id == CatalogProduct.category_id)
@@ -166,7 +178,7 @@ def _partition_products(db: Session) -> list[CatalogProduct]:
                 ),
             )
             .order_by(CatalogProduct.title)
-        ).all()
+        ).all(), key=_partition_sort_key
     )
 
 

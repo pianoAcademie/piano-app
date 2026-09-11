@@ -1,5 +1,8 @@
 export type PieceStatus = "UNKNOWN" | "REVIEW" | "COMPLETED";
 export type LearningBook = {
+  external?: boolean;
+  title?: string;
+  composer?: string;
   note?: string;
   current_piece_id: string | null;
   completed: boolean;
@@ -20,4 +23,6 @@ export type LearningCommand = {
   statuses?: Record<string, PieceStatus>;
   undo_event_id?: string | null;
   note?: string;
+  external_title?: string;
+  external_composer?: string;
 };
