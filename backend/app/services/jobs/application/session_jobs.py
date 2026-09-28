@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+import unicodedata
 from uuid import UUID
 
 from sqlalchemy import select
@@ -34,6 +35,7 @@ AUTO_EMPTY_SESSION_CANCEL_REASON = "AUTO_NO_BOOKINGS"
 class SessionAutoCompletionJobResult:
     checked: int
     completed: int
+    attendance_defaulted: int
     invoices_generated: int
     skipped: int
     failed: int
@@ -42,6 +44,20 @@ class SessionAutoCompletionJobResult:
 
 def _utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+def _searchable_text(value: object) -> str:
+    normalized = unicodedata.normalize("NFKD", str(value or ""))
+    return "".join(character for character in normalized if not unicodedata.combining(character)).lower()
+
+
+def _is_online_solfege(*, course_type: CourseType, location: Location) -> bool:
+    if not bool(getattr(location, "is_online", False)):
+        return False
+    activity_text = _searchable_text(
+        f"{getattr(course_type, 'code', '')} {getattr(course_type, 'name', '')}"
+    )
+    return "solfege" in activity_text
 
 
 def run_session_auto_completion_job(
@@ -60,6 +76,7 @@ def run_session_auto_completion_job(
         return SessionAutoCompletionJobResult(
             checked=0,
             completed=0,
+            attendance_defaulted=0,
             invoices_generated=0,
             skipped=0,
             failed=0,
@@ -80,6 +97,7 @@ def run_session_auto_completion_job(
         )
         checked = 0
         completed = 0
+        attendance_defaulted = 0
         invoices_generated = 0
         skipped = 0
         failed = 0
@@ -117,6 +135,15 @@ def run_session_auto_completion_job(
                 ).all()
 
             sessions_with_billable_bookings = {booking.session_id for booking, _owner in booking_rows}
+
+            for booking, _owner in booking_rows:
+                session_obj, course_type, location = session_context[booking.session_id]
+                if (
+                    booking.status == BookingStatus.BOOKED
+                    and _is_online_solfege(course_type=course_type, location=location)
+                ):
+                    booking.status = BookingStatus.ATTENDED
+                    attendance_defaulted += 1
 
             for session_id, (session_obj, _course_type, _location) in session_context.items():
                 session_obj.updated_at = ts
@@ -191,11 +218,16 @@ def run_session_auto_completion_job(
                 items_sent=invoices_generated,
                 items_skipped=skipped,
                 items_failed=failed,
-                summary_text=f"{completed} sessions auto-completed, {invoices_generated} final invoices generated",
+                summary_text=(
+                    f"{completed} sessions auto-completed, "
+                    f"{attendance_defaulted} online solfege attendance records defaulted, "
+                    f"{invoices_generated} final invoices generated"
+                ),
             )
             return SessionAutoCompletionJobResult(
                 checked=checked,
                 completed=completed,
+                attendance_defaulted=attendance_defaulted,
                 invoices_generated=invoices_generated,
                 skipped=skipped,
                 failed=failed,
